@@ -1,0 +1,166 @@
+<!-- frontend/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    
+    <!-- Default Favicon (will be replaced dynamically) -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='white'/%3E%3Ccircle cx='50' cy='50' r='45' fill='none' stroke='%231a3654' stroke-width='3'/%3E%3Ccircle cx='50' cy='50' r='38' fill='%231a3654'/%3E%3Cpolygon points='50,25 54,38 68,38 57,46 61,59 50,51 39,59 43,46 32,38 46,38' fill='white'/%3E%3Crect x='25' y='72' width='50' height='16' rx='3' fill='white'/%3E%3Ctext x='50' y='84' font-size='9' text-anchor='middle' fill='%231a3654' font-family='Arial, sans-serif' font-weight='bold'%3EZMD%3C/text%3E%3C/svg%3E" id="default-favicon" />
+    
+    <!-- Dynamic Favicon Links (will be updated by JavaScript) -->
+    <link rel="icon" type="image/png" sizes="32x32" href="" id="dynamic-favicon" />
+    <link rel="apple-touch-icon" sizes="180x180" href="" id="apple-touch-icon" />
+    
+    <!-- Additional Icons for Different Platforms -->
+    <link rel="icon" type="image/png" sizes="16x16" href="" id="favicon-16x16" />
+    <link rel="manifest" href="/site.webmanifest" />
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zamed Premium Wear | Fashion Clothing</title>
+    <meta name="description" content="Zamed Premium Wear - Discover premium fashion for men, women, and kids. Shop the latest trends with free shipping available." />
+    <meta name="keywords" content="Zamed, premium wear, fashion, clothing, men's fashion, women's fashion, kids clothing" />
+    
+    <!-- Theme color -->
+    <meta name="theme-color" content="#1a3654" />
+    
+    <style>
+      /* Prevent FOUC (Flash of Unstyled Content) */
+      #root {
+        min-height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    
+    <script>
+      // ==================== FAVICON MANAGEMENT ====================
+      
+      // Function to update favicon dynamically
+      window.updateFavicon = function(faviconUrl) {
+        if (!faviconUrl) {
+          console.log('No favicon URL provided');
+          return;
+        }
+        
+        console.log('🔄 Updating favicon to:', faviconUrl.substring(0, 100) + '...');
+        
+        // Update 32x32 favicon
+        let favicon32 = document.getElementById('dynamic-favicon');
+        if (!favicon32) {
+          favicon32 = document.createElement('link');
+          favicon32.id = 'dynamic-favicon';
+          favicon32.rel = 'icon';
+          favicon32.type = 'image/png';
+          favicon32.sizes = '32x32';
+          document.head.appendChild(favicon32);
+        }
+        favicon32.href = faviconUrl;
+        
+        // Update 16x16 favicon
+        let favicon16 = document.getElementById('favicon-16x16');
+        if (!favicon16) {
+          favicon16 = document.createElement('link');
+          favicon16.id = 'favicon-16x16';
+          favicon16.rel = 'icon';
+          favicon16.type = 'image/png';
+          favicon16.sizes = '16x16';
+          document.head.appendChild(favicon16);
+        }
+        favicon16.href = faviconUrl;
+        
+        // Update apple touch icon
+        let appleIcon = document.getElementById('apple-touch-icon');
+        if (!appleIcon) {
+          appleIcon = document.createElement('link');
+          appleIcon.id = 'apple-touch-icon';
+          appleIcon.rel = 'apple-touch-icon';
+          appleIcon.sizes = '180x180';
+          document.head.appendChild(appleIcon);
+        }
+        appleIcon.href = faviconUrl;
+        
+        // Update default favicon (for browsers that use it)
+        let defaultFavicon = document.getElementById('default-favicon');
+        if (defaultFavicon) {
+          defaultFavicon.href = faviconUrl;
+        }
+        
+        // Also update the main favicon selector
+        let mainFavicon = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
+        if (mainFavicon && mainFavicon.id !== 'dynamic-favicon') {
+          mainFavicon.href = faviconUrl;
+        }
+        
+        console.log('✅ Favicon updated successfully');
+      };
+      
+      // Function to load favicon from localStorage
+      window.loadFaviconFromStorage = function() {
+        try {
+          // Check multiple storage locations for favicon
+          const siteInfo = JSON.parse(localStorage.getItem('site_info') || '{}');
+          const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+          
+          let favicon = siteInfo.favicon || siteSettings.favicon;
+          
+          if (favicon && favicon.startsWith('data:image')) {
+            console.log('📦 Found favicon in localStorage');
+            window.updateFavicon(favicon);
+            return true;
+          } else if (favicon) {
+            console.log('📦 Found favicon URL:', favicon);
+            window.updateFavicon(favicon);
+            return true;
+          } else {
+            console.log('ℹ️ No custom favicon found in storage');
+            return false;
+          }
+        } catch (error) {
+          console.error('Error loading favicon from storage:', error);
+          return false;
+        }
+      };
+      
+      // Listen for storage events (when settings are saved in another tab)
+      window.addEventListener('storage', function(event) {
+        if (event.key === 'site_info' || event.key === 'site_settings') {
+          console.log('📡 Storage event detected, reloading favicon');
+          window.loadFaviconFromStorage();
+        }
+      });
+      
+      // Listen for custom events
+      window.addEventListener('siteInfoUpdated', function(event) {
+        console.log('📡 siteInfoUpdated event detected');
+        if (event.detail && event.detail.favicon) {
+          window.updateFavicon(event.detail.favicon);
+        } else {
+          window.loadFaviconFromStorage();
+        }
+      });
+      
+      window.addEventListener('settingsSaved', function() {
+        console.log('📡 settingsSaved event detected');
+        window.loadFaviconFromStorage();
+      });
+      
+      // Load favicon immediately when page loads
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+          window.loadFaviconFromStorage();
+        });
+      } else {
+        window.loadFaviconFromStorage();
+      }
+      
+      // Also try to load after a short delay (for dynamic content)
+      setTimeout(function() {
+        window.loadFaviconFromStorage();
+      }, 500);
+      
+      console.log('🎯 Favicon manager initialized');
+    </script>
+  </body>
+</html>

@@ -1,0 +1,728 @@
+// src/pages/Admin/Products.jsx
+import { useState, useEffect, useRef } from "react";
+import { 
+    FiPlus, FiEdit2, FiTrash2, FiSearch, FiX, FiUpload, FiPackage, 
+    FiSave, FiStar, FiZap, FiCrop, FiImage, FiFilter, FiGrid, FiList,
+    FiChevronLeft, FiChevronRight, FiDownload, FiCopy, FiEye,
+    FiAlertCircle, FiCheckCircle, FiClock, FiTag, FiDollarSign,
+    FiList as FiListIcon, FiHash, FiRefreshCw
+} from "react-icons/fi";
+import { toast } from "sonner";
+import { motion, AnimatePresence } from "framer-motion";
+import productService from "../../services/productService";
+import ImageCropper from "../../components/Admin/ImageCropper";
+
+const Products = () => {
+    const [products, setProducts] = useState([]);
+    const [filteredProducts, setFilteredProducts] = useState([]);
+    const [searchTerm, setSearchTerm] = useState("");
+    const [showModal, setShowModal] = useState(false);
+    const [editingProduct, setEditingProduct] = useState(null);
+    const [selectedImage, setSelectedImage] = useState(null);
+    const [imagePreview, setImagePreview] = useState(null);
+    const [colorImages, setColorImages] = useState({});
+    const [cropImage, setCropImage] = useState(null);
+    const [cropType, setCropType] = useState(null);
+    const [croppingColor, setCroppingColor] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [currencySymbol, setCurrencySymbol] = useState("$");
+    const [selectedGenderCategory, setSelectedGenderCategory] = useState("men");
+    const [viewMode, setViewMode] = useState("grid");
+    const [selectedCategory, setSelectedCategory] = useState("all");
+    const [selectedGender, setSelectedGender] = useState("all");
+    const [selectedStatus, setSelectedStatus] = useState("all");
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage] = useState(12);
+    const [darkMode, setDarkMode] = useState(false);
+    const [loading, setLoading] = useState(true);
+    
+    const fileInputRef = useRef(null);
+    const colorImageInputRef = useRef({});
+    const [newBrand, setNewBrand] = useState("");
+    const [showNewBrandInput, setShowNewBrandInput] = useState(false);
+    
+    const [formData, setFormData] = useState({
+        name: "", price: "", originalPrice: "", category: "", gender: "",
+        sizes: [], colors: [], stock: 0, description: "", brand: "",
+        rating: 4.5, reviews: 0, isFeatured: false, isNewArrival: false,
+        tags: [], weight: "", material: "", careInstructions: "",
+        details: "", shipping: ""
+    });
+
+    // Load currency symbol
+    useEffect(() => {
+        const loadCurrency = () => {
+            const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+            const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
+            setCurrencySymbol(symbols[siteSettings.currency] || "$");
+        };
+        loadCurrency();
+        
+        window.addEventListener('currencyChanged', loadCurrency);
+        return () => window.removeEventListener('currencyChanged', loadCurrency);
+    }, []);
+
+    // Categories
+    const menCategories = [
+        "T-Shirts", "Formal Shirts", "Casual Shirts", "Polo Shirts", "Henley Shirts",
+        "Hoodies", "Sweatshirts", "Jackets", "Jeans", "Trousers", "Chinos", 
+        "Shorts", "Sports Wear", "Activewear", "Suits", "Blazers"
+    ];
+
+    const womenCategories = [
+        "Dresses", "Tops", "Blouses", "Shirts", "Hoodies", "Sweaters", "Jackets",
+        "Jeans", "Trousers", "Leggings", "Skirts", "Sports Wear", "Activewear",
+        "Sarees", "Kurtis", "Lehenga", "Hijabs", "Abayas"
+    ];
+
+    const kidsCategories = [
+        "T-Shirts", "Shirts", "Hoodies", "Jackets", "Jeans", "Trousers",
+        "Shorts", "Dresses", "Rompers", "Track Suits", "School Uniform"
+    ];
+
+    const getAllCategories = () => {
+        if (selectedGenderCategory === "men") return menCategories;
+        if (selectedGenderCategory === "women") return womenCategories;
+        if (selectedGenderCategory === "kids") return kidsCategories;
+        return [...menCategories, ...womenCategories, ...kidsCategories];
+    };
+
+    const genders = [
+        { value: "men", label: "Men's Collection" },
+        { value: "women", label: "Women's Collection" },
+        { value: "kids", label: "Kids Collection" }
+    ];
+    
+    const allSizes = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL", "One Size"];
+    const allColors = ["Black", "White", "Red", "Blue", "Green", "Yellow", "Purple", "Pink", "Gray", "Brown", "Navy", "Orange", "Beige", "Maroon", "Teal", "Coral", "Lavender", "Mint", "Khaki"];
+    
+    const defaultBrands = ["Zamed Premium", "UrbanStyle", "PremiumWear", "FashionCo", "Elite Collection"];
+    const [brands, setBrands] = useState(defaultBrands);
+
+    useEffect(() => {
+        const checkDarkMode = () => {
+            const isDark = document.documentElement.classList.contains('dark');
+            setDarkMode(isDark);
+        };
+        checkDarkMode();
+        
+        loadProducts();
+        const unsubscribe = productService.subscribe(() => loadProducts());
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        filterProducts();
+    }, [products, searchTerm, selectedCategory, selectedGender, selectedStatus]);
+
+    const loadProducts = async () => {
+        setLoading(true);
+        try {
+            const allProducts = productService.getAllProducts();
+            setProducts(allProducts || []);
+        } catch (error) {
+            console.error("Error loading products:", error);
+            setProducts([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const filterProducts = () => {
+        let filtered = [...products];
+        
+        if (searchTerm) {
+            filtered = filtered.filter(p => 
+                p.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                p.brand?.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+        }
+        
+        if (selectedCategory !== "all") {
+            filtered = filtered.filter(p => p.category === selectedCategory);
+        }
+        
+        if (selectedGender !== "all") {
+            filtered = filtered.filter(p => p.gender === selectedGender);
+        }
+        
+        if (selectedStatus !== "all") {
+            if (selectedStatus === "featured") filtered = filtered.filter(p => p.isFeatured);
+            else if (selectedStatus === "new") filtered = filtered.filter(p => p.isNewArrival);
+            else if (selectedStatus === "lowStock") filtered = filtered.filter(p => p.stock > 0 && p.stock < 10);
+            else if (selectedStatus === "outOfStock") filtered = filtered.filter(p => p.stock === 0);
+        }
+        
+        setFilteredProducts(filtered);
+        setCurrentPage(1);
+    };
+
+    const compressImage = (base64String, maxWidth = 400, quality = 0.5) => {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+                if (width > maxWidth) {
+                    height = (height * maxWidth) / width;
+                    width = maxWidth;
+                }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                const compressed = canvas.toDataURL('image/jpeg', quality);
+                resolve(compressed);
+            };
+            img.src = base64String;
+        });
+    };
+
+    const handleImageSelect = async (e, type = 'main', colorName = null) => {
+        const file = e.target.files[0];
+        if (file) {
+            if (file.size > 2 * 1024 * 1024) {
+                toast.error("Image size must be less than 2MB");
+                return;
+            }
+            toast.loading("Processing image...", { id: "compress" });
+            const reader = new FileReader();
+            reader.onloadend = async () => {
+                const compressed = await compressImage(reader.result, 400, 0.5);
+                toast.dismiss("compress");
+                toast.success("Image ready!");
+                setCropImage(compressed);
+                setCropType(type);
+                setCroppingColor(colorName);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const handleCropComplete = (croppedImage) => {
+        if (cropType === 'main') {
+            setImagePreview(croppedImage);
+            setSelectedImage(croppedImage);
+            toast.success("Main image saved!");
+        } else if (cropType === 'color' && croppingColor) {
+            setColorImages(prev => ({ ...prev, [croppingColor]: croppedImage }));
+            toast.success(`Image for ${croppingColor} saved!`);
+        }
+        setCropImage(null);
+        setCropType(null);
+        setCroppingColor(null);
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (isSubmitting) return;
+        
+        if (!formData.name || !formData.price || !formData.category || !formData.gender) {
+            toast.error("Please fill all required fields");
+            return;
+        }
+        
+        setIsSubmitting(true);
+        
+        try {
+            const colorImagesObj = {};
+            if (formData.colors && formData.colors.length > 0) {
+                formData.colors.forEach(color => {
+                    if (colorImages[color]) colorImagesObj[color] = colorImages[color];
+                });
+            }
+            
+            const productData = {
+                id: editingProduct ? editingProduct.id : Date.now().toString(),
+                name: formData.name.trim(),
+                price: parseFloat(formData.price),
+                originalPrice: formData.originalPrice ? parseFloat(formData.originalPrice) : null,
+                category: formData.category,
+                gender: formData.gender,
+                sizes: formData.sizes || [],
+                colors: formData.colors || [],
+                stock: parseInt(formData.stock) || 50,
+                description: formData.description || "",
+                brand: formData.brand || "Zamed Premium",
+                image: selectedImage || (editingProduct ? editingProduct.image : null),
+                colorImages: colorImagesObj,
+                rating: parseFloat(formData.rating) || 4.5,
+                reviews: parseInt(formData.reviews) || 0,
+                isFeatured: formData.isFeatured || false,
+                isNewArrival: formData.isNewArrival || false,
+                inStock: true,
+                tags: formData.tags || [],
+                weight: formData.weight || "",
+                material: formData.material || "",
+                careInstructions: formData.careInstructions || "",
+                details: formData.details || "",
+                shipping: formData.shipping || "",
+                createdAt: editingProduct ? editingProduct.createdAt : new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            
+            if (editingProduct) {
+                productService.updateProduct(editingProduct.id, productData);
+                toast.success(`Product "${formData.name}" updated successfully!`);
+            } else {
+                productService.addProduct(productData);
+                toast.success(`Product "${formData.name}" added successfully!`);
+            }
+            
+            handleCloseModal();
+            setTimeout(() => loadProducts(), 500);
+            
+        } catch (error) {
+            console.error("Error saving product:", error);
+            toast.error("Failed to save product");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleDelete = async (product) => {
+        if (window.confirm(`Delete "${product.name}"?`)) {
+            productService.deleteProduct(product.id);
+            toast.success(`"${product.name}" deleted!`);
+            loadProducts();
+        }
+    };
+
+    const handleEdit = (product) => {
+        setEditingProduct(product);
+        setSelectedGenderCategory(product.gender || "men");
+        
+        setFormData({
+            name: product.name || "", price: product.price || "", originalPrice: product.originalPrice || "",
+            category: product.category || "", gender: product.gender || "", sizes: product.sizes || [],
+            colors: product.colors || [], stock: product.stock || 0, description: product.description || "",
+            brand: product.brand || "", rating: product.rating || 4.5, reviews: product.reviews || 0,
+            isFeatured: product.isFeatured || false, isNewArrival: product.isNewArrival || false,
+            tags: product.tags || [], weight: product.weight || "", material: product.material || "",
+            careInstructions: product.careInstructions || "", details: product.details || "",
+            shipping: product.shipping || ""
+        });
+        setImagePreview(product.image || null);
+        setSelectedImage(product.image || null);
+        setColorImages(product.colorImages || {});
+        setShowModal(true);
+    };
+
+    const handleDuplicate = (product) => {
+        const newProduct = {
+            ...product,
+            id: Date.now().toString(),
+            name: `${product.name} (Copy)`,
+            createdAt: new Date().toISOString()
+        };
+        productService.addProduct(newProduct);
+        toast.success(`"${product.name}" duplicated!`);
+        loadProducts();
+    };
+
+    const handleCloseModal = () => {
+        setShowModal(false);
+        setEditingProduct(null);
+        setSelectedImage(null);
+        setImagePreview(null);
+        setColorImages({});
+        setSelectedGenderCategory("men");
+        setFormData({
+            name: "", price: "", originalPrice: "", category: "", gender: "",
+            sizes: [], colors: [], stock: 0, description: "", brand: "",
+            rating: 4.5, reviews: 0, isFeatured: false, isNewArrival: false,
+            tags: [], weight: "", material: "", careInstructions: "",
+            details: "", shipping: ""
+        });
+        setIsSubmitting(false);
+    };
+
+    const toggleSize = (size) => setFormData(prev => ({
+        ...prev, sizes: prev.sizes.includes(size) ? prev.sizes.filter(s => s !== size) : [...prev.sizes, size]
+    }));
+
+    const toggleColor = (color) => {
+        setFormData(prev => {
+            const newColors = prev.colors.includes(color) ? prev.colors.filter(c => c !== color) : [...prev.colors, color];
+            if (prev.colors.includes(color)) {
+                setColorImages(prevImages => { const newImages = { ...prevImages }; delete newImages[color]; return newImages; });
+            }
+            return { ...prev, colors: newColors };
+        });
+    };
+
+    const toggleFeatured = (product) => {
+        productService.updateProduct(product.id, { ...product, isFeatured: !product.isFeatured });
+        toast.success(`${product.name} ${!product.isFeatured ? 'featured' : 'unfeatured'}`);
+        loadProducts();
+    };
+
+    const toggleNewArrival = (product) => {
+        productService.updateProduct(product.id, { ...product, isNewArrival: !product.isNewArrival });
+        toast.success(`${product.name} ${!product.isNewArrival ? 'new arrival' : 'removed'}`);
+        loadProducts();
+    };
+
+    const getColorSwatch = (color) => {
+        const map = {
+            'Black': '#1a1a1a', 'White': '#f5f5f5', 'Red': '#dc2626', 'Blue': '#3b82f6',
+            'Green': '#22c55e', 'Gray': '#9ca3af', 'Brown': '#78350f', 'Navy': '#1e3a8a',
+            'Pink': '#ec4899', 'Purple': '#a855f7', 'Yellow': '#eab308', 'Orange': '#f97316',
+            'Beige': '#f5e6d3', 'Maroon': '#800000', 'Teal': '#008080', 'Khaki': '#c3b091'
+        };
+        return map[color] || '#cccccc';
+    };
+
+    const handleGenderChange = (gender) => {
+        setSelectedGenderCategory(gender);
+        setFormData({ ...formData, gender: gender, category: "" });
+    };
+
+    const exportProducts = () => {
+        if (filteredProducts.length === 0) {
+            toast.error("No products to export");
+            return;
+        }
+        
+        const exportData = filteredProducts.map(p => ({
+            ID: p.id, Name: p.name, Price: p.price, Category: p.category,
+            Gender: p.gender, Brand: p.brand, Stock: p.stock, Featured: p.isFeatured,
+            "New Arrival": p.isNewArrival, Created: p.createdAt
+        }));
+        
+        const headers = Object.keys(exportData[0]);
+        const csvRows = [headers.join(',')];
+        
+        for (const row of exportData) {
+            const values = headers.map(header => {
+                const value = row[header];
+                return typeof value === 'string' ? `"${value}"` : value;
+            });
+            csvRows.push(values.join(','));
+        }
+        
+        const csv = csvRows.join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `products_export_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success("Products exported!");
+    };
+
+    const formatPrice = (price) => `${currencySymbol}${(price || 0).toFixed(2)}`;
+
+    const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+    const paginatedProducts = filteredProducts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+    const uniqueCategories = [...new Set(products.map(p => p.category).filter(Boolean))];
+
+    if (loading && products.length === 0) {
+        return (
+            <div className="flex items-center justify-center h-96">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            </div>
+        );
+    }
+
+    return (
+        <div>
+            {/* Header */}
+            <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+                <div>
+                    <h1 className="text-2xl font-bold dark:text-white">Product Management</h1>
+                    <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
+                        Manage your product catalog | {filteredProducts.length} products
+                    </p>
+                </div>
+                <div className="flex gap-3">
+                    <button onClick={exportProducts} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700">
+                        <FiDownload size={16} /> Export
+                    </button>
+                    <button onClick={loadProducts} className="bg-gray-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-700">
+                        <FiRefreshCw size={16} /> Refresh
+                    </button>
+                    <button onClick={() => setShowModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700">
+                        <FiPlus size={16} /> Add Product
+                    </button>
+                </div>
+            </div>
+
+            {/* Filters Bar */}
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 mb-6">
+                <div className="flex flex-wrap gap-4">
+                    <div className="flex-1 min-w-[200px] relative">
+                        <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                        <input
+                            type="text"
+                            placeholder="Search products..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        />
+                    </div>
+                    <select
+                        value={selectedGender}
+                        onChange={(e) => setSelectedGender(e.target.value)}
+                        className="px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    >
+                        <option value="all">All Genders</option>
+                        <option value="men">Men</option>
+                        <option value="women">Women</option>
+                        <option value="kids">Kids</option>
+                    </select>
+                    <select
+                        value={selectedCategory}
+                        onChange={(e) => setSelectedCategory(e.target.value)}
+                        className="px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white min-w-[150px]"
+                    >
+                        <option value="all">All Categories</option>
+                        {uniqueCategories.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                    </select>
+                    <select
+                        value={selectedStatus}
+                        onChange={(e) => setSelectedStatus(e.target.value)}
+                        className="px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    >
+                        <option value="all">All Status</option>
+                        <option value="featured">Featured</option>
+                        <option value="new">New Arrivals</option>
+                        <option value="lowStock">Low Stock</option>
+                        <option value="outOfStock">Out of Stock</option>
+                    </select>
+                    <div className="flex gap-2">
+                        <button onClick={() => setViewMode("grid")} className={`p-2 rounded-lg ${viewMode === "grid" ? "bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400" : "hover:bg-gray-100 dark:hover:bg-gray-700"}`}>
+                            <FiGrid size={18} />
+                        </button>
+                        <button onClick={() => setViewMode("list")} className={`p-2 rounded-lg ${viewMode === "list" ? "bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400" : "hover:bg-gray-100 dark:hover:bg-gray-700"}`}>
+                            <FiList size={18} />
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Products Display */}
+            {filteredProducts.length === 0 ? (
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-12 text-center">
+                    <FiPackage className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold dark:text-white">No products found</h3>
+                    <button onClick={() => setShowModal(true)} className="mt-4 text-blue-600 hover:text-blue-700">+ Add your first product</button>
+                </div>
+            ) : viewMode === "grid" ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {paginatedProducts.map((product) => (
+                        <motion.div
+                            key={product.id}
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            whileHover={{ y: -5 }}
+                            className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden group"
+                        >
+                            <div className="relative">
+                                <img 
+                                    src={product.image && product.image.startsWith('data:') ? product.image : 'https://via.placeholder.com/300x300?text=No+Image'} 
+                                    alt={product.name} 
+                                    className="w-full h-48 object-cover"
+                                />
+                                <div className="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                    <button onClick={() => handleEdit(product)} className="p-2 bg-white rounded-full hover:bg-gray-100">
+                                        <FiEdit2 size={16} />
+                                    </button>
+                                    <button onClick={() => handleDuplicate(product)} className="p-2 bg-white rounded-full hover:bg-gray-100">
+                                        <FiCopy size={16} />
+                                    </button>
+                                    <button onClick={() => handleDelete(product)} className="p-2 bg-white rounded-full hover:bg-red-100 text-red-500">
+                                        <FiTrash2 size={16} />
+                                    </button>
+                                </div>
+                                {product.isFeatured && (
+                                    <span className="absolute top-2 left-2 bg-yellow-500 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
+                                        <FiStar size={10} /> Featured
+                                    </span>
+                                )}
+                                {product.isNewArrival && (
+                                    <span className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
+                                        <FiZap size={10} /> New
+                                    </span>
+                                )}
+                            </div>
+                            <div className="p-4">
+                                <h3 className="font-semibold dark:text-white line-clamp-1">{product.name}</h3>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">{product.brand}</p>
+                                <div className="flex justify-between items-center mt-2">
+                                    <div>
+                                        <span className="text-lg font-bold text-blue-600">{formatPrice(product.price)}</span>
+                                        {product.originalPrice && (
+                                            <span className="text-xs text-gray-400 line-through ml-1">{formatPrice(product.originalPrice)}</span>
+                                        )}
+                                    </div>
+                                    <span className={`text-xs px-2 py-1 rounded-full ${
+                                        product.stock > 10 ? 'bg-green-100 text-green-800' :
+                                        product.stock > 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                                    }`}>
+                                        {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
+                                    </span>
+                                </div>
+                                <div className="flex gap-2 mt-3">
+                                    <button onClick={() => toggleFeatured(product)} className={`flex-1 py-1 rounded-lg text-xs font-medium ${
+                                        product.isFeatured ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600'
+                                    }`}>
+                                        <FiStar className="inline mr-1" size={12} /> {product.isFeatured ? 'Featured' : 'Set Featured'}
+                                    </button>
+                                    <button onClick={() => toggleNewArrival(product)} className={`flex-1 py-1 rounded-lg text-xs font-medium ${
+                                        product.isNewArrival ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                                    }`}>
+                                        <FiZap className="inline mr-1" size={12} /> {product.isNewArrival ? 'New' : 'Set New'}
+                                    </button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    ))}
+                </div>
+            ) : (
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden">
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
+                            <thead className="bg-gray-50 dark:bg-gray-700">
+                                <tr>
+                                    <th className="px-4 py-3 text-left">Product</th>
+                                    <th className="px-4 py-3 text-left">Price</th>
+                                    <th className="px-4 py-3 text-left">Stock</th>
+                                    <th className="px-4 py-3 text-left">Category</th>
+                                    <th className="px-4 py-3 text-left">Status</th>
+                                    <th className="px-4 py-3 text-left">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {paginatedProducts.map((product) => (
+                                    <tr key={product.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                        <td className="px-4 py-3">
+                                            <div className="flex items-center gap-3">
+                                                <img src={product.image?.startsWith('data:') ? product.image : 'https://via.placeholder.com/40'} alt={product.name} className="w-10 h-10 object-cover rounded" />
+                                                <div><p className="font-medium dark:text-white">{product.name}</p><p className="text-xs text-gray-500">{product.brand}</p></div>
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 font-semibold">{formatPrice(product.price)}</td>
+                                        <td className="px-4 py-3"><span className={`inline-block px-2 py-1 rounded-full text-xs ${product.stock > 10 ? 'bg-green-100 text-green-800' : product.stock > 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{product.stock}</span></td>
+                                        <td className="px-4 py-3 text-sm">{product.category}</td>
+                                        <td className="px-4 py-3"><div className="flex gap-1">{product.isFeatured && <span className="inline-block w-2 h-2 bg-yellow-500 rounded-full" title="Featured" />}{product.isNewArrival && <span className="inline-block w-2 h-2 bg-green-500 rounded-full" title="New Arrival" />}</div></td>
+                                        <td className="px-4 py-3"><div className="flex gap-2"><button onClick={() => handleEdit(product)} className="text-blue-600"><FiEdit2 size={16} /></button><button onClick={() => handleDuplicate(product)} className="text-green-600"><FiCopy size={16} /></button><button onClick={() => handleDelete(product)} className="text-red-600"><FiTrash2 size={16} /></button></div></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+                <div className="flex justify-center gap-2 mt-6">
+                    <button onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1} className="px-3 py-1 border rounded-lg disabled:opacity-50">Prev</button>
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                        let pageNum;
+                        if (totalPages <= 5) pageNum = i + 1;
+                        else if (currentPage <= 3) pageNum = i + 1;
+                        else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
+                        else pageNum = currentPage - 2 + i;
+                        return (<button key={pageNum} onClick={() => setCurrentPage(pageNum)} className={`px-3 py-1 border rounded-lg ${currentPage === pageNum ? 'bg-blue-600 text-white' : 'hover:bg-gray-100'}`}>{pageNum}</button>);
+                    })}
+                    <button onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages} className="px-3 py-1 border rounded-lg disabled:opacity-50">Next</button>
+                </div>
+            )}
+
+            {/* Add/Edit Product Modal */}
+            <AnimatePresence>
+                {showModal && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+                        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="bg-white dark:bg-gray-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                            <div className="sticky top-0 bg-white dark:bg-gray-800 p-4 border-b flex justify-between items-center">
+                                <h2 className="text-2xl font-bold dark:text-white">{editingProduct ? "Edit Product" : "Add New Product"}</h2>
+                                <button onClick={handleCloseModal} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"><FiX size={24} /></button>
+                            </div>
+                            
+                            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                                {/* Featured & New Arrival Toggles */}
+                                <div className="grid grid-cols-2 gap-4 bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+                                    <label className="flex items-center justify-between p-3 bg-white dark:bg-gray-600 rounded-lg border cursor-pointer">
+                                        <span className="font-medium flex items-center gap-2"><FiStar className="text-yellow-500" /> Featured</span>
+                                        <input type="checkbox" checked={formData.isFeatured} onChange={(e) => setFormData({...formData, isFeatured: e.target.checked})} className="w-5 h-5" />
+                                    </label>
+                                    <label className="flex items-center justify-between p-3 bg-white dark:bg-gray-600 rounded-lg border cursor-pointer">
+                                        <span className="font-medium flex items-center gap-2"><FiZap className="text-green-500" /> New Arrival</span>
+                                        <input type="checkbox" checked={formData.isNewArrival} onChange={(e) => setFormData({...formData, isNewArrival: e.target.checked})} className="w-5 h-5" />
+                                    </label>
+                                </div>
+
+                                {/* Main Image */}
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Main Product Image</label>
+                                    <div className="flex items-start gap-4">
+                                        <div className="relative group">
+                                            {imagePreview ? (
+                                                <div className="relative"><img src={imagePreview} alt="Preview" className="w-32 h-32 object-cover rounded-lg border-2" /><div className="absolute inset-0 bg-black bg-opacity-50 rounded-lg opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2"><button type="button" onClick={() => fileInputRef.current?.click()} className="bg-blue-500 text-white rounded-full p-1.5"><FiUpload size={12} /></button><button type="button" onClick={() => { setCropImage(imagePreview); setCropType('main'); }} className="bg-purple-500 text-white rounded-full p-1.5"><FiCrop size={12} /></button></div></div>
+                                            ) : (<div onClick={() => fileInputRef.current?.click()} className="w-32 h-32 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500"><FiUpload className="w-8 h-8 text-gray-400" /><span className="text-xs text-gray-500 mt-1">Upload</span></div>)}
+                                        </div>
+                                        <input type="file" ref={fileInputRef} onChange={(e) => handleImageSelect(e, 'main')} accept="image/*" className="hidden" />
+                                        <div className="flex-1"><p className="text-xs text-gray-500">Recommended: 400x500px (Max 2MB)</p><p className="text-xs text-green-600">Images are stored in IndexedDB</p></div>
+                                    </div>
+                                </div>
+
+                                {/* Product Name */}
+                                <div><label className="block text-sm font-medium mb-1 dark:text-white">Product Name *</label><input type="text" required value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" /></div>
+
+                                {/* Price Fields */}
+                                <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium mb-1 dark:text-white">Price ({currencySymbol}) *</label><input type="number" step="0.01" required value={formData.price} onChange={(e) => setFormData({...formData, price: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" /></div><div><label className="block text-sm font-medium mb-1 dark:text-white">Original Price ({currencySymbol})</label><input type="number" step="0.01" value={formData.originalPrice} onChange={(e) => setFormData({...formData, originalPrice: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" /></div></div>
+
+                                {/* Gender Selection */}
+                                <div><label className="block text-sm font-medium mb-1 text-red-600 dark:text-red-400">Collection / Gender *</label><div className="grid grid-cols-3 gap-2">{genders.map(g => (<button key={g.value} type="button" onClick={() => handleGenderChange(g.value)} className={`px-4 py-2 rounded-lg font-medium transition-all ${selectedGenderCategory === g.value ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-white'}`}>{g.label}</button>))}</div></div>
+
+                                {/* Category */}
+                                <div><label className="block text-sm font-medium mb-1 dark:text-white">Category *</label><select required value={formData.category} onChange={(e) => setFormData({...formData, category: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700"><option value="">Select Category</option>{getAllCategories().map(cat => <option key={cat} value={cat}>{cat}</option>)}</select></div>
+
+                                {/* Brand */}
+                                <div><label className="block text-sm font-medium mb-1 dark:text-white">Brand</label><select value={formData.brand} onChange={(e) => setFormData({...formData, brand: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700"><option value="">Select Brand</option>{brands.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
+
+                                {/* Stock */}
+                                <div><label className="block text-sm font-medium mb-1 dark:text-white">Stock *</label><input type="number" required value={formData.stock} onChange={(e) => setFormData({...formData, stock: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" /></div>
+
+                                {/* Sizes */}
+                                <div><label className="block text-sm font-medium mb-1 dark:text-white">Available Sizes</label><div className="flex flex-wrap gap-2 p-3 border rounded-lg bg-gray-50 dark:bg-gray-700">{allSizes.map(size => (<button key={size} type="button" onClick={() => toggleSize(size)} className={`px-3 py-1.5 rounded-lg text-sm transition-all ${formData.sizes.includes(size) ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-600 border hover:bg-gray-100'}`}>{size}</button>))}</div></div>
+
+                                {/* Colors */}
+                                <div><label className="block text-sm font-medium mb-1 dark:text-white">Colors & Images</label><div className="flex flex-wrap gap-3 p-3 border rounded-lg bg-gray-50 dark:bg-gray-700 max-h-60 overflow-y-auto">{allColors.map(color => (<div key={color} className="flex flex-col items-center gap-1"><button type="button" onClick={() => toggleColor(color)} className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 ${formData.colors.includes(color) ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-600 border'}`}><div className="w-4 h-4 rounded-full" style={{ backgroundColor: getColorSwatch(color) }} />{color}</button>{formData.colors.includes(color) && (<div className="flex flex-col items-center">{colorImages[color] ? (<div className="relative group"><img src={colorImages[color]} alt={color} className="w-12 h-12 object-cover rounded-lg border-2 border-blue-400" /><button type="button" onClick={() => { setCropImage(colorImages[color]); setCropType('color'); setCroppingColor(color); }} className="absolute -top-1 -right-1 bg-purple-500 text-white rounded-full p-0.5"><FiCrop size={10} /></button></div>) : (<button type="button" onClick={() => colorImageInputRef.current[color]?.click()} className="w-12 h-12 border-2 border-dashed rounded-lg flex items-center justify-center hover:border-blue-500"><FiImage size={16} className="text-gray-400" /></button>)}<input type="file" ref={el => colorImageInputRef.current[color] = el} onChange={(e) => handleImageSelect(e, 'color', color)} accept="image/*" className="hidden" /></div>)}</div>))}</div></div>
+
+                                {/* Description */}
+                                <div className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-700"><label className="block text-md font-semibold mb-2 dark:text-white">📝 Description</label><textarea id="field-description" rows="4" value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="Enter product description" /></div>
+
+                                {/* Details */}
+                                <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20"><label className="text-md font-semibold mb-2 dark:text-white">📋 Product Details</label><textarea id="field-details" rows="5" value={formData.details} onChange={(e) => setFormData({...formData, details: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 font-mono text-sm" placeholder="• Material: Premium quality fabric&#10;• Fit: Regular fit" /></div>
+
+                                {/* Material & Care */}
+                                <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium mb-1 dark:text-white">Material</label><input type="text" value={formData.material} onChange={(e) => setFormData({...formData, material: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="e.g., 100% Cotton" /></div><div><label className="block text-sm font-medium mb-1 dark:text-white">Care Instructions</label><input type="text" value={formData.careInstructions} onChange={(e) => setFormData({...formData, careInstructions: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="Machine wash cold" /></div></div>
+
+                                {/* Tags */}
+                                <div><label className="block text-sm font-medium mb-1 dark:text-white">Tags (comma separated)</label><input type="text" value={formData.tags} onChange={(e) => setFormData({...formData, tags: e.target.value.split(',').map(t => t.trim())})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="summer, casual, premium" /></div>
+
+                                {/* Buttons */}
+                                <div className="flex gap-3 pt-4 sticky bottom-0 bg-white dark:bg-gray-800 border-t pt-4 -mb-6 mt-4">
+                                    <button type="submit" disabled={isSubmitting} className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 disabled:opacity-50"><FiSave size={18} /> {isSubmitting ? "Saving..." : (editingProduct ? "Update Product" : "Add Product")}</button>
+                                    <button type="button" onClick={handleCloseModal} className="flex-1 bg-gray-500 text-white py-3 rounded-lg hover:bg-gray-600">Cancel</button>
+                                </div>
+                            </form>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
+            {/* Image Cropper Modal */}
+            {cropImage && <ImageCropper image={cropImage} onCropComplete={handleCropComplete} onClose={() => { setCropImage(null); setCropType(null); setCroppingColor(null); }} />}
+        </div>
+    );
+};
+
+export default Products;
