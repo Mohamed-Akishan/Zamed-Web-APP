@@ -1,103 +1,125 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import { FiMail, FiLock, FiUser, FiEye, FiEyeOff } from "react-icons/fi";
+import { FiMail, FiLock, FiUser, FiPhone, FiEye, FiEyeOff } from "react-icons/fi";
 import { toast } from "sonner";
 
+const API_URL = import.meta.env.VITE_API_URL || 'https://zamed-backend.onrender.com/api';
+
 const Register = () => {
-    const [showPassword, setShowPassword] = useState(false);
-    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-    const [loading, setLoading] = useState(false);
     const [formData, setFormData] = useState({
         firstName: "",
         lastName: "",
         email: "",
+        phone: "",
         password: "",
-        confirmPassword: "",
-        phone: ""
+        confirmPassword: ""
     });
-    const [errors, setErrors] = useState({});
+    const [showPassword, setShowPassword] = useState(false);
+    const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
-    const { register } = useAuth();
 
     const handleChange = (e) => {
-        const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
-        if (errors[name]) {
-            setErrors(prev => ({ ...prev, [name]: '' }));
-        }
-    };
-
-    const validateForm = () => {
-        const newErrors = {};
-
-        if (!formData.firstName.trim()) newErrors.firstName = "First name is required";
-        if (!formData.lastName.trim()) newErrors.lastName = "Last name is required";
-        if (!formData.email.trim()) newErrors.email = "Email is required";
-        else if (!/\S+@\S+\.\S+/.test(formData.email)) newErrors.email = "Email is invalid";
-        if (!formData.password) newErrors.password = "Password is required";
-        else if (formData.password.length < 6) newErrors.password = "Password must be at least 6 characters";
-        if (formData.password !== formData.confirmPassword) newErrors.confirmPassword = "Passwords do not match";
-
-        setErrors(newErrors);
-        return Object.keys(newErrors).length === 0;
+        setFormData({ ...formData, [e.target.name]: e.target.value });
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         
-        if (!validateForm()) return;
+        if (formData.password !== formData.confirmPassword) {
+            toast.error("Passwords do not match");
+            return;
+        }
+        
+        if (formData.password.length < 6) {
+            toast.error("Password must be at least 6 characters");
+            return;
+        }
         
         setLoading(true);
         
-        const { confirmPassword, ...registerData } = formData;
-        const result = await register(registerData);
-        
-        if (result.success) {
-            navigate('/');
+        try {
+            const response = await fetch(`${API_URL}/auth/register`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    firstName: formData.firstName,
+                    lastName: formData.lastName,
+                    email: formData.email,
+                    phone: formData.phone,
+                    password: formData.password
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                // Auto login after registration
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('user', JSON.stringify({
+                    id: data._id,
+                    firstName: data.firstName,
+                    lastName: data.lastName,
+                    email: data.email,
+                    role: data.role
+                }));
+                
+                toast.success("Registration successful! Welcome!");
+                navigate("/");
+            } else {
+                toast.error(data.message || "Registration failed. Please try again.");
+            }
+        } catch (error) {
+            console.error("Registration error:", error);
+            toast.error("Server error. Please try again later.");
+        } finally {
+            setLoading(false);
         }
-        
-        setLoading(false);
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-indigo-100 flex items-center justify-center py-12 px-4">
-            <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8">
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4">
+            <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8">
                 <div className="text-center mb-8">
                     <h2 className="text-3xl font-bold text-gray-900">Create Account</h2>
-                    <p className="text-gray-600 mt-2">Join Zamed today</p>
+                    <p className="text-gray-600 mt-2">Join us today</p>
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-5">
+                <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                First Name *
+                            </label>
                             <input
                                 type="text"
                                 name="firstName"
                                 value={formData.firstName}
                                 onChange={handleChange}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="First Name"
+                                required
                             />
-                            {errors.firstName && <p className="text-red-500 text-xs mt-1">{errors.firstName}</p>}
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Last Name *
+                            </label>
                             <input
                                 type="text"
                                 name="lastName"
                                 value={formData.lastName}
                                 onChange={handleChange}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="Last Name"
+                                required
                             />
-                            {errors.lastName && <p className="text-red-500 text-xs mt-1">{errors.lastName}</p>}
                         </div>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Email Address *</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Email Address *
+                        </label>
                         <div className="relative">
                             <FiMail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                             <input
@@ -106,26 +128,33 @@ const Register = () => {
                                 value={formData.email}
                                 onChange={handleChange}
                                 className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="Email address"
+                                placeholder="you@example.com"
+                                required
                             />
                         </div>
-                        {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
-                        <input
-                            type="tel"
-                            name="phone"
-                            value={formData.phone}
-                            onChange={handleChange}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="Phone number"
-                        />
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Phone Number
+                        </label>
+                        <div className="relative">
+                            <FiPhone className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                            <input
+                                type="tel"
+                                name="phone"
+                                value={formData.phone}
+                                onChange={handleChange}
+                                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="+1234567890"
+                            />
+                        </div>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Password *
+                        </label>
                         <div className="relative">
                             <FiLock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                             <input
@@ -134,7 +163,8 @@ const Register = () => {
                                 value={formData.password}
                                 onChange={handleChange}
                                 className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="Password"
+                                placeholder="••••••••"
+                                required
                             />
                             <button
                                 type="button"
@@ -144,43 +174,40 @@ const Register = () => {
                                 {showPassword ? <FiEyeOff className="text-gray-400" /> : <FiEye className="text-gray-400" />}
                             </button>
                         </div>
-                        {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password}</p>}
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password *</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Confirm Password *
+                        </label>
                         <div className="relative">
                             <FiLock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                             <input
-                                type={showConfirmPassword ? "text" : "password"}
+                                type={showPassword ? "text" : "password"}
                                 name="confirmPassword"
                                 value={formData.confirmPassword}
                                 onChange={handleChange}
-                                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="Confirm password"
+                                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="••••••••"
+                                required
                             />
-                            <button
-                                type="button"
-                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                className="absolute right-3 top-1/2 transform -translate-y-1/2"
-                            >
-                                {showConfirmPassword ? <FiEyeOff className="text-gray-400" /> : <FiEye className="text-gray-400" />}
-                            </button>
                         </div>
-                        {errors.confirmPassword && <p className="text-red-500 text-xs mt-1">{errors.confirmPassword}</p>}
                     </div>
 
                     <button
                         type="submit"
                         disabled={loading}
-                        className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-2 rounded-lg font-semibold hover:from-blue-700 hover:to-purple-700 transition-all disabled:opacity-50"
+                        className="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
                     >
-                        {loading ? "Creating Account..." : "Create Account"}
+                        {loading ? "Creating account..." : "Register"}
                     </button>
                 </form>
 
                 <p className="text-center mt-6 text-gray-600">
-                    Already have an account? <Link to="/login" className="text-blue-600 font-semibold">Login</Link>
+                    Already have an account?{" "}
+                    <Link to="/login" className="text-blue-600 font-semibold hover:text-blue-800">
+                        Login
+                    </Link>
                 </p>
             </div>
         </div>

@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import { useCart } from "../context/CartContext";
 import { FiMail, FiLock, FiEye, FiEyeOff } from "react-icons/fi";
 import { toast } from "sonner";
+
+const API_URL = import.meta.env.VITE_API_URL || 'https://zamed-backend.onrender.com/api';
 
 const Login = () => {
     const [email, setEmail] = useState("");
@@ -11,30 +11,52 @@ const Login = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
-    const { login } = useAuth();
-    const { mergeGuestCart } = useCart();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setLoading(true);
         
-        const result = await login(email, password);
-        
-        if (result.success) {
-            // Merge guest cart with user's cart
-            mergeGuestCart(email);
+        try {
+            const response = await fetch(`${API_URL}/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ email, password })
+            });
             
-            // Check if there was a redirect after login
-            const redirectTo = localStorage.getItem('redirectAfterLogin');
-            if (redirectTo) {
-                localStorage.removeItem('redirectAfterLogin');
-                navigate(redirectTo);
+            const data = await response.json();
+            
+            if (data.success) {
+                // Store user data and token
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('user', JSON.stringify({
+                    id: data._id,
+                    firstName: data.firstName,
+                    lastName: data.lastName,
+                    email: data.email,
+                    role: data.role
+                }));
+                
+                toast.success(`Welcome back, ${data.firstName}!`);
+                
+                // Check for redirect after login
+                const redirectTo = localStorage.getItem('redirectAfterLogin');
+                if (redirectTo) {
+                    localStorage.removeItem('redirectAfterLogin');
+                    navigate(redirectTo);
+                } else {
+                    navigate("/");
+                }
             } else {
-                navigate("/");
+                toast.error(data.message || "Login failed. Please check your credentials.");
             }
+        } catch (error) {
+            console.error("Login error:", error);
+            toast.error("Server error. Please try again later.");
+        } finally {
+            setLoading(false);
         }
-        
-        setLoading(false);
     };
 
     return (
