@@ -199,51 +199,216 @@ const Settings = () => {
         document.documentElement.style.setProperty('--font-size-base', fontSize);
     };
 
-    const saveToLocalStorage = () => {
-        const siteInfoData = {
-            siteName: settings.siteName,
-            siteEmail: settings.siteEmail,
-            sitePhone: settings.sitePhone,
-            siteAddress: settings.siteAddress,
-            currency: settings.currency,
-            logo: settings.logo,
-            favicon: settings.favicon,
-            heroTitle: settings.heroTitle,
-            heroSubtitle: settings.heroSubtitle,
-            heroButtonText: settings.heroButtonText,
-            heroImage: settings.heroImage,
-            footerText: settings.footerText,
-            slides: settings.slides.filter(s => s.active !== false),
-            socialLinks: {
-                facebook: settings.facebookUrl,
-                instagram: settings.instagramUrl,
-                twitter: settings.twitterUrl,
-                youtube: settings.youtubeUrl,
-                linkedin: settings.linkedinUrl
-            },
-            fontSettings: {
-                primaryFont: settings.primaryFont,
-                headingFont: settings.headingFont,
-                bodyFont: settings.bodyFont,
-                fontScale: settings.fontScale
+    /**
+     * Aggressively compress image to fit in localStorage
+     */
+    const compressImage = (base64String, maxWidth = 400, quality = 0.4) => {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    // Resize aggressively
+                    if (width > maxWidth) {
+                        height = (height * maxWidth) / width;
+                        width = maxWidth;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Use JPEG with low quality
+                    const compressed = canvas.toDataURL('image/jpeg', quality);
+                    resolve(compressed);
+                } catch (error) {
+                    reject(error);
+                }
+            };
+            img.onerror = () => reject(new Error('Failed to load image for compression'));
+            img.src = base64String;
+        });
+    };
+
+    /**
+     * Save settings to localStorage with size limits and fallback
+     */
+    const saveToLocalStorage = async () => {
+        try {
+            // Create a clean version without large images
+            const siteInfoData = {
+                siteName: settings.siteName,
+                siteEmail: settings.siteEmail,
+                sitePhone: settings.sitePhone,
+                siteAddress: settings.siteAddress,
+                currency: settings.currency,
+                heroTitle: settings.heroTitle,
+                heroSubtitle: settings.heroSubtitle,
+                heroButtonText: settings.heroButtonText,
+                footerText: settings.footerText,
+                socialLinks: {
+                    facebook: settings.facebookUrl,
+                    instagram: settings.instagramUrl,
+                    twitter: settings.twitterUrl,
+                    youtube: settings.youtubeUrl,
+                    linkedin: settings.linkedinUrl
+                },
+                fontSettings: {
+                    primaryFont: settings.primaryFont,
+                    headingFont: settings.headingFont,
+                    bodyFont: settings.bodyFont,
+                    fontScale: settings.fontScale
+                }
+            };
+
+            // Store images separately with size limits
+            const imagesData = {
+                logo: await compressAndStoreImage(settings.logo, 'logo', 200, 0.5),
+                favicon: await compressAndStoreImage(settings.favicon, 'favicon', 64, 0.4),
+                heroImage: await compressAndStoreImage(settings.heroImage, 'hero', 600, 0.4),
+                footerLogo: await compressAndStoreImage(settings.footerLogo, 'footerLogo', 200, 0.5),
+                slides: await compressSlideImages(settings.slides)
+            };
+
+            // Store settings without images
+            const settingsWithoutImages = { ...settings };
+            delete settingsWithoutImages.logo;
+            delete settingsWithoutImages.heroImage;
+            delete settingsWithoutImages.footerLogo;
+            delete settingsWithoutImages.favicon;
+            delete settingsWithoutImages.slides;
+
+            // Try to save, if fails, use IndexedDB as fallback
+            try {
+                localStorage.setItem('site_settings', JSON.stringify(settingsWithoutImages));
+                localStorage.setItem('site_info', JSON.stringify(siteInfoData));
+                localStorage.setItem('site_images', JSON.stringify(imagesData));
+                
+                // Dispatch events
+                window.dispatchEvent(new Event('storage'));
+                window.dispatchEvent(new CustomEvent('settingsSaved'));
+                window.dispatchEvent(new CustomEvent('siteInfoUpdated', { detail: siteInfoData }));
+                
+                // Update favicon
+                if (settings.favicon) {
+                    updateFavicon(settings.favicon);
+                }
+                
+                toast.success('Settings saved successfully!');
+            } catch (storageError) {
+                console.warn('localStorage quota exceeded, trying IndexedDB fallback...');
+                await saveImagesToIndexedDB(imagesData);
+                toast.success('Settings saved (large images stored in IndexedDB)');
             }
-        };
-        
-        localStorage.setItem('site_settings', JSON.stringify(settings));
-        localStorage.setItem('site_info', JSON.stringify(siteInfoData));
-        
-        window.dispatchEvent(new Event('storage'));
-        window.dispatchEvent(new CustomEvent('settingsSaved'));
-        window.dispatchEvent(new CustomEvent('siteInfoUpdated', { detail: siteInfoData }));
-        
-        // Update favicon
-        if (settings.favicon) {
-            const link = document.querySelector("link[rel*='icon']") || document.createElement('link');
-            link.type = 'image/x-icon';
-            link.rel = 'shortcut icon';
-            link.href = settings.favicon;
-            document.getElementsByTagName('head')[0].appendChild(link);
+        } catch (error) {
+            console.error('Error saving settings:', error);
+            toast.error('Failed to save settings. Please try again with smaller images.');
         }
+    };
+
+    /**
+     * Compress a single image with size limit
+     */
+    const compressAndStoreImage = async (imageData, type, maxWidth, quality) => {
+        if (!imageData) return null;
+        
+        // If it's already small enough, return as-is
+        if (imageData.length < 50000) { // 50KB
+            return imageData;
+        }
+        
+        try {
+            return await compressImage(imageData, maxWidth, quality);
+        } catch (error) {
+            console.warn(`Failed to compress ${type}:`, error);
+            return imageData; // Return original as fallback
+        }
+    };
+
+    /**
+     * Compress all slide images
+     */
+    const compressSlideImages = async (slides) => {
+        const compressedSlides = [];
+        for (const slide of slides) {
+            let compressedImage = slide.image;
+            if (slide.image && slide.image.length > 50000) {
+                compressedImage = await compressImage(slide.image, 600, 0.4);
+            }
+            compressedSlides.push({
+                ...slide,
+                image: compressedImage
+            });
+        }
+        return compressedSlides;
+    };
+
+    /**
+     * Save images to IndexedDB as fallback
+     */
+    const saveImagesToIndexedDB = (imagesData) => {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open('ZamedImageStore', 1);
+            
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains('images')) {
+                    db.createObjectStore('images');
+                }
+            };
+            
+            request.onsuccess = (event) => {
+                const db = event.target.result;
+                const transaction = db.transaction(['images'], 'readwrite');
+                const store = transaction.objectStore('images');
+                
+                // Store each image with a key
+                const keys = ['logo', 'favicon', 'heroImage', 'footerLogo', 'slides'];
+                const values = [
+                    imagesData.logo,
+                    imagesData.favicon,
+                    imagesData.heroImage,
+                    imagesData.footerLogo,
+                    JSON.stringify(imagesData.slides)
+                ];
+                
+                keys.forEach((key, index) => {
+                    if (values[index]) {
+                        store.put(values[index], `site_image_${key}`);
+                    }
+                });
+                
+                transaction.oncomplete = () => {
+                    resolve();
+                };
+                
+                transaction.onerror = () => {
+                    reject(transaction.error);
+                };
+            };
+            
+            request.onerror = () => {
+                reject(request.error);
+            };
+        });
+    };
+
+    const updateFavicon = (faviconUrl) => {
+        if (!faviconUrl) return;
+        
+        let link = document.querySelector("link[rel*='icon']");
+        if (!link) {
+            link = document.createElement('link');
+            link.rel = 'shortcut icon';
+            document.head.appendChild(link);
+        }
+        link.href = faviconUrl;
     };
 
     const loadSettings = async () => {
@@ -296,24 +461,28 @@ const Settings = () => {
     const loadLocalSettings = () => {
         const savedSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
         const savedSiteInfo = JSON.parse(localStorage.getItem('site_info') || '{}');
+        const savedImages = JSON.parse(localStorage.getItem('site_images') || '{}');
         
         const mergedSettings = { ...settings, ...savedSettings, ...savedSiteInfo };
         setSettings(mergedSettings);
         setSiteNameInput(mergedSettings.siteName || settings.siteName);
         
         setImagePreviews({
-            logo: mergedSettings.logo || null,
-            heroImage: mergedSettings.heroImage || null,
-            footerLogo: mergedSettings.footerLogo || null,
-            favicon: mergedSettings.favicon || null
+            logo: savedImages.logo || mergedSettings.logo || null,
+            heroImage: savedImages.heroImage || mergedSettings.heroImage || null,
+            footerLogo: savedImages.footerLogo || mergedSettings.footerLogo || null,
+            favicon: savedImages.favicon || mergedSettings.favicon || null
         });
         
-        if (mergedSettings.slides && Array.isArray(mergedSettings.slides)) {
-            const slidesMap = {};
-            mergedSettings.slides.forEach((slide, idx) => {
-                if (slide.image) slidesMap[idx] = slide.image;
-            });
-            setSlideImages(slidesMap);
+        if (savedImages.slides || mergedSettings.slides) {
+            const slidesData = savedImages.slides || mergedSettings.slides;
+            if (Array.isArray(slidesData)) {
+                const slidesMap = {};
+                slidesData.forEach((slide, idx) => {
+                    if (slide.image) slidesMap[idx] = slide.image;
+                });
+                setSlideImages(slidesMap);
+            }
         }
         
         applyFontsToDocument();
@@ -474,7 +643,7 @@ const Settings = () => {
         setIsSaving(true);
         const token = getToken();
         
-        saveToLocalStorage();
+        await saveToLocalStorage();
         
         try {
             const response = await fetch(`${API_URL}/settings`, {
@@ -489,7 +658,7 @@ const Settings = () => {
             if (response.ok) {
                 const data = await response.json();
                 if (data.success) {
-                    toast.success("Settings saved successfully!");
+                    toast.success("Settings saved to server!");
                     setLastSaved(new Date());
                     applyFontsToDocument();
                     return;
@@ -497,7 +666,7 @@ const Settings = () => {
             }
             throw new Error("API failed");
         } catch (error) {
-            console.error("Error saving settings:", error);
+            console.error("Error saving settings to server:", error);
             toast.success("Settings saved locally!");
             setLastSaved(new Date());
             applyFontsToDocument();
@@ -572,7 +741,7 @@ const Settings = () => {
                 />
                 <div className="flex-1">
                     <p className="text-xs text-gray-500">{recommended}</p>
-                    <p className="text-xs text-gray-400 mt-1">JPG, PNG, GIF (Max 5MB) | Crop supported</p>
+                    <p className="text-xs text-gray-400 mt-1">JPG, PNG, GIF (Max 5MB) | Auto-compressed</p>
                 </div>
             </div>
         </div>

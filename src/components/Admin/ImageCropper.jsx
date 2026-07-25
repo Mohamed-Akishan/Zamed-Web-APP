@@ -11,6 +11,7 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
     const [zoom, setZoom] = useState(1);
     const [rotation, setRotation] = useState(0);
     const [isLoading, setIsLoading] = useState(true);
+    const [isProcessing, setIsProcessing] = useState(false);
     const imgRef = useRef(null);
     const [originalImage, setOriginalImage] = useState(null);
     const [imgDimensions, setImgDimensions] = useState({ width: 0, height: 0 });
@@ -20,6 +21,10 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
         const img = new Image();
         img.onload = () => {
             setOriginalImage(img);
+            setIsLoading(false);
+        };
+        img.onerror = () => {
+            toast.error("Failed to load image");
             setIsLoading(false);
         };
         img.src = image;
@@ -39,11 +44,56 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
         setCrop(defaultCrop);
     };
 
-    const handleCropComplete = () => {
+    /**
+     * Compress image to reduce size before saving to localStorage
+     * @param {string} base64String - The base64 image string
+     * @param {number} maxWidth - Maximum width of the image
+     * @param {number} quality - JPEG quality (0-1)
+     * @returns {Promise<string>} - Compressed base64 string
+     */
+    const compressImage = (base64String, maxWidth = 600, quality = 0.6) => {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    // Resize if too large
+                    if (width > maxWidth) {
+                        height = (height * maxWidth) / width;
+                        width = maxWidth;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Use better image smoothing
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Compress to JPEG with quality
+                    const compressed = canvas.toDataURL('image/jpeg', quality);
+                    resolve(compressed);
+                } catch (error) {
+                    reject(error);
+                }
+            };
+            img.onerror = () => reject(new Error('Failed to load image for compression'));
+            img.src = base64String;
+        });
+    };
+
+    const handleCropComplete = async () => {
         if (!completedCrop || !imgRef.current) {
             toast.error("Please select a crop area first");
             return;
         }
+
+        setIsProcessing(true);
 
         try {
             const canvas = document.createElement('canvas');
@@ -58,6 +108,8 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
             canvas.width = cropWidth;
             canvas.height = cropHeight;
             const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
             
             ctx.drawImage(
                 imgRef.current,
@@ -71,32 +123,63 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
                 cropHeight
             );
             
+            let croppedImage;
+            
             if (rotation !== 0) {
                 const rad = rotation * Math.PI / 180;
                 const rotatedCanvas = document.createElement('canvas');
                 rotatedCanvas.width = cropHeight;
                 rotatedCanvas.height = cropWidth;
                 const rotatedCtx = rotatedCanvas.getContext('2d');
+                rotatedCtx.imageSmoothingEnabled = true;
+                rotatedCtx.imageSmoothingQuality = 'high';
                 
                 rotatedCtx.translate(rotatedCanvas.width / 2, rotatedCanvas.height / 2);
                 rotatedCtx.rotate(rad);
                 rotatedCtx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
                 
-                const rotatedImage = rotatedCanvas.toDataURL('image/jpeg', 0.9);
-                onCropComplete(rotatedImage);
-                toast.success("Image cropped and rotated successfully!");
-                onClose();
-                return;
+                croppedImage = rotatedCanvas.toDataURL('image/jpeg', 0.85);
+            } else {
+                croppedImage = canvas.toDataURL('image/jpeg', 0.85);
             }
             
-            const croppedImage = canvas.toDataURL('image/jpeg', 0.9);
-            onCropComplete(croppedImage);
-            toast.success("Image cropped successfully!");
+            // COMPRESS THE IMAGE before saving to avoid localStorage quota exceeded
+            toast.loading("Compressing image...", { id: "compress" });
+            
+            // Determine compression settings based on image type
+            let maxWidth = 600;
+            let quality = 0.6;
+            
+            // For favicon, use smaller size
+            if (cropType === 'favicon' || cropWidth < 100 || cropHeight < 100) {
+                maxWidth = 64;
+                quality = 0.5;
+            }
+            // For logo, use medium size
+            else if (cropType === 'logo' || cropType === 'footerLogo') {
+                maxWidth = 200;
+                quality = 0.7;
+            }
+            // For hero images and slides, use larger but still compressed
+            else if (cropType === 'heroImage' || cropType === 'slide') {
+                maxWidth = 800;
+                quality = 0.5;
+            }
+            
+            const compressedImage = await compressImage(croppedImage, maxWidth, quality);
+            
+            toast.dismiss("compress");
+            
+            // Pass the compressed image back
+            onCropComplete(compressedImage);
+            toast.success(`Image cropped and compressed successfully! (${Math.round(compressedImage.length / 1024)}KB)`);
             onClose();
             
         } catch (error) {
             console.error("Crop error:", error);
             toast.error("Failed to crop image. Please try again.");
+        } finally {
+            setIsProcessing(false);
         }
     };
 
@@ -145,9 +228,22 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
     };
 
     const handleSkipCrop = () => {
-        onCropComplete(image);
-        toast.success("Using original image");
-        onClose();
+        // Still compress even when skipping crop
+        toast.loading("Compressing image...", { id: "compress" });
+        
+        compressImage(image, 600, 0.6)
+            .then(compressed => {
+                toast.dismiss("compress");
+                onCropComplete(compressed);
+                toast.success(`Image compressed successfully! (${Math.round(compressed.length / 1024)}KB)`);
+                onClose();
+            })
+            .catch(() => {
+                toast.dismiss("compress");
+                onCropComplete(image);
+                toast.warning("Using original image (compression failed)");
+                onClose();
+            });
     };
 
     const getAspectRatioText = () => {
@@ -269,7 +365,7 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
                     </div>
                 </div>
 
-                {/* Footer - Action Buttons - Made more prominent */}
+                {/* Footer - Action Buttons */}
                 <div className="bg-white border-t p-5 sticky bottom-0">
                     <div className="flex flex-col gap-3">
                         {/* Tips Section */}
@@ -279,7 +375,7 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
                                 <span>• Drag corners to resize crop area</span>
                                 <span>• Click & drag inside to move selection</span>
                                 <span>• Use zoom for precise cropping</span>
-                                <span>• Press "Skip Crop" to use original image</span>
+                                <span>• Images are automatically compressed to save storage</span>
                             </p>
                         </div>
                         
@@ -287,21 +383,33 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
                         <div className="flex gap-3">
                             <button
                                 onClick={handleSkipCrop}
-                                className="flex-1 px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-all duration-200 font-semibold text-base shadow-md"
+                                disabled={isProcessing}
+                                className="flex-1 px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-all duration-200 font-semibold text-base shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 Skip Crop
                             </button>
                             <button
                                 onClick={onClose}
-                                className="flex-1 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-200 font-semibold text-base shadow-md"
+                                disabled={isProcessing}
+                                className="flex-1 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-200 font-semibold text-base shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleCropComplete}
-                                className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-200 flex items-center justify-center gap-2 font-bold text-base shadow-lg"
+                                disabled={isProcessing}
+                                className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-200 flex items-center justify-center gap-2 font-bold text-base shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                <FiCheck size={20} /> Apply Crop
+                                {isProcessing ? (
+                                    <>
+                                        <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                                        Processing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <FiCheck size={20} /> Apply Crop
+                                    </>
+                                )}
                             </button>
                         </div>
                     </div>
