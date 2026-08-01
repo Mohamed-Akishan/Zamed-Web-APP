@@ -1,3 +1,4 @@
+// src/pages/CollectionPage.jsx
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import { ShoppingBag, Star, Home, X, Filter, Heart, Search, MessageCircle, ChevronDown, ChevronUp, SlidersHorizontal } from "lucide-react";
@@ -28,6 +29,15 @@ const CollectionPage = () => {
     const [selectedPriceRange, setSelectedPriceRange] = useState("");
     const [availableBrands, setAvailableBrands] = useState([]);
     const [activeFilterCount, setActiveFilterCount] = useState(0);
+    const [settings, setSettings] = useState({
+        showProductRatings: true,
+        showProductColors: true,
+        showProductSizes: true,
+        showSaleBadge: true,
+        showQuickAdd: true,
+        showProductBrand: true,
+        productsPerRow: 4
+    });
     
     const [expandedSections, setExpandedSections] = useState({
         categories: true,
@@ -45,6 +55,40 @@ const CollectionPage = () => {
         selectedBrands: [],
         sortBy: "featured"
     });
+
+    // Load settings from localStorage
+    useEffect(() => {
+        const loadSettings = () => {
+            const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+            setSettings(prev => ({
+                ...prev,
+                ...siteSettings,
+                showProductRatings: siteSettings.showProductRatings !== undefined ? siteSettings.showProductRatings : true,
+                showProductColors: siteSettings.showProductColors !== undefined ? siteSettings.showProductColors : true,
+                showProductSizes: siteSettings.showProductSizes !== undefined ? siteSettings.showProductSizes : true,
+                showSaleBadge: siteSettings.showSaleBadge !== undefined ? siteSettings.showSaleBadge : true,
+                showQuickAdd: siteSettings.showQuickAdd !== undefined ? siteSettings.showQuickAdd : true,
+                showProductBrand: siteSettings.showProductBrand !== undefined ? siteSettings.showProductBrand : true,
+                productsPerRow: siteSettings.productsPerRow || 4
+            }));
+        };
+
+        loadSettings();
+
+        const handleSettingsUpdate = () => {
+            loadSettings();
+        };
+
+        window.addEventListener('settingsSaved', handleSettingsUpdate);
+        window.addEventListener('siteInfoUpdated', handleSettingsUpdate);
+        window.addEventListener('storage', handleSettingsUpdate);
+
+        return () => {
+            window.removeEventListener('settingsSaved', handleSettingsUpdate);
+            window.removeEventListener('siteInfoUpdated', handleSettingsUpdate);
+            window.removeEventListener('storage', handleSettingsUpdate);
+        };
+    }, []);
 
     // Categories
     const menCategoriesList = [
@@ -125,7 +169,6 @@ const CollectionPage = () => {
 
     const priceRanges = getPriceRanges();
 
-    // Helper function to parse bullet points from text - each line becomes a bullet point
     const parseBulletPoints = (text) => {
         if (!text) return [];
         const lines = text.split('\n');
@@ -133,7 +176,6 @@ const CollectionPage = () => {
         for (const line of lines) {
             const trimmed = line.trim();
             if (trimmed) {
-                // Remove existing bullet symbols if present, then add fresh one
                 let cleanText = trimmed.replace(/^[•\-*]\s*/, '');
                 bullets.push(cleanText);
             }
@@ -141,7 +183,6 @@ const CollectionPage = () => {
         return bullets;
     };
 
-    // Get clean description (remove any ## headers if present)
     const getCleanDescription = (text) => {
         if (!text) return "";
         let clean = text;
@@ -151,13 +192,13 @@ const CollectionPage = () => {
     };
 
     useEffect(() => {
-        const loadSettings = () => {
+        const loadCurrency = () => {
             const settings = JSON.parse(localStorage.getItem('site_settings') || '{}');
             const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
             setCurrencySymbol(symbols[settings.currency] || "$");
             setCurrencyCode(settings.currency || "USD");
         };
-        loadSettings();
+        loadCurrency();
         
         const userData = localStorage.getItem('user');
         if (userData) {
@@ -413,6 +454,14 @@ const CollectionPage = () => {
         return colorMap[color] || '#cccccc';
     };
 
+    const getGridCols = () => {
+        const perRow = parseInt(settings.productsPerRow) || 4;
+        if (perRow === 3) return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
+        if (perRow === 5) return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
+        if (perRow === 2) return "grid-cols-1 sm:grid-cols-2";
+        return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+    };
+
     const ProductCard = ({ product }) => {
         const isFavorite = favorites.some(item => item.id === product.id);
         const [currentColor, setCurrentColor] = useState(product.colors?.[0] || "");
@@ -465,10 +514,13 @@ const CollectionPage = () => {
                             alt={product.name} 
                             className="w-full h-full object-contain transition-transform duration-500 group-hover:scale-105"
                             style={{ maxHeight: '280px', objectFit: 'contain' }}
+                            onError={(e) => {
+                                e.target.src = 'https://via.placeholder.com/280x280?text=No+Image';
+                            }}
                         />
                     </div>
                     
-                    {product.originalPrice && (
+                    {settings.showSaleBadge && product.originalPrice && (
                         <div className="absolute top-3 left-3 bg-red-500 text-white px-2 py-1 rounded-lg text-xs font-bold z-10">SALE</div>
                     )}
                     
@@ -476,7 +528,7 @@ const CollectionPage = () => {
                         <Heart size={16} className={isFavorite ? "text-red-500 fill-current" : "text-gray-400"} />
                     </button>
                     
-                    {product.colors && product.colors.length > 0 && (
+                    {settings.showProductColors && product.colors && product.colors.length > 0 && (
                         <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-2 py-2 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300">
                             {product.colors.slice(0, 5).map((color, idx) => (
                                 <div key={idx} className="relative" onMouseEnter={() => handleColorHover(color)} onMouseLeave={handleColorLeave}>
@@ -496,36 +548,47 @@ const CollectionPage = () => {
                     <h3 className="font-semibold text-gray-800 mb-1 text-base line-clamp-1 cursor-pointer hover:text-blue-600 transition-colors" onClick={handleNameClick}>
                         {product.name}
                     </h3>
-                    <p className="text-gray-500 text-xs mb-2">{product.brand || "Zamed Premium"}</p>
                     
-                    <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-1">
-                            <div className="flex items-center">
-                                {[1, 2, 3, 4, 5].map((star) => (
-                                    <Star key={star} size={12} className={`${star <= Math.round(productRating) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
-                                ))}
+                    {settings.showProductBrand && (
+                        <p className="text-gray-500 text-xs mb-2">{product.brand || "Zamed Premium"}</p>
+                    )}
+                    
+                    {settings.showProductRatings && (
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-1">
+                                <div className="flex items-center">
+                                    {[1, 2, 3, 4, 5].map((star) => (
+                                        <Star key={star} size={12} className={`${star <= Math.round(productRating) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
+                                    ))}
+                                </div>
+                                <button onClick={(e) => { e.stopPropagation(); goToProductReviews(product.id); }} className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 transition-colors">
+                                    <MessageCircle size={10} /> ({productReviews} {productReviews === 1 ? 'review' : 'reviews'})
+                                </button>
                             </div>
-                            <button onClick={(e) => { e.stopPropagation(); goToProductReviews(product.id); }} className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 transition-colors">
-                                <MessageCircle size={10} /> ({productReviews} {productReviews === 1 ? 'review' : 'reviews'})
-                            </button>
                         </div>
-                    </div>
+                    )}
                     
                     <div className="flex items-center gap-2 mb-3">
                         <span className="text-xl font-bold text-gray-900">{currencySymbol}{product.price.toLocaleString()}</span>
-                        {product.originalPrice && <span className="text-xs text-gray-400 line-through">{currencySymbol}{product.originalPrice.toLocaleString()}</span>}
+                        {settings.showSaleBadge && product.originalPrice && <span className="text-xs text-gray-400 line-through">{currencySymbol}{product.originalPrice.toLocaleString()}</span>}
                     </div>
                     
-                    {currentColor && (
+                    {settings.showProductColors && currentColor && (
                         <div className="flex items-center gap-2 mb-3">
                             <div className="w-4 h-4 rounded-full border border-gray-300" style={{ backgroundColor: getColorSwatch(currentColor) }} />
                             <span className="text-xs text-gray-500">Color: {currentColor}</span>
                         </div>
                     )}
                     
-                    <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); setSelectedProduct(product); setSelectedColor(product.colors?.[0] || ""); setSelectedSize(product.sizes?.[0] || ""); setCurrentMainImage(product.image); setQuantity(1); }} className="w-full bg-gray-900 text-white py-2 rounded-lg font-semibold text-sm hover:bg-gray-800 transition-all flex items-center justify-center gap-2 mt-auto">
-                        <ShoppingBag size={14} /> Quick Shop
-                    </button>
+                    {settings.showQuickAdd ? (
+                        <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); setSelectedProduct(product); setSelectedColor(product.colors?.[0] || ""); setSelectedSize(product.sizes?.[0] || ""); setCurrentMainImage(product.image); setQuantity(1); }} className="w-full bg-gray-900 text-white py-2 rounded-lg font-semibold text-sm hover:bg-gray-800 transition-all flex items-center justify-center gap-2 mt-auto">
+                            <ShoppingBag size={14} /> Quick Shop
+                        </button>
+                    ) : (
+                        <button onClick={(e) => { e.stopPropagation(); navigate(`/product/${product.id}`); }} className="w-full bg-gray-900 text-white py-2 rounded-lg font-semibold text-sm hover:bg-gray-800 transition-all flex items-center justify-center gap-2 mt-auto">
+                            <Eye size={14} /> View Details
+                        </button>
+                    )}
                 </div>
             </motion.div>
         );
@@ -538,14 +601,9 @@ const CollectionPage = () => {
         const [mainImage, setMainImage] = useState(product.image);
         const [activeInfoTab, setActiveInfoTab] = useState("description");
         
-        // Get data from product
         const description = getCleanDescription(product.description || "");
-        
-        // Get product details - parse bullet points line by line
         const detailsText = product.details || "";
         const detailsBullets = parseBulletPoints(detailsText);
-        
-        // Get shipping information - parse bullet points line by line
         const shippingText = product.shipping || "";
         const shippingBullets = parseBulletPoints(shippingText);
         
@@ -562,7 +620,7 @@ const CollectionPage = () => {
         };
         
         const handleAddToCartModal = () => {
-            if (product.sizes?.length > 0 && !localSize) {
+            if (settings.showProductSizes && product.sizes?.length > 0 && !localSize) {
                 toast.error("Please select a size");
                 return;
             }
@@ -601,10 +659,10 @@ const CollectionPage = () => {
                             {/* Left Column - Images */}
                             <div className="space-y-4">
                                 <div className="bg-white rounded-2xl overflow-hidden flex items-center justify-center" style={{ height: '400px' }}>
-                                    <img src={mainImage} alt={product.name} className="w-full h-full object-contain" />
+                                    <img src={mainImage} alt={product.name} className="w-full h-full object-contain" onError={(e) => { e.target.src = 'https://via.placeholder.com/400x400?text=No+Image'; }} />
                                 </div>
                                 
-                                {product.colors?.length > 1 && (
+                                {settings.showProductColors && product.colors?.length > 1 && (
                                     <div>
                                         <p className="text-sm font-medium text-gray-700 mb-3">Available Colors:</p>
                                         <div className="flex gap-3 flex-wrap">
@@ -614,7 +672,7 @@ const CollectionPage = () => {
                                                 return (
                                                     <div key={idx} className={`relative cursor-pointer transition-all duration-200 ${isSelected ? 'scale-105' : 'hover:scale-105'}`} onClick={() => handleColorSelect(color)}>
                                                         <div className={`w-16 h-16 rounded-lg border-2 overflow-hidden ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-300'}`}>
-                                                            <img src={colorImage} alt={color} className="w-full h-full object-cover" />
+                                                            <img src={colorImage} alt={color} className="w-full h-full object-cover" onError={(e) => { e.target.src = 'https://via.placeholder.com/64x64?text=No+Image'; }} />
                                                         </div>
                                                         <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">{color}</div>
                                                         {isSelected && <div className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 rounded-full border-2 border-white"></div>}
@@ -626,66 +684,48 @@ const CollectionPage = () => {
                                 )}
                             </div>
                             
-                            {/* Right Column - Product Info with 3 Tabs */}
+                            {/* Right Column - Product Info */}
                             <div className="space-y-4">
                                 <div>
                                     <h2 className="text-2xl font-bold text-gray-900">{product.name}</h2>
-                                    <p className="text-gray-500 text-sm mt-1">{product.brand || "Zamed Premium"}</p>
+                                    {settings.showProductBrand && (
+                                        <p className="text-gray-500 text-sm mt-1">{product.brand || "Zamed Premium"}</p>
+                                    )}
                                 </div>
                                 
-                                <div className="flex items-center gap-2">
-                                    <div className="flex items-center">
-                                        {[1, 2, 3, 4, 5].map((star) => (
-                                            <Star key={star} size={16} className={`${star <= Math.round(product.rating || 0) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
-                                        ))}
+                                {settings.showProductRatings && (
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex items-center">
+                                            {[1, 2, 3, 4, 5].map((star) => (
+                                                <Star key={star} size={16} className={`${star <= Math.round(product.rating || 0) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
+                                            ))}
+                                        </div>
+                                        <button onClick={handleViewReviews} className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+                                            <MessageCircle size={14} /> ({product.reviews || 0} reviews)
+                                        </button>
                                     </div>
-                                    <button onClick={handleViewReviews} className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
-                                        <MessageCircle size={14} /> ({product.reviews || 0} reviews)
-                                    </button>
-                                </div>
+                                )}
                                 
                                 <div className="flex items-center gap-3">
                                     <span className="text-3xl font-bold text-blue-600">{currencySymbol}{product.price.toLocaleString()}</span>
-                                    {product.originalPrice && <span className="text-lg text-gray-400 line-through">{currencySymbol}{product.originalPrice.toLocaleString()}</span>}
+                                    {settings.showSaleBadge && product.originalPrice && <span className="text-lg text-gray-400 line-through">{currencySymbol}{product.originalPrice.toLocaleString()}</span>}
                                 </div>
                                 
-                                {/* ========== 3 TABS: Description, Details, Shipping ========== */}
+                                {/* 3 Tabs */}
                                 <div className="border-b border-gray-200">
                                     <div className="flex gap-4">
-                                        <button
-                                            onClick={() => setActiveInfoTab("description")}
-                                            className={`pb-2 px-1 font-medium transition-colors ${activeInfoTab === "description" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-500 hover:text-gray-700"}`}
-                                        >
-                                            Description
-                                        </button>
-                                        <button
-                                            onClick={() => setActiveInfoTab("details")}
-                                            className={`pb-2 px-1 font-medium transition-colors ${activeInfoTab === "details" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-500 hover:text-gray-700"}`}
-                                        >
-                                            Details
-                                        </button>
-                                        <button
-                                            onClick={() => setActiveInfoTab("shipping")}
-                                            className={`pb-2 px-1 font-medium transition-colors ${activeInfoTab === "shipping" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-500 hover:text-gray-700"}`}
-                                        >
-                                            Shipping
-                                        </button>
+                                        <button onClick={() => setActiveInfoTab("description")} className={`pb-2 px-1 font-medium transition-colors ${activeInfoTab === "description" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-500 hover:text-gray-700"}`}>Description</button>
+                                        <button onClick={() => setActiveInfoTab("details")} className={`pb-2 px-1 font-medium transition-colors ${activeInfoTab === "details" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-500 hover:text-gray-700"}`}>Details</button>
+                                        <button onClick={() => setActiveInfoTab("shipping")} className={`pb-2 px-1 font-medium transition-colors ${activeInfoTab === "shipping" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-500 hover:text-gray-700"}`}>Shipping</button>
                                     </div>
                                 </div>
                                 
                                 <div className="min-h-[200px]">
-                                    {/* DESCRIPTION TAB */}
                                     {activeInfoTab === "description" && (
                                         <div className="prose prose-sm max-w-none">
-                                            {description ? (
-                                                <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line">{description}</p>
-                                            ) : (
-                                                <p className="text-gray-400 text-sm">No description available</p>
-                                            )}
+                                            {description ? <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line">{description}</p> : <p className="text-gray-400 text-sm">No description available</p>}
                                         </div>
                                     )}
-                                    
-                                    {/* DETAILS TAB - Bullet points line by line */}
                                     {activeInfoTab === "details" && (
                                         <div>
                                             {detailsBullets.length > 0 ? (
@@ -697,13 +737,9 @@ const CollectionPage = () => {
                                                         </li>
                                                     ))}
                                                 </ul>
-                                            ) : (
-                                                <p className="text-gray-400 text-sm">No product details available</p>
-                                            )}
+                                            ) : <p className="text-gray-400 text-sm">No product details available</p>}
                                         </div>
                                     )}
-                                    
-                                    {/* SHIPPING TAB - Bullet points line by line */}
                                     {activeInfoTab === "shipping" && (
                                         <div>
                                             {shippingBullets.length > 0 ? (
@@ -715,14 +751,12 @@ const CollectionPage = () => {
                                                         </li>
                                                     ))}
                                                 </ul>
-                                            ) : (
-                                                <p className="text-gray-400 text-sm">No shipping information available</p>
-                                            )}
+                                            ) : <p className="text-gray-400 text-sm">No shipping information available</p>}
                                         </div>
                                     )}
                                 </div>
                                 
-                                {localColor && (
+                                {settings.showProductColors && localColor && (
                                     <div className="bg-gray-50 p-3 rounded-xl">
                                         <p className="text-sm text-gray-600">Selected Color:</p>
                                         <div className="flex items-center gap-2 mt-1">
@@ -732,7 +766,7 @@ const CollectionPage = () => {
                                     </div>
                                 )}
                                 
-                                {product.sizes?.length > 0 && (
+                                {settings.showProductSizes && product.sizes?.length > 0 && (
                                     <div>
                                         <h4 className="font-semibold text-gray-900 mb-2">Select Size</h4>
                                         <div className="flex flex-wrap gap-2">
@@ -886,7 +920,11 @@ const CollectionPage = () => {
                 <div className="flex flex-col">
                     <div className="mb-4"><div className="flex gap-2"><div className="flex-1 relative"><Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" /><input type="text" placeholder="Search products..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />{searchQuery && (<button onClick={() => setSearchQuery("")} className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"><X size={14} /></button>)}</div><button onClick={() => setShowFilter(true)} className="flex items-center gap-2 bg-gray-900 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"><Filter size={14} /> Filters{activeFilterCount > 0 && <span className="bg-orange-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center ml-1">{activeFilterCount}</span>}</button></div></div>
                     <div className="flex justify-between items-center mb-3"><div className="text-xs text-gray-500">{filteredProducts.length} products found</div><select value={filters.sortBy} onChange={(e) => updateFilterField('sortBy', e.target.value)} className="p-1.5 border rounded-lg text-xs bg-white w-36"><option value="featured">Featured</option><option value="newest">Newest First</option><option value="price-low-high">Price: Low to High</option><option value="price-high-low">Price: High to Low</option><option value="rating">Top Rated</option></select></div>
-                    {filteredProducts.length === 0 ? (<div className="text-center py-12 bg-white rounded-lg"><ShoppingBag className="h-12 w-12 text-gray-400 mx-auto mb-3" /><h3 className="text-lg font-semibold text-gray-600">No products found</h3><button onClick={clearAllFilters} className="mt-4 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-700 transition-colors">Clear All Filters ({activeFilterCount})</button></div>) : (<div className="grid grid-cols-2 lg:grid-cols-3 gap-4">{filteredProducts.map((product, index) => (<ProductCard key={product.id || index} product={product} />))}</div>)}
+                    {filteredProducts.length === 0 ? (<div className="text-center py-12 bg-white rounded-lg"><ShoppingBag className="h-12 w-12 text-gray-400 mx-auto mb-3" /><h3 className="text-lg font-semibold text-gray-600">No products found</h3><button onClick={clearAllFilters} className="mt-4 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-700 transition-colors">Clear All Filters ({activeFilterCount})</button></div>) : (
+                        <div className={`grid ${getGridCols()} gap-4`}>
+                            {filteredProducts.map((product, index) => (<ProductCard key={product.id || index} product={product} />))}
+                        </div>
+                    )}
                 </div>
             </div>
             <AnimatePresence>{showFilter && (<><div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setShowFilter(false)} /><motion.div initial={{ x: "100%", opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: "100%", opacity: 0 }} transition={{ type: "spring", damping: 25 }} className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-white z-50 shadow-2xl flex flex-col"><FilterSidebar /></motion.div></>)}</AnimatePresence>

@@ -1,13 +1,14 @@
 // src/components/Layout/UserLayout.jsx
 import { Outlet } from "react-router-dom";
 import { useSite } from "../../context/SiteContext";
-import Header from "./Header";
+import Navbar from "./Navbar";
+import Topbar from "./Topbar";
 import Footer from "./Footer";
 import Maintenance from "./Maintenance";
 import { useEffect, useState } from "react";
 
 const UserLayout = () => {
-    const { siteInfo, version } = useSite();
+    const { siteInfo, loading } = useSite();
     const [isRefreshing, setIsRefreshing] = useState(false);
     const isAdmin = !!localStorage.getItem('admin');
 
@@ -55,7 +56,18 @@ const UserLayout = () => {
             window.removeEventListener('siteInfoUpdated', handleAdminUpdate);
             window.removeEventListener('settingsSaved', handleAdminUpdate);
         };
-    }, [version]);
+    }, []);
+
+    if (loading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <p className="text-gray-600">Loading...</p>
+                </div>
+            </div>
+        );
+    }
 
     if (isRefreshing) {
         return (
@@ -68,14 +80,15 @@ const UserLayout = () => {
         );
     }
 
-    if (siteInfo.maintenanceMode && !isAdmin) {
+    if (siteInfo?.maintenanceMode && !isAdmin) {
         return <Maintenance />;
     }
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col">
-            <Header />
-            <main className="flex-grow">
+            <Topbar />
+            <Navbar />
+            <main className="flex-grow pt-16">
                 <Outlet />
             </main>
             <Footer />

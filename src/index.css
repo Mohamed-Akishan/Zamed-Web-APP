@@ -1,3 +1,4 @@
+/* src/index.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -511,6 +512,79 @@
   }
 }
 
+/* ========== HERO 3D ANIMATIONS ========== */
+
+/* Float particles for hero background */
+@keyframes float-particle {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg) scale(1);
+    opacity: 0.3;
+  }
+  50% {
+    transform: translateY(-30px) rotate(180deg) scale(1.2);
+    opacity: 0.8;
+  }
+}
+
+.animate-float-particle {
+  animation: float-particle linear infinite;
+}
+
+/* 3D Perspective utilities */
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+/* Glow animation for hero text */
+@keyframes glow-text {
+  0%, 100% {
+    text-shadow: 0 0 20px rgba(255, 165, 0, 0.3), 0 0 60px rgba(255, 165, 0, 0.1);
+  }
+  50% {
+    text-shadow: 0 0 30px rgba(255, 165, 0, 0.5), 0 0 80px rgba(255, 165, 0, 0.2);
+  }
+}
+
+.glow-text {
+  animation: glow-text 3s ease-in-out infinite;
+}
+
+/* Hero slide transitions */
+.hero-slide-enter {
+  opacity: 0;
+  transform: scale(1.1) rotateX(5deg);
+}
+
+.hero-slide-enter-active {
+  opacity: 1;
+  transform: scale(1) rotateX(0deg);
+  transition: all 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hero-slide-exit {
+  opacity: 1;
+  transform: scale(1) rotateX(0deg);
+}
+
+.hero-slide-exit-active {
+  opacity: 0;
+  transform: scale(1.1) rotateX(-5deg);
+  transition: all 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 3D Mouse tracking glow */
+.mouse-glow {
+  position: absolute;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 165, 0, 0.15) 0%, transparent 70%);
+  border-radius: 50%;
+  z-index: 30;
+}
+
 /* ========== DELAY CLASSES ========== */
 .delay-100 {
   animation-delay: 0.1s;
@@ -560,29 +634,6 @@
 
 .carousel-dot-inactive:hover {
   background-color: rgba(255, 255, 255, 0.8);
-}
-
-/* Hero Slide Transitions */
-.hero-slide-enter {
-  opacity: 0;
-  transform: scale(1.1);
-}
-
-.hero-slide-enter-active {
-  opacity: 1;
-  transform: scale(1);
-  transition: opacity 0.7s ease-out, transform 0.7s ease-out;
-}
-
-.hero-slide-exit {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.hero-slide-exit-active {
-  opacity: 0;
-  transform: scale(0.95);
-  transition: opacity 0.7s ease-in, transform 0.7s ease-in;
 }
 
 /* ========== SMOOTH SCROLLING ========== */
@@ -1084,4 +1135,100 @@ html {
 
 .dark ::-webkit-scrollbar-thumb {
     background: #666;
+}
+
+/* ========== 3D HERO SPECIFIC ANIMATIONS ========== */
+
+/* Particle floating animation for hero background */
+@keyframes floatParticle {
+    0%, 100% {
+        transform: translateY(0px) scale(1);
+        opacity: 0.2;
+    }
+    50% {
+        transform: translateY(-30px) scale(1.5);
+        opacity: 0.6;
+    }
+}
+
+.animate-float-particle {
+    animation: floatParticle linear infinite;
+}
+
+/* Hero slide transition for 3D effect */
+.hero-slide-enter {
+    opacity: 0;
+    transform: scale(1.05) rotateX(3deg);
+}
+
+.hero-slide-enter-active {
+    opacity: 1;
+    transform: scale(1) rotateX(0deg);
+    transition: all 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hero-slide-exit {
+    opacity: 1;
+    transform: scale(1) rotateX(0deg);
+}
+
+.hero-slide-exit-active {
+    opacity: 0;
+    transform: scale(1.05) rotateX(-3deg);
+    transition: all 1s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Text glow animation for hero titles */
+@keyframes textGlow {
+    0%, 100% {
+        text-shadow: 0 0 30px rgba(251, 146, 60, 0.2);
+    }
+    50% {
+        text-shadow: 0 0 60px rgba(251, 146, 60, 0.4), 0 0 100px rgba(251, 146, 60, 0.1);
+    }
+}
+
+.animate-text-glow {
+    animation: textGlow 3s ease-in-out infinite;
+}
+
+/* Mouse tracking glow for hero */
+.hero-mouse-glow {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(251, 146, 60, 0.15) 0%, transparent 70%);
+    z-index: 30;
+}
+
+/* Scroll indicator bounce animation */
+@keyframes scrollBounce {
+    0%, 100% {
+        transform: translateY(0);
+        opacity: 0.5;
+    }
+    50% {
+        transform: translateY(10px);
+        opacity: 1;
+    }
+}
+
+.animate-scroll-bounce {
+    animation: scrollBounce 2s ease-in-out infinite;
+}
+
+/* 3D hover lift effect */
+.hover-3d-lift {
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
+}
+
+.hover-3d-lift:hover {
+    transform: translateY(-5px) scale(1.02);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+}
+
+/* Slide counter styling */
+.slide-counter {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.05em;
 }

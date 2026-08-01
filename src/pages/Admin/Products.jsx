@@ -5,7 +5,8 @@ import {
     FiSave, FiStar, FiZap, FiCrop, FiImage, FiFilter, FiGrid, FiList,
     FiChevronLeft, FiChevronRight, FiDownload, FiCopy, FiEye,
     FiAlertCircle, FiCheckCircle, FiClock, FiTag, FiDollarSign,
-    FiList as FiListIcon, FiHash, FiRefreshCw
+    FiList as FiListIcon, FiHash, FiRefreshCw, FiTruck, FiShield,
+    FiPercent
 } from "react-icons/fi";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -35,6 +36,7 @@ const Products = () => {
     const [itemsPerPage] = useState(12);
     const [darkMode, setDarkMode] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [imageError, setImageError] = useState({});
     
     const fileInputRef = useRef(null);
     const colorImageInputRef = useRef({});
@@ -46,20 +48,34 @@ const Products = () => {
         sizes: [], colors: [], stock: 0, description: "", brand: "",
         rating: 4.5, reviews: 0, isFeatured: false, isNewArrival: false,
         tags: [], weight: "", material: "", careInstructions: "",
-        details: "", shipping: ""
+        details: "", shipping: "", shippingFee: 0, freeShippingThreshold: 0,
+        taxRate: 0, isTaxFree: false, deliveryDays: "3-5", returnPolicy: "30-day easy returns"
     });
 
-    // Load currency symbol
+    // Load currency symbol and settings
     useEffect(() => {
         const loadCurrency = () => {
             const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
             const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
             setCurrencySymbol(symbols[siteSettings.currency] || "$");
+            
+            // Load shipping settings from site settings
+            setFormData(prev => ({
+                ...prev,
+                shippingFee: siteSettings.shippingFee || 5.00,
+                freeShippingThreshold: siteSettings.freeShippingThreshold || 100,
+                taxRate: siteSettings.taxRate || 10
+            }));
         };
         loadCurrency();
         
         window.addEventListener('currencyChanged', loadCurrency);
-        return () => window.removeEventListener('currencyChanged', loadCurrency);
+        window.addEventListener('settingsSaved', loadCurrency);
+        
+        return () => {
+            window.removeEventListener('currencyChanged', loadCurrency);
+            window.removeEventListener('settingsSaved', loadCurrency);
+        };
     }, []);
 
     // Categories
@@ -151,6 +167,7 @@ const Products = () => {
             else if (selectedStatus === "new") filtered = filtered.filter(p => p.isNewArrival);
             else if (selectedStatus === "lowStock") filtered = filtered.filter(p => p.stock > 0 && p.stock < 10);
             else if (selectedStatus === "outOfStock") filtered = filtered.filter(p => p.stock === 0);
+            else if (selectedStatus === "taxFree") filtered = filtered.filter(p => p.isTaxFree);
         }
         
         setFilteredProducts(filtered);
@@ -171,6 +188,8 @@ const Products = () => {
                 canvas.width = width;
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
                 ctx.drawImage(img, 0, 0, width, height);
                 const compressed = canvas.toDataURL('image/jpeg', quality);
                 resolve(compressed);
@@ -212,6 +231,11 @@ const Products = () => {
         setCropImage(null);
         setCropType(null);
         setCroppingColor(null);
+    };
+
+    const handleImageError = (productId, colorName = null) => {
+        const key = colorName ? `${productId}_${colorName}` : productId;
+        setImageError(prev => ({ ...prev, [key]: true }));
     };
 
     const handleSubmit = async (e) => {
@@ -258,6 +282,13 @@ const Products = () => {
                 careInstructions: formData.careInstructions || "",
                 details: formData.details || "",
                 shipping: formData.shipping || "",
+                // Shipping & payment details
+                shippingFee: parseFloat(formData.shippingFee) || 5.00,
+                freeShippingThreshold: parseFloat(formData.freeShippingThreshold) || 100,
+                taxRate: formData.isTaxFree ? 0 : parseFloat(formData.taxRate) || 10,
+                isTaxFree: formData.isTaxFree || false,
+                deliveryDays: formData.deliveryDays || "3-5",
+                returnPolicy: formData.returnPolicy || "30-day easy returns",
                 createdAt: editingProduct ? editingProduct.createdAt : new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             };
@@ -272,6 +303,10 @@ const Products = () => {
             
             handleCloseModal();
             setTimeout(() => loadProducts(), 500);
+            
+            // Dispatch event for real-time updates
+            window.dispatchEvent(new CustomEvent('productsUpdated'));
+            window.dispatchEvent(new Event('storage'));
             
         } catch (error) {
             console.error("Error saving product:", error);
@@ -301,11 +336,18 @@ const Products = () => {
             isFeatured: product.isFeatured || false, isNewArrival: product.isNewArrival || false,
             tags: product.tags || [], weight: product.weight || "", material: product.material || "",
             careInstructions: product.careInstructions || "", details: product.details || "",
-            shipping: product.shipping || ""
+            shipping: product.shipping || "",
+            shippingFee: product.shippingFee || 5.00,
+            freeShippingThreshold: product.freeShippingThreshold || 100,
+            taxRate: product.taxRate || 10,
+            isTaxFree: product.isTaxFree || false,
+            deliveryDays: product.deliveryDays || "3-5",
+            returnPolicy: product.returnPolicy || "30-day easy returns"
         });
         setImagePreview(product.image || null);
         setSelectedImage(product.image || null);
         setColorImages(product.colorImages || {});
+        setImageError({});
         setShowModal(true);
     };
 
@@ -328,12 +370,14 @@ const Products = () => {
         setImagePreview(null);
         setColorImages({});
         setSelectedGenderCategory("men");
+        setImageError({});
         setFormData({
             name: "", price: "", originalPrice: "", category: "", gender: "",
             sizes: [], colors: [], stock: 0, description: "", brand: "",
             rating: 4.5, reviews: 0, isFeatured: false, isNewArrival: false,
             tags: [], weight: "", material: "", careInstructions: "",
-            details: "", shipping: ""
+            details: "", shipping: "", shippingFee: 5.00, freeShippingThreshold: 100,
+            taxRate: 10, isTaxFree: false, deliveryDays: "3-5", returnPolicy: "30-day easy returns"
         });
         setIsSubmitting(false);
     };
@@ -369,7 +413,8 @@ const Products = () => {
             'Black': '#1a1a1a', 'White': '#f5f5f5', 'Red': '#dc2626', 'Blue': '#3b82f6',
             'Green': '#22c55e', 'Gray': '#9ca3af', 'Brown': '#78350f', 'Navy': '#1e3a8a',
             'Pink': '#ec4899', 'Purple': '#a855f7', 'Yellow': '#eab308', 'Orange': '#f97316',
-            'Beige': '#f5e6d3', 'Maroon': '#800000', 'Teal': '#008080', 'Khaki': '#c3b091'
+            'Beige': '#f5e6d3', 'Maroon': '#800000', 'Teal': '#008080', 'Khaki': '#c3b091',
+            'Coral': '#ff7f50', 'Lavender': '#e6e6fa', 'Mint': '#98ff98'
         };
         return map[color] || '#cccccc';
     };
@@ -388,7 +433,13 @@ const Products = () => {
         const exportData = filteredProducts.map(p => ({
             ID: p.id, Name: p.name, Price: p.price, Category: p.category,
             Gender: p.gender, Brand: p.brand, Stock: p.stock, Featured: p.isFeatured,
-            "New Arrival": p.isNewArrival, Created: p.createdAt
+            "New Arrival": p.isNewArrival, "Shipping Fee": p.shippingFee || 5.00,
+            "Free Shipping Threshold": p.freeShippingThreshold || 100,
+            "Tax Rate": p.taxRate || 10,
+            "Tax Free": p.isTaxFree ? "Yes" : "No",
+            "Delivery Days": p.deliveryDays || "3-5",
+            "Return Policy": p.returnPolicy || "30-day easy returns",
+            Created: p.createdAt
         }));
         
         const headers = Object.keys(exportData[0]);
@@ -418,6 +469,14 @@ const Products = () => {
     const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
     const paginatedProducts = filteredProducts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
     const uniqueCategories = [...new Set(products.map(p => p.category).filter(Boolean))];
+
+    // Get image with fallback
+    const getProductImage = (product, colorName = null) => {
+        if (colorName && product.colorImages && product.colorImages[colorName]) {
+            return product.colorImages[colorName];
+        }
+        return product.image;
+    };
 
     if (loading && products.length === 0) {
         return (
@@ -493,6 +552,7 @@ const Products = () => {
                         <option value="new">New Arrivals</option>
                         <option value="lowStock">Low Stock</option>
                         <option value="outOfStock">Out of Stock</option>
+                        <option value="taxFree">Tax Free</option>
                     </select>
                     <div className="flex gap-2">
                         <button onClick={() => setViewMode("grid")} className={`p-2 rounded-lg ${viewMode === "grid" ? "bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400" : "hover:bg-gray-100 dark:hover:bg-gray-700"}`}>
@@ -514,74 +574,94 @@ const Products = () => {
                 </div>
             ) : viewMode === "grid" ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {paginatedProducts.map((product) => (
-                        <motion.div
-                            key={product.id}
-                            initial={{ opacity: 0, scale: 0.9 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            whileHover={{ y: -5 }}
-                            className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden group"
-                        >
-                            <div className="relative">
-                                <img 
-                                    src={product.image && product.image.startsWith('data:') ? product.image : 'https://via.placeholder.com/300x300?text=No+Image'} 
-                                    alt={product.name} 
-                                    className="w-full h-48 object-cover"
-                                />
-                                <div className="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                    <button onClick={() => handleEdit(product)} className="p-2 bg-white rounded-full hover:bg-gray-100">
-                                        <FiEdit2 size={16} />
-                                    </button>
-                                    <button onClick={() => handleDuplicate(product)} className="p-2 bg-white rounded-full hover:bg-gray-100">
-                                        <FiCopy size={16} />
-                                    </button>
-                                    <button onClick={() => handleDelete(product)} className="p-2 bg-white rounded-full hover:bg-red-100 text-red-500">
-                                        <FiTrash2 size={16} />
-                                    </button>
-                                </div>
-                                {product.isFeatured && (
-                                    <span className="absolute top-2 left-2 bg-yellow-500 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
-                                        <FiStar size={10} /> Featured
-                                    </span>
-                                )}
-                                {product.isNewArrival && (
-                                    <span className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
-                                        <FiZap size={10} /> New
-                                    </span>
-                                )}
-                            </div>
-                            <div className="p-4">
-                                <h3 className="font-semibold dark:text-white line-clamp-1">{product.name}</h3>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">{product.brand}</p>
-                                <div className="flex justify-between items-center mt-2">
-                                    <div>
-                                        <span className="text-lg font-bold text-blue-600">{formatPrice(product.price)}</span>
-                                        {product.originalPrice && (
-                                            <span className="text-xs text-gray-400 line-through ml-1">{formatPrice(product.originalPrice)}</span>
-                                        )}
+                    {paginatedProducts.map((product) => {
+                        const imageKey = product.id;
+                        const hasError = imageError[imageKey];
+                        
+                        return (
+                            <motion.div
+                                key={product.id}
+                                initial={{ opacity: 0, scale: 0.9 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                whileHover={{ y: -5 }}
+                                className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden group"
+                            >
+                                <div className="relative">
+                                    {!hasError && product.image ? (
+                                        <img 
+                                            src={product.image} 
+                                            alt={product.name} 
+                                            className="w-full h-48 object-cover"
+                                            onError={() => handleImageError(product.id)}
+                                        />
+                                    ) : (
+                                        <div className="w-full h-48 bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                                            <FiPackage className="w-12 h-12 text-gray-400" />
+                                        </div>
+                                    )}
+                                    <div className="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                        <button onClick={() => handleEdit(product)} className="p-2 bg-white rounded-full hover:bg-gray-100">
+                                            <FiEdit2 size={16} />
+                                        </button>
+                                        <button onClick={() => handleDuplicate(product)} className="p-2 bg-white rounded-full hover:bg-gray-100">
+                                            <FiCopy size={16} />
+                                        </button>
+                                        <button onClick={() => handleDelete(product)} className="p-2 bg-white rounded-full hover:bg-red-100 text-red-500">
+                                            <FiTrash2 size={16} />
+                                        </button>
                                     </div>
-                                    <span className={`text-xs px-2 py-1 rounded-full ${
-                                        product.stock > 10 ? 'bg-green-100 text-green-800' :
-                                        product.stock > 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
-                                    }`}>
-                                        {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
-                                    </span>
+                                    {product.isFeatured && (
+                                        <span className="absolute top-2 left-2 bg-yellow-500 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
+                                            <FiStar size={10} /> Featured
+                                        </span>
+                                    )}
+                                    {product.isNewArrival && (
+                                        <span className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
+                                            <FiZap size={10} /> New
+                                        </span>
+                                    )}
+                                    {product.isTaxFree && (
+                                        <span className="absolute bottom-2 right-2 bg-purple-500 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
+                                            <FiPercent size={10} /> Tax Free
+                                        </span>
+                                    )}
                                 </div>
-                                <div className="flex gap-2 mt-3">
-                                    <button onClick={() => toggleFeatured(product)} className={`flex-1 py-1 rounded-lg text-xs font-medium ${
-                                        product.isFeatured ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600'
-                                    }`}>
-                                        <FiStar className="inline mr-1" size={12} /> {product.isFeatured ? 'Featured' : 'Set Featured'}
-                                    </button>
-                                    <button onClick={() => toggleNewArrival(product)} className={`flex-1 py-1 rounded-lg text-xs font-medium ${
-                                        product.isNewArrival ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
-                                    }`}>
-                                        <FiZap className="inline mr-1" size={12} /> {product.isNewArrival ? 'New' : 'Set New'}
-                                    </button>
+                                <div className="p-4">
+                                    <h3 className="font-semibold dark:text-white line-clamp-1">{product.name}</h3>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400">{product.brand}</p>
+                                    <div className="flex justify-between items-center mt-2">
+                                        <div>
+                                            <span className="text-lg font-bold text-blue-600">{formatPrice(product.price)}</span>
+                                            {product.originalPrice && (
+                                                <span className="text-xs text-gray-400 line-through ml-1">{formatPrice(product.originalPrice)}</span>
+                                            )}
+                                            {product.isTaxFree && (
+                                                <span className="text-xs text-purple-600 ml-1">(Tax Free)</span>
+                                            )}
+                                        </div>
+                                        <span className={`text-xs px-2 py-1 rounded-full ${
+                                            product.stock > 10 ? 'bg-green-100 text-green-800' :
+                                            product.stock > 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                                        }`}>
+                                            {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
+                                        </span>
+                                    </div>
+                                    <div className="flex gap-2 mt-3">
+                                        <button onClick={() => toggleFeatured(product)} className={`flex-1 py-1 rounded-lg text-xs font-medium ${
+                                            product.isFeatured ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600'
+                                        }`}>
+                                            <FiStar className="inline mr-1" size={12} /> {product.isFeatured ? 'Featured' : 'Set Featured'}
+                                        </button>
+                                        <button onClick={() => toggleNewArrival(product)} className={`flex-1 py-1 rounded-lg text-xs font-medium ${
+                                            product.isNewArrival ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                                        }`}>
+                                            <FiZap className="inline mr-1" size={12} /> {product.isNewArrival ? 'New' : 'Set New'}
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                        </motion.div>
-                    ))}
+                            </motion.div>
+                        );
+                    })}
                 </div>
             ) : (
                 <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden">
@@ -602,14 +682,31 @@ const Products = () => {
                                     <tr key={product.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-3">
-                                                <img src={product.image?.startsWith('data:') ? product.image : 'https://via.placeholder.com/40'} alt={product.name} className="w-10 h-10 object-cover rounded" />
-                                                <div><p className="font-medium dark:text-white">{product.name}</p><p className="text-xs text-gray-500">{product.brand}</p></div>
+                                                {product.image ? (
+                                                    <img 
+                                                        src={product.image} 
+                                                        alt={product.name} 
+                                                        className="w-10 h-10 object-cover rounded"
+                                                        onError={(e) => { e.target.src = 'https://via.placeholder.com/40'; }}
+                                                    />
+                                                ) : (
+                                                    <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center">
+                                                        <FiPackage className="w-5 h-5 text-gray-400" />
+                                                    </div>
+                                                )}
+                                                <div>
+                                                    <p className="font-medium dark:text-white">{product.name}</p>
+                                                    <p className="text-xs text-gray-500">{product.brand}</p>
+                                                    {product.isTaxFree && (
+                                                        <span className="text-[10px] text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">Tax Free</span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 font-semibold">{formatPrice(product.price)}</td>
                                         <td className="px-4 py-3"><span className={`inline-block px-2 py-1 rounded-full text-xs ${product.stock > 10 ? 'bg-green-100 text-green-800' : product.stock > 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{product.stock}</span></td>
                                         <td className="px-4 py-3 text-sm">{product.category}</td>
-                                        <td className="px-4 py-3"><div className="flex gap-1">{product.isFeatured && <span className="inline-block w-2 h-2 bg-yellow-500 rounded-full" title="Featured" />}{product.isNewArrival && <span className="inline-block w-2 h-2 bg-green-500 rounded-full" title="New Arrival" />}</div></td>
+                                        <td className="px-4 py-3"><div className="flex gap-1 flex-wrap">{product.isFeatured && <span className="inline-block w-2 h-2 bg-yellow-500 rounded-full" title="Featured" />}{product.isNewArrival && <span className="inline-block w-2 h-2 bg-green-500 rounded-full" title="New Arrival" />}{product.isTaxFree && <span className="inline-block w-2 h-2 bg-purple-500 rounded-full" title="Tax Free" />}</div></td>
                                         <td className="px-4 py-3"><div className="flex gap-2"><button onClick={() => handleEdit(product)} className="text-blue-600"><FiEdit2 size={16} /></button><button onClick={() => handleDuplicate(product)} className="text-green-600"><FiCopy size={16} /></button><button onClick={() => handleDelete(product)} className="text-red-600"><FiTrash2 size={16} /></button></div></td>
                                     </tr>
                                 ))}
@@ -635,7 +732,7 @@ const Products = () => {
                 </div>
             )}
 
-            {/* Add/Edit Product Modal */}
+            {/* Add/Edit Product Modal with Shipping & Payment */}
             <AnimatePresence>
                 {showModal && (
                     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
@@ -647,7 +744,7 @@ const Products = () => {
                             
                             <form onSubmit={handleSubmit} className="p-6 space-y-4">
                                 {/* Featured & New Arrival Toggles */}
-                                <div className="grid grid-cols-2 gap-4 bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+                                <div className="grid grid-cols-3 gap-4 bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
                                     <label className="flex items-center justify-between p-3 bg-white dark:bg-gray-600 rounded-lg border cursor-pointer">
                                         <span className="font-medium flex items-center gap-2"><FiStar className="text-yellow-500" /> Featured</span>
                                         <input type="checkbox" checked={formData.isFeatured} onChange={(e) => setFormData({...formData, isFeatured: e.target.checked})} className="w-5 h-5" />
@@ -655,6 +752,10 @@ const Products = () => {
                                     <label className="flex items-center justify-between p-3 bg-white dark:bg-gray-600 rounded-lg border cursor-pointer">
                                         <span className="font-medium flex items-center gap-2"><FiZap className="text-green-500" /> New Arrival</span>
                                         <input type="checkbox" checked={formData.isNewArrival} onChange={(e) => setFormData({...formData, isNewArrival: e.target.checked})} className="w-5 h-5" />
+                                    </label>
+                                    <label className="flex items-center justify-between p-3 bg-white dark:bg-gray-600 rounded-lg border cursor-pointer">
+                                        <span className="font-medium flex items-center gap-2"><FiPercent className="text-purple-500" /> Tax Free</span>
+                                        <input type="checkbox" checked={formData.isTaxFree} onChange={(e) => setFormData({...formData, isTaxFree: e.target.checked})} className="w-5 h-5" />
                                     </label>
                                 </div>
 
@@ -707,6 +808,79 @@ const Products = () => {
 
                                 {/* Tags */}
                                 <div><label className="block text-sm font-medium mb-1 dark:text-white">Tags (comma separated)</label><input type="text" value={formData.tags} onChange={(e) => setFormData({...formData, tags: e.target.value.split(',').map(t => t.trim())})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="summer, casual, premium" /></div>
+
+                                {/* Shipping & Payment Section */}
+                                <div className="border-t pt-4 mt-4">
+                                    <h3 className="text-lg font-semibold dark:text-white flex items-center gap-2 mb-4">
+                                        <FiTruck className="text-blue-600" /> Shipping & Payment Details
+                                    </h3>
+                                    
+                                    {/* Tax Free Toggle in Shipping Section */}
+                                    <div className="mb-4 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                                        <label className="flex items-center justify-between cursor-pointer">
+                                            <div>
+                                                <span className="font-medium flex items-center gap-2 text-purple-700 dark:text-purple-400">
+                                                    <FiPercent size={18} /> Tax Free Product
+                                                </span>
+                                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                                    Enable this to make the product tax-free. Tax rate will be set to 0%.
+                                                </p>
+                                            </div>
+                                            <input 
+                                                type="checkbox" 
+                                                checked={formData.isTaxFree} 
+                                                onChange={(e) => {
+                                                    const isChecked = e.target.checked;
+                                                    setFormData({
+                                                        ...formData, 
+                                                        isTaxFree: isChecked,
+                                                        taxRate: isChecked ? 0 : formData.taxRate || 10
+                                                    });
+                                                }} 
+                                                className="w-6 h-6 text-purple-600 rounded focus:ring-purple-500" 
+                                            />
+                                        </label>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium mb-1 dark:text-white">Shipping Fee ({currencySymbol})</label>
+                                            <input type="number" step="0.01" value={formData.shippingFee} onChange={(e) => setFormData({...formData, shippingFee: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="5.00" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-1 dark:text-white">Free Shipping Threshold ({currencySymbol})</label>
+                                            <input type="number" step="0.01" value={formData.freeShippingThreshold} onChange={(e) => setFormData({...formData, freeShippingThreshold: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="100" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-1 dark:text-white">
+                                                Tax Rate (%) 
+                                                {formData.isTaxFree && (
+                                                    <span className="text-purple-600 ml-1">(Tax Free)</span>
+                                                )}
+                                            </label>
+                                            <input 
+                                                type="number" 
+                                                step="0.1" 
+                                                value={formData.taxRate} 
+                                                onChange={(e) => setFormData({...formData, taxRate: e.target.value})} 
+                                                className={`w-full px-3 py-2 border rounded-lg dark:bg-gray-700 ${formData.isTaxFree ? 'bg-gray-100 dark:bg-gray-600 cursor-not-allowed opacity-60' : ''}`}
+                                                placeholder="10"
+                                                disabled={formData.isTaxFree}
+                                            />
+                                            {formData.isTaxFree && (
+                                                <p className="text-xs text-purple-600 mt-1">Tax rate is 0% because this product is tax free</p>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-1 dark:text-white">Delivery Days</label>
+                                            <input type="text" value={formData.deliveryDays} onChange={(e) => setFormData({...formData, deliveryDays: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="3-5" />
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <label className="block text-sm font-medium mb-1 dark:text-white">Return Policy</label>
+                                            <input type="text" value={formData.returnPolicy} onChange={(e) => setFormData({...formData, returnPolicy: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="30-day easy returns" />
+                                        </div>
+                                    </div>
+                                </div>
 
                                 {/* Buttons */}
                                 <div className="flex gap-3 pt-4 sticky bottom-0 bg-white dark:bg-gray-800 border-t pt-4 -mb-6 mt-4">

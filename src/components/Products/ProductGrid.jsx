@@ -18,6 +18,37 @@ const ProductGrid = ({ products, title }) => {
     const [currentImages, setCurrentImages] = useState({});
     const [liveProducts, setLiveProducts] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [settings, setSettings] = useState({
+        productsPerRow: 4,
+        showProductRatings: true,
+        showProductColors: true,
+        showProductSizes: true,
+        showSaleBadge: true,
+        showQuickAdd: true,
+        showProductBrand: true
+    });
+
+    // Load settings from localStorage
+    const loadSettings = () => {
+        const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+        console.log('🔄 ProductGrid - Loading settings:', siteSettings);
+        setSettings(prev => ({ ...prev, ...siteSettings }));
+    };
+
+    useEffect(() => {
+        loadSettings();
+        const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
+        const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+        setCurrencySymbol(symbols[siteSettings.currency] || "$");
+        
+        const userData = localStorage.getItem('user');
+        if (userData) {
+            const parsedUser = JSON.parse(userData);
+            setUser(parsedUser);
+            const userFavorites = JSON.parse(localStorage.getItem(`favorites_${parsedUser.email}`) || '[]');
+            setFavorites(userFavorites);
+        }
+    }, []);
 
     // Load products with images
     const loadProductsWithImages = async () => {
@@ -34,7 +65,6 @@ const ProductGrid = ({ products, title }) => {
             
             setLiveProducts(updatedProducts);
             
-            // Initialize current images and selected colors
             const initialImages = {};
             const initialColors = {};
             updatedProducts.forEach(product => {
@@ -80,29 +110,38 @@ const ProductGrid = ({ products, title }) => {
             }
         };
         
+        // Listen for settings changes and reload settings
+        const handleSettingsUpdate = () => {
+            console.log('🔄 ProductGrid - Settings updated, reloading...');
+            loadSettings();
+            // Force re-render
+            setLoading(prev => {
+                setTimeout(() => setLoading(false), 100);
+                return true;
+            });
+        };
+        
+        // Also listen for storage changes to catch settings updates
+        const handleStorageChange = (e) => {
+            if (e.key === 'site_settings') {
+                console.log('🔄 ProductGrid - Storage changed, reloading settings...');
+                loadSettings();
+            }
+        };
+        
         window.addEventListener('reviewAdded', handleReviewUpdate);
         window.addEventListener('productsUpdated', handleReviewUpdate);
-        window.addEventListener('storage', handleReviewUpdate);
+        window.addEventListener('storage', handleStorageChange);
+        window.addEventListener('settingsSaved', handleSettingsUpdate);
+        window.addEventListener('siteInfoUpdated', handleSettingsUpdate);
         
         return () => {
             window.removeEventListener('reviewAdded', handleReviewUpdate);
             window.removeEventListener('productsUpdated', handleReviewUpdate);
-            window.removeEventListener('storage', handleReviewUpdate);
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('settingsSaved', handleSettingsUpdate);
+            window.removeEventListener('siteInfoUpdated', handleSettingsUpdate);
         };
-    }, []);
-
-    useEffect(() => {
-        const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
-        const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
-        setCurrencySymbol(symbols[siteSettings.currency] || "$");
-        
-        const userData = localStorage.getItem('user');
-        if (userData) {
-            const parsedUser = JSON.parse(userData);
-            setUser(parsedUser);
-            const userFavorites = JSON.parse(localStorage.getItem(`favorites_${parsedUser.email}`) || '[]');
-            setFavorites(userFavorites);
-        }
     }, []);
 
     const getColorSwatch = (color) => {
@@ -198,6 +237,23 @@ const ProductGrid = ({ products, title }) => {
         return null;
     }
 
+    // Determine grid columns based on settings - FIXED
+    const getGridCols = () => {
+        const perRow = parseInt(settings.productsPerRow) || 4;
+        console.log('📊 ProductGrid - Products per row:', perRow);
+        
+        if (perRow === 3) {
+            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
+        } else if (perRow === 5) {
+            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
+        } else if (perRow === 2) {
+            return "grid-cols-1 sm:grid-cols-2";
+        } else {
+            // Default to 4 per row
+            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+        }
+    };
+
     return (
         <div className="py-12 bg-white">
             <div className="container mx-auto px-4">
@@ -215,7 +271,7 @@ const ProductGrid = ({ products, title }) => {
                     </div>
                 )}
                 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className={`grid ${getGridCols()} gap-6`}>
                     {liveProducts.map((product, index) => {
                         const isFavorite = favorites.some(item => item.id === product.id);
                         const currentImage = currentImages[product.id] || product.image;
@@ -230,7 +286,7 @@ const ProductGrid = ({ products, title }) => {
                                 whileInView={{ opacity: 1, y: 0 }}
                                 viewport={{ once: true }}
                                 transition={{ delay: index * 0.1, duration: 0.5 }}
-                                className="bg-white rounded-xl shadow-md overflow-hidden group hover:shadow-xl transition-all duration-300 flex flex-col h-full"
+                                className="bg-white rounded-xl shadow-md overflow-hidden group hover:shadow-xl transition-all duration-300 flex flex-col h-full border border-gray-100"
                             >
                                 {/* Fixed size image container */}
                                 <div 
@@ -244,7 +300,8 @@ const ProductGrid = ({ products, title }) => {
                                         className="w-full h-full object-contain transition-transform duration-500 group-hover:scale-105"
                                     />
                                     
-                                    {product.originalPrice && (
+                                    {/* Sale Badge - Controlled by settings */}
+                                    {settings.showSaleBadge && product.originalPrice && (
                                         <div className="absolute top-3 left-3 bg-red-500 text-white px-2 py-1 rounded-lg text-xs font-bold z-10">
                                             SALE
                                         </div>
@@ -265,47 +322,53 @@ const ProductGrid = ({ products, title }) => {
                                     >
                                         {product.name}
                                     </h3>
-                                    <p className="text-gray-500 text-sm mb-2">{product.brand || "Zamed Premium"}</p>
                                     
-                                    {/* Star Rating Display */}
-                                    <div className="flex items-center justify-between mb-2">
-                                        <div className="flex items-center gap-1">
-                                            <div className="flex items-center">
-                                                {[1, 2, 3, 4, 5].map((star) => (
-                                                    <Star 
-                                                        key={star} 
-                                                        size={14} 
-                                                        className={`${
-                                                            star <= Math.round(productRating) 
-                                                                ? 'text-yellow-400 fill-current' 
-                                                                : 'text-gray-300'
-                                                        }`}
-                                                    />
-                                                ))}
+                                    {/* Product Brand - Controlled by settings */}
+                                    {settings.showProductBrand && (
+                                        <p className="text-gray-500 text-sm mb-2">{product.brand || "Zamed Premium"}</p>
+                                    )}
+                                    
+                                    {/* Star Rating - Controlled by settings */}
+                                    {settings.showProductRatings && (
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-1">
+                                                <div className="flex items-center">
+                                                    {[1, 2, 3, 4, 5].map((star) => (
+                                                        <Star 
+                                                            key={star} 
+                                                            size={14} 
+                                                            className={`${
+                                                                star <= Math.round(productRating) 
+                                                                    ? 'text-yellow-400 fill-current' 
+                                                                    : 'text-gray-300'
+                                                            }`}
+                                                        />
+                                                    ))}
+                                                </div>
+                                                <button 
+                                                    onClick={(e) => goToProductReviews(product.id, e)}
+                                                    className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 transition-colors"
+                                                >
+                                                    <MessageCircle size={10} />
+                                                    ({productReviews} {productReviews === 1 ? 'review' : 'reviews'})
+                                                </button>
                                             </div>
-                                            <button 
-                                                onClick={(e) => goToProductReviews(product.id, e)}
-                                                className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 transition-colors"
-                                            >
-                                                <MessageCircle size={10} />
-                                                ({productReviews} {productReviews === 1 ? 'review' : 'reviews'})
-                                            </button>
                                         </div>
-                                    </div>
+                                    )}
                                     
                                     <div className="flex items-center gap-2 mb-3">
                                         <span className="text-2xl font-bold text-gray-900">
                                             {currencySymbol}{product.price}
                                         </span>
-                                        {product.originalPrice && (
+                                        {settings.showSaleBadge && product.originalPrice && (
                                             <span className="text-sm text-gray-400 line-through">
                                                 {currencySymbol}{product.originalPrice}
                                             </span>
                                         )}
                                     </div>
                                     
-                                    {/* Color Swatches with Images - Small Thumbnails */}
-                                    {product.colors && product.colors.length > 0 && (
+                                    {/* Color Swatches - Controlled by settings */}
+                                    {settings.showProductColors && product.colors && product.colors.length > 0 && (
                                         <div className="mb-3">
                                             <div className="flex gap-2 flex-wrap">
                                                 {product.colors.slice(0, 4).map((color, idx) => {
@@ -347,12 +410,28 @@ const ProductGrid = ({ products, title }) => {
                                         </div>
                                     )}
                                     
-                                    <button 
-                                        onClick={(e) => handleAddToCart(product, e)}
-                                        className="w-full bg-gray-900 text-white py-2.5 rounded-lg font-semibold hover:bg-gray-800 transition-all flex items-center justify-center gap-2 mt-auto"
-                                    >
-                                        <ShoppingBag size={16} /> Add to Cart
-                                    </button>
+                                    {/* Quick Add Button - Controlled by settings */}
+                                    {settings.showQuickAdd && (
+                                        <button 
+                                            onClick={(e) => handleAddToCart(product, e)}
+                                            className="w-full bg-gray-900 text-white py-2.5 rounded-lg font-semibold hover:bg-gray-800 transition-all flex items-center justify-center gap-2 mt-auto"
+                                        >
+                                            <ShoppingBag size={16} /> Add to Cart
+                                        </button>
+                                    )}
+                                    
+                                    {/* Fallback View Details button if Quick Add is disabled */}
+                                    {!settings.showQuickAdd && (
+                                        <button 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleProductClick(product.id);
+                                            }}
+                                            className="w-full bg-gray-900 text-white py-2.5 rounded-lg font-semibold hover:bg-gray-800 transition-all flex items-center justify-center gap-2 mt-auto"
+                                        >
+                                            <ShoppingBag size={16} /> View Details
+                                        </button>
+                                    )}
                                 </div>
                             </motion.div>
                         );

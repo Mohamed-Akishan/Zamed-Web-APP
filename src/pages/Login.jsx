@@ -1,142 +1,666 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { FiMail, FiLock, FiEye, FiEyeOff } from "react-icons/fi";
+// src/pages/Login.jsx
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import {
+  FiArrowRight,
+  FiEye,
+  FiEyeOff,
+  FiLock,
+  FiMail,
+  FiShield,
+  FiShoppingBag,
+} from "react-icons/fi";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://zamed-backend.onrender.com/api';
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  "https://zamed-backend.onrender.com/api";
 
-const Login = () => {
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [showPassword, setShowPassword] = useState(false);
-    const [loading, setLoading] = useState(false);
-    const navigate = useNavigate();
+const DB_NAME = "ZamedImageStore";
+const STORE_NAME = "images";
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        
-        try {
-            const response = await fetch(`${API_URL}/auth/login`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ email, password })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                // Store user data and token
-                localStorage.setItem('token', data.token);
-                localStorage.setItem('user', JSON.stringify({
-                    id: data._id,
-                    firstName: data.firstName,
-                    lastName: data.lastName,
-                    email: data.email,
-                    role: data.role
-                }));
-                
-                toast.success(`Welcome back, ${data.firstName}!`);
-                
-                // Check for redirect after login
-                const redirectTo = localStorage.getItem('redirectAfterLogin');
-                if (redirectTo) {
-                    localStorage.removeItem('redirectAfterLogin');
-                    navigate(redirectTo);
-                } else {
-                    navigate("/");
-                }
-            } else {
-                toast.error(data.message || "Login failed. Please check your credentials.");
-            }
-        } catch (error) {
-            console.error("Login error:", error);
-            toast.error("Server error. Please try again later.");
-        } finally {
-            setLoading(false);
-        }
+const DEFAULT_AUTH = {
+  siteName: "Zamed Premium Wear",
+  authEyebrow: "ZAMED PREMIUM",
+  loginTitle: "Welcome Back",
+  loginSubtitle: "Sign in to continue your premium shopping journey.",
+  loginPromoTitle: "Discover Premium. Live Better.",
+  loginPromoText: "Quality you can trust, style you'll love.",
+  loginButtonText: "Sign In",
+  forgotPasswordText: "Forgot password?",
+  rememberMeText: "Remember me",
+  authPrimaryColor: "#c79342",
+  authSecondaryColor: "#2a2118",
+  authImagePosition: "center",
+  authBorderRadius: 28,
+  authBackgroundBlur: 18,
+  showGoogleLogin: true,
+  showFacebookLogin: true,
+  showRememberMe: true,
+  showForgotPassword: true,
+  showAuthTrustBadges: true,
+  primaryFont: "Inter",
+  headingFont: "Playfair Display",
+};
+
+const openImageDatabase = () =>
+  new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      resolve(null);
+      return;
+    }
+
+    const request = indexedDB.open(DB_NAME);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
+        store.createIndex("type", "type", { unique: false });
+        store.createIndex("timestamp", "timestamp", { unique: false });
+      }
     };
 
-    return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4">
-            <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8">
-                <div className="text-center mb-8">
-                    <h2 className="text-3xl font-bold text-gray-900">Welcome Back</h2>
-                    <p className="text-gray-600 mt-2">Login to your account</p>
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+
+const getStoredImage = async (id) => {
+  if (!id) return null;
+
+  try {
+    const db = await openImageDatabase();
+    if (!db || !db.objectStoreNames.contains(STORE_NAME)) return null;
+
+    return await new Promise((resolve) => {
+      const transaction = db.transaction(STORE_NAME, "readonly");
+      const request = transaction.objectStore(STORE_NAME).get(String(id));
+
+      request.onsuccess = () =>
+        resolve(request.result ? request.result.data : null);
+      request.onerror = () => resolve(null);
+    });
+  } catch (error) {
+    console.warn("Unable to load image from IndexedDB:", error);
+    return null;
+  }
+};
+
+const GoogleIcon = () => (
+  <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+    <path
+      fill="#4285F4"
+      d="M21.8 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.5a4.7 4.7 0 0 1-2 3.1v2.6h3.2c1.9-1.7 3.1-4.3 3.1-7.5Z"
+    />
+    <path
+      fill="#34A853"
+      d="M12 22c2.7 0 5-.9 6.7-2.3l-3.2-2.6c-.9.6-2 1-3.5 1-2.6 0-4.8-1.8-5.6-4.2H3.1v2.7A10 10 0 0 0 12 22Z"
+    />
+    <path
+      fill="#FBBC05"
+      d="M6.4 13.9a6 6 0 0 1 0-3.8V7.4H3.1a10 10 0 0 0 0 9.2l3.3-2.7Z"
+    />
+    <path
+      fill="#EA4335"
+      d="M12 5.9c1.6 0 3 .5 4.1 1.6l3.1-3A10 10 0 0 0 3.1 7.4l3.3 2.7C7.2 7.7 9.4 5.9 12 5.9Z"
+    />
+  </svg>
+);
+
+const FacebookIcon = () => (
+  <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+    <circle cx="12" cy="12" r="11" fill="#1877F2" />
+    <path
+      fill="#fff"
+      d="M13.6 21v-8h2.7l.4-3.1h-3.1v-2c0-.9.2-1.5 1.6-1.5h1.7V3.6c-.3 0-1.3-.1-2.5-.1-2.5 0-4.2 1.5-4.2 4.3v2.1H7.4V13h2.8v8h3.4Z"
+    />
+  </svg>
+);
+
+const Login = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [auth, setAuth] = useState(DEFAULT_AUTH);
+  const [assets, setAssets] = useState({
+    logo: null,
+    background: null,
+  });
+
+  const [email, setEmail] = useState(
+    () => localStorage.getItem("remembered_email") || ""
+  );
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(
+    () => Boolean(localStorage.getItem("remembered_email"))
+  );
+  const [loading, setLoading] = useState(false);
+  const [socialLoading, setSocialLoading] = useState("");
+  const [errors, setErrors] = useState({});
+
+  const redirectTarget = useMemo(
+    () =>
+      location.state?.from ||
+      localStorage.getItem("redirectAfterLogin") ||
+      "/",
+    [location.state]
+  );
+
+  const loadAuthSettings = async () => {
+    try {
+      const siteSettings = JSON.parse(
+        localStorage.getItem("site_settings") || "{}"
+      );
+      const siteInfo = JSON.parse(localStorage.getItem("site_info") || "{}");
+      const siteImages = JSON.parse(
+        localStorage.getItem("site_images") || "{}"
+      );
+      const authSettings = siteInfo.authSettings || {};
+
+      const merged = {
+        ...DEFAULT_AUTH,
+        ...siteSettings,
+        ...authSettings,
+        siteName:
+          siteInfo.siteName ||
+          siteSettings.siteName ||
+          DEFAULT_AUTH.siteName,
+        primaryFont:
+          siteInfo.fontSettings?.primaryFont ||
+          siteSettings.primaryFont ||
+          DEFAULT_AUTH.primaryFont,
+        headingFont:
+          siteInfo.fontSettings?.headingFont ||
+          siteSettings.headingFont ||
+          DEFAULT_AUTH.headingFont,
+      };
+
+      const logoId =
+        siteInfo.logoId || siteSettings.logoId || siteImages.logoId;
+
+      const backgroundId =
+        authSettings.loginBackgroundId ||
+        siteInfo.loginBackgroundId ||
+        siteSettings.loginBackgroundId ||
+        siteImages.loginBackgroundId;
+
+      const [logoFromDb, backgroundFromDb] = await Promise.all([
+        getStoredImage(logoId),
+        getStoredImage(backgroundId),
+      ]);
+
+      setAuth(merged);
+      setAssets({
+        logo: logoFromDb || siteImages.logo || null,
+        background:
+          backgroundFromDb ||
+          siteImages.loginBackground ||
+          authSettings.loginBackground ||
+          null,
+      });
+    } catch (error) {
+      console.warn("Could not load login settings:", error);
+    }
+  };
+
+  useEffect(() => {
+    loadAuthSettings();
+
+    const refresh = () => {
+      loadAuthSettings();
+    };
+
+    window.addEventListener("authSettingsUpdated", refresh);
+    window.addEventListener("siteImagesUpdated", refresh);
+    window.addEventListener("settingsSaved", refresh);
+    window.addEventListener("storage", refresh);
+
+    return () => {
+      window.removeEventListener("authSettingsUpdated", refresh);
+      window.removeEventListener("siteImagesUpdated", refresh);
+      window.removeEventListener("settingsSaved", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const token = params.get("token");
+    const encodedUser = params.get("user");
+
+    if (!token || !encodedUser) return;
+
+    try {
+      const decodedUser = decodeURIComponent(encodedUser);
+      JSON.parse(decodedUser);
+
+      localStorage.setItem("token", token);
+      localStorage.setItem("user", decodedUser);
+      localStorage.removeItem("redirectAfterLogin");
+
+      toast.success("Login successful");
+      navigate(redirectTarget, { replace: true });
+    } catch (error) {
+      console.error("Social login callback error:", error);
+      toast.error("Unable to complete social login.");
+    }
+  }, [location.search, navigate, redirectTarget]);
+
+  const validate = () => {
+    const nextErrors = {};
+
+    if (!email.trim()) {
+      nextErrors.email = "Email address is required.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      nextErrors.email = "Enter a valid email address.";
+    }
+
+    if (!password) {
+      nextErrors.password = "Password is required.";
+    }
+
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    if (!validate() || loading) return;
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message || "Login failed. Please check your credentials."
+        );
+      }
+
+      const user = data.user || data;
+
+      localStorage.setItem("token", data.token);
+      localStorage.setItem(
+        "user",
+        JSON.stringify({
+          id: user._id || user.id || data._id,
+          firstName: user.firstName || data.firstName,
+          lastName: user.lastName || data.lastName,
+          email: user.email || data.email,
+          phone: user.phone || data.phone || "",
+          role: user.role || data.role || "user",
+          profileImage: user.profileImage || user.avatar || "",
+        })
+      );
+
+      if (rememberMe) {
+        localStorage.setItem("remembered_email", email.trim());
+      } else {
+        localStorage.removeItem("remembered_email");
+      }
+
+      localStorage.removeItem("redirectAfterLogin");
+
+      toast.success(
+        `Welcome back${user.firstName ? `, ${user.firstName}` : ""}!`
+      );
+      navigate(redirectTarget, { replace: true });
+    } catch (error) {
+      console.error("Login error:", error);
+      toast.error(error.message || "Server error. Please try again later.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const socialLogin = (provider) => {
+    setSocialLoading(provider);
+    localStorage.setItem("redirectAfterLogin", redirectTarget);
+    window.location.href = `${API_URL}/auth/${provider}`;
+  };
+
+  return (
+    <main
+      className="relative min-h-screen overflow-hidden bg-[#eee6dc]"
+      style={{ fontFamily: auth.primaryFont }}
+    >
+      {/* Background Image - Full Cover */}
+      <div
+        className="absolute inset-0 bg-cover bg-center bg-no-repeat transition-all duration-700"
+        style={{
+          backgroundImage: assets.background
+            ? `url("${assets.background}")`
+            : "linear-gradient(135deg,#f8efe2 0%,#e9d8c1 50%,#d5b789 100%)",
+          backgroundPosition: auth.authImagePosition || "center",
+          backgroundSize: "cover",
+        }}
+      />
+
+      {/* Subtle overlay gradient */}
+      <div className="absolute inset-0 bg-gradient-to-br from-white/[0.02] via-transparent to-black/[0.03]" />
+
+      <div className="relative z-10 flex min-h-screen items-center justify-center px-3 py-4 sm:px-6 sm:py-6 lg:px-8 xl:px-12">
+        {/* Left Side - Branding / Promo (Hidden on mobile) */}
+        <div className="hidden lg:block lg:w-1/2">
+          <div className="max-w-lg">
+            <div className="flex items-center gap-4">
+              {assets.logo ? (
+                <img
+                  src={assets.logo}
+                  alt={auth.siteName}
+                  className="h-16 w-16 rounded-2xl bg-white/85 object-contain p-2 shadow-xl backdrop-blur-sm"
+                />
+              ) : (
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/80 shadow-xl backdrop-blur-sm">
+                  <FiShoppingBag size={30} className="text-[#2c231d]" />
+                </div>
+              )}
+
+              <div>
+                <p className="text-2xl font-black tracking-[0.12em] text-[#2c231d]">
+                  {auth.siteName}
+                </p>
+                <p
+                  className="text-xs font-black tracking-[0.28em]"
+                  style={{ color: auth.authPrimaryColor }}
+                >
+                  {auth.authEyebrow}
+                </p>
+              </div>
+            </div>
+
+            <h1
+              className="mt-14 text-6xl font-black leading-[1.02] text-[#2d241e] drop-shadow-sm"
+              style={{ fontFamily: auth.headingFont }}
+            >
+              {auth.loginPromoTitle}
+            </h1>
+
+            <p className="mt-5 text-base leading-7 text-[#66594e]">
+              {auth.loginPromoText}
+            </p>
+          </div>
+        </div>
+
+        {/* Right Side - Login Form */}
+        <motion.section
+          initial={{ opacity: 0, y: 20, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+          className="relative w-full max-w-[480px] border border-white/70 bg-white/[0.92] px-6 py-8 shadow-[0_30px_100px_rgba(62,45,28,.18)] backdrop-blur-2xl sm:px-8 sm:py-10 lg:px-10"
+          style={{
+            borderRadius: `${Number(auth.authBorderRadius || 28)}px`,
+            backdropFilter: `blur(${Number(auth.authBackgroundBlur || 18)}px)`,
+          }}
+        >
+          <div
+            className="pointer-events-none absolute -right-20 -top-20 h-52 w-52 rounded-full opacity-10 blur-3xl"
+            style={{ background: auth.authPrimaryColor }}
+          />
+
+          <div className="relative z-10">
+            <div className="mb-7 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 lg:hidden">
+                {assets.logo && (
+                  <img
+                    src={assets.logo}
+                    alt={auth.siteName}
+                    className="h-10 w-10 rounded-xl bg-white object-contain p-1 shadow"
+                  />
+                )}
+                <div>
+                  <p className="text-sm font-black text-[#2d241e]">
+                    {auth.siteName}
+                  </p>
+                  <p
+                    className="text-[10px] font-black tracking-[0.2em]"
+                    style={{ color: auth.authPrimaryColor }}
+                  >
+                    {auth.authEyebrow}
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-500">
+                New customer?{" "}
+                <Link
+                  to="/register"
+                  className="font-black hover:underline"
+                  style={{ color: auth.authPrimaryColor }}
+                >
+                  Create account
+                </Link>
+              </p>
+            </div>
+
+            <div>
+              <p
+                className="text-[11px] font-black tracking-[0.25em]"
+                style={{ color: auth.authPrimaryColor }}
+              >
+                MEMBER ACCESS
+              </p>
+
+              <h2
+                className="mt-3 text-4xl font-black tracking-tight text-[#211b17] sm:text-5xl"
+                style={{ fontFamily: auth.headingFont }}
+              >
+                {auth.loginTitle}
+              </h2>
+
+              <p className="mt-3 max-w-lg text-sm leading-6 text-slate-500">
+                {auth.loginSubtitle}
+              </p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="mt-8 space-y-5" noValidate>
+              <div>
+                <label className="mb-2 block text-sm font-bold text-[#322b25]">
+                  Email address
+                </label>
+
+                <div
+                  className={`relative rounded-2xl border bg-white transition ${
+                    errors.email
+                      ? "border-red-400 ring-4 ring-red-100"
+                      : "border-slate-200 focus-within:border-[#d6aa61] focus-within:ring-4 focus-within:ring-amber-50"
+                  }`}
+                >
+                  <FiMail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(event) => {
+                      setEmail(event.target.value);
+                      setErrors((current) => ({
+                        ...current,
+                        email: "",
+                      }));
+                    }}
+                    className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-4 outline-none sm:py-4"
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                  />
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Email Address
-                        </label>
-                        <div className="relative">
-                            <FiMail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                            <input
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="you@example.com"
-                                required
-                            />
-                        </div>
-                    </div>
+                {errors.email && (
+                  <p className="mt-1.5 text-xs font-medium text-red-500">
+                    {errors.email}
+                  </p>
+                )}
+              </div>
 
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Password
-                        </label>
-                        <div className="relative">
-                            <FiLock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                            <input
-                                type={showPassword ? "text" : "password"}
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="••••••••"
-                                required
-                            />
-                            <button
-                                type="button"
-                                onClick={() => setShowPassword(!showPassword)}
-                                className="absolute right-3 top-1/2 transform -translate-y-1/2"
-                            >
-                                {showPassword ? <FiEyeOff className="text-gray-400" /> : <FiEye className="text-gray-400" />}
-                            </button>
-                        </div>
-                    </div>
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <label className="text-sm font-bold text-[#322b25]">
+                    Password
+                  </label>
 
-                    <div className="flex items-center justify-between">
-                        <label className="flex items-center">
-                            <input type="checkbox" className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
-                            <span className="ml-2 text-sm text-gray-600">Remember me</span>
-                        </label>
-                        <a href="#" className="text-sm text-blue-600 hover:text-blue-800">
-                            Forgot password?
-                        </a>
-                    </div>
-
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  {auth.showForgotPassword && (
+                    <Link
+                      to="/forgot-password"
+                      className="text-xs font-bold hover:underline"
+                      style={{ color: auth.authPrimaryColor }}
                     >
-                        {loading ? "Logging in..." : "Login"}
-                    </button>
-                </form>
-
-                <p className="text-center mt-6 text-gray-600">
-                    Don't have an account?{" "}
-                    <Link to="/register" className="text-blue-600 font-semibold hover:text-blue-800">
-                        Register
+                      {auth.forgotPasswordText}
                     </Link>
+                  )}
+                </div>
+
+                <div
+                  className={`relative rounded-2xl border bg-white transition ${
+                    errors.password
+                      ? "border-red-400 ring-4 ring-red-100"
+                      : "border-slate-200 focus-within:border-[#d6aa61] focus-within:ring-4 focus-within:ring-amber-50"
+                  }`}
+                >
+                  <FiLock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(event) => {
+                      setPassword(event.target.value);
+                      setErrors((current) => ({
+                        ...current,
+                        password: "",
+                      }));
+                    }}
+                    className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-12 outline-none sm:py-4"
+                    placeholder="Enter your password"
+                    autoComplete="current-password"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 rounded-lg p-1 text-slate-400 transition hover:bg-slate-100"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <FiEyeOff /> : <FiEye />}
+                  </button>
+                </div>
+
+                {errors.password && (
+                  <p className="mt-1.5 text-xs font-medium text-red-500">
+                    {errors.password}
+                  </p>
+                )}
+              </div>
+
+              {auth.showRememberMe && (
+                <label className="flex cursor-pointer items-center gap-3 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(event) => setRememberMe(event.target.checked)}
+                    className="h-4 w-4 accent-[#c79342]"
+                  />
+                  {auth.rememberMeText}
+                </label>
+              )}
+
+              <motion.button
+                whileHover={{ y: -2 }}
+                whileTap={{ scale: 0.985 }}
+                type="submit"
+                disabled={loading}
+                className="flex w-full items-center justify-center gap-3 rounded-2xl px-5 py-3.5 text-base font-black text-white shadow-[0_18px_35px_rgba(0,0,0,.14)] transition hover:shadow-[0_20px_40px_rgba(0,0,0,.2)] disabled:cursor-not-allowed disabled:opacity-60 sm:py-4"
+                style={{
+                  background: `linear-gradient(90deg, ${auth.authPrimaryColor}, ${auth.authPrimaryColor}dd)`,
+                }}
+              >
+                {loading ? (
+                  <>
+                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    Signing in...
+                  </>
+                ) : (
+                  <>
+                    {auth.loginButtonText}
+                    <FiArrowRight />
+                  </>
+                )}
+              </motion.button>
+            </form>
+
+            {(auth.showGoogleLogin || auth.showFacebookLogin) && (
+              <>
+                <div className="my-6 flex items-center gap-4">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
+                    OR CONTINUE WITH
+                  </span>
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
+
+                <div
+                  className={`grid gap-3 ${
+                    auth.showGoogleLogin && auth.showFacebookLogin
+                      ? "sm:grid-cols-2"
+                      : ""
+                  }`}
+                >
+                  {auth.showGoogleLogin && (
+                    <button
+                      type="button"
+                      onClick={() => socialLogin("google")}
+                      disabled={Boolean(socialLoading)}
+                      className="flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-[#10264c] transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-60"
+                    >
+                      <GoogleIcon />
+                      Google
+                    </button>
+                  )}
+
+                  {auth.showFacebookLogin && (
+                    <button
+                      type="button"
+                      onClick={() => socialLogin("facebook")}
+                      disabled={Boolean(socialLoading)}
+                      className="flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-[#10264c] transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-60"
+                    >
+                      <FacebookIcon />
+                      Facebook
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+
+            {auth.showAuthTrustBadges && (
+              <div className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-100 bg-amber-50/70 p-3.5 text-sm text-[#5e5043]">
+                <FiShield
+                  className="mt-0.5 shrink-0"
+                  style={{ color: auth.authPrimaryColor }}
+                />
+                <p>
+                  Your sign-in is protected. We never share your credentials or
+                  password.
                 </p>
-            </div>
-        </div>
-    );
+              </div>
+            )}
+          </div>
+        </motion.section>
+      </div>
+    </main>
+  );
 };
 
 export default Login;

@@ -13,21 +13,15 @@ const Home = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    // Function to load all products
     const loadProducts = () => {
         try {
             const products = productService.getAllProducts();
-            console.log("🏠 Home page - loading products:", products.length);
             
-            // Get products marked as featured
             const featured = products.filter(p => p.isFeatured === true);
             setFeaturedProducts(featured);
-            console.log("⭐ Featured products:", featured.length);
             
-            // Get products marked as new arrivals
             const newArrivals = products.filter(p => p.isNewArrival === true);
             setNewArrivalProducts(newArrivals);
-            console.log("🆕 New arrivals:", newArrivals.length);
             
             setLoading(false);
         } catch (err) {
@@ -37,13 +31,10 @@ const Home = () => {
         }
     };
 
-    // Initial load
     useEffect(() => {
         loadProducts();
         
-        // Subscribe to product service updates
         const unsubscribe = productService.subscribe((updatedProducts) => {
-            console.log("🔄 Products updated in Home page - refreshing");
             const featured = updatedProducts.filter(p => p.isFeatured === true);
             const newArrivals = updatedProducts.filter(p => p.isNewArrival === true);
             setFeaturedProducts(featured);
@@ -53,22 +44,10 @@ const Home = () => {
         return () => unsubscribe();
     }, []);
 
-    // Listen for review updates to refresh ratings
     useEffect(() => {
-        const handleReviewUpdate = () => {
-            console.log("📝 Review added - refreshing products in Home page");
-            loadProducts();
-        };
-        
-        const handleProductsUpdate = () => {
-            console.log("🔄 Products updated - refreshing Home page");
-            loadProducts();
-        };
-        
-        const handleStorageChange = () => {
-            console.log("💾 Storage changed - refreshing Home page");
-            loadProducts();
-        };
+        const handleReviewUpdate = () => loadProducts();
+        const handleProductsUpdate = () => loadProducts();
+        const handleStorageChange = () => loadProducts();
         
         window.addEventListener('reviewAdded', handleReviewUpdate);
         window.addEventListener('productsUpdated', handleProductsUpdate);
@@ -81,22 +60,12 @@ const Home = () => {
         };
     }, []);
 
-    // Refresh products every 30 seconds to ensure ratings are up to date
-    useEffect(() => {
-        const interval = setInterval(() => {
-            console.log("⏰ Auto-refreshing products in Home page");
-            loadProducts();
-        }, 30000);
-        
-        return () => clearInterval(interval);
-    }, []);
-
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
+            <div className="min-h-screen flex items-center justify-center bg-white">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                    <p className="mt-4 text-gray-600">Loading amazing products...</p>
+                    <div className="w-16 h-16 border-2 border-gray-200 border-t-black rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-gray-400 text-sm">Loading...</p>
                 </div>
             </div>
         );
@@ -104,17 +73,17 @@ const Home = () => {
 
     if (error) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
+            <div className="min-h-screen flex items-center justify-center bg-white">
                 <div className="text-center">
-                    <div className="text-6xl mb-4">⚠️</div>
-                    <p className="text-red-600 mb-4">{error}</p>
+                    <div className="text-5xl mb-4">⚠️</div>
+                    <p className="text-gray-600 mb-4">{error}</p>
                     <button 
                         onClick={() => {
                             setLoading(true);
                             setError(null);
                             loadProducts();
                         }} 
-                        className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                        className="px-6 py-2.5 bg-black text-white rounded-full text-sm font-medium hover:bg-gray-800 transition-colors"
                     >
                         Try Again
                     </button>
@@ -124,35 +93,35 @@ const Home = () => {
     }
 
     return (
-        <div className="bg-white overflow-hidden">
-            {/* Hero Section */}
+        <div className="bg-white">
+            {/* Hero */}
             <Hero />
             
-            {/* Gender Collection Section */}
+            {/* Gender Collection */}
             <GenderCollectionSection />
             
-            {/* NEW ARRIVALS SECTION - ONLY ONE */}
+            {/* New Arrivals */}
             {newArrivalProducts.length > 0 ? (
                 <ProductGrid products={newArrivalProducts} title="New Arrivals" />
             ) : (
-                <div className="py-8 text-center text-gray-500">
-                    <p>No new arrivals at the moment. Check back soon!</p>
+                <div className="py-12 text-center">
+                    <p className="text-gray-400 text-sm">No new arrivals at the moment.</p>
                 </div>
             )}
             
-            {/* FEATURED PRODUCTS SECTION */}
+            {/* Featured Products */}
             {featuredProducts.length > 0 ? (
                 <ProductGrid products={featuredProducts} title="Featured Products" />
             ) : (
-                <div className="py-8 text-center text-gray-500">
-                    <p>No featured products at the moment.</p>
+                <div className="py-12 text-center">
+                    <p className="text-gray-400 text-sm">No featured products at the moment.</p>
                 </div>
             )}
             
-            {/* Featured Collection - Single featured product spotlight */}
+            {/* Featured Collection - Always visible */}
             <FeaturedCollection />
             
-            {/* Features Section - Benefits and trust badges */}
+            {/* Features */}
             <FeaturesSection />
         </div>
     );

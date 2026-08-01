@@ -1,7 +1,8 @@
+// src/pages/Checkout.jsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCart } from "../context/CartContext";
-import { saveOrder, updateDeliveryDate } from "../services/orderService";
+import orderService from "../services/orderService";
 import { toast } from "sonner";
 import { 
     FiTruck, FiShield, FiCreditCard, FiMapPin, FiPhone, FiMail, 
@@ -11,6 +12,33 @@ import {
     FiAlertCircle, FiSmartphone, FiGlobe, FiHome, FiHeart
 } from "react-icons/fi";
 import { motion, AnimatePresence } from "framer-motion";
+
+
+const ApplePayLogo = () => (
+    <div className="flex items-center gap-1.5" aria-label="Apple Pay">
+        <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
+            <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.79 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.53 4.09ZM12.03 7.25C11.88 5.02 13.69 3.18 15.77 3c.29 2.58-2.34 4.5-3.74 4.25Z"/>
+        </svg>
+        <span className="text-lg font-semibold tracking-tight">Pay</span>
+    </div>
+);
+
+const GooglePayLogo = () => (
+    <div className="flex items-center gap-1.5" aria-label="Google Pay">
+        <span className="text-lg font-bold tracking-tight"><span className="text-blue-500">G</span><span className="text-red-500">o</span><span className="text-yellow-500">o</span><span className="text-blue-500">g</span><span className="text-green-500">l</span><span className="text-red-500">e</span></span>
+        <span className="text-lg font-medium text-gray-800">Pay</span>
+    </div>
+);
+
+const PayPalLogo = () => (
+    <div className="flex items-center gap-2" aria-label="PayPal">
+        <div className="relative h-7 w-6">
+            <span className="absolute left-0 top-0 text-2xl font-black italic text-blue-900">P</span>
+            <span className="absolute left-1.5 top-0.5 text-2xl font-black italic text-sky-500">P</span>
+        </div>
+        <span className="text-lg font-bold italic text-blue-900">PayPal</span>
+    </div>
+);
 
 const Checkout = () => {
     const navigate = useNavigate();
@@ -23,6 +51,7 @@ const Checkout = () => {
     const [appliedCoupon, setAppliedCoupon] = useState(null);
     const [couponError, setCouponError] = useState("");
     const [couponSuccess, setCouponSuccess] = useState("");
+    const [customerCoupons, setCustomerCoupons] = useState([]);
     const [savedCards, setSavedCards] = useState([]);
     const [selectedSavedCard, setSelectedSavedCard] = useState(null);
     const [showSaveCard, setShowSaveCard] = useState(false);
@@ -35,8 +64,9 @@ const Checkout = () => {
     const [orderId, setOrderId] = useState(null);
     const [finalOrderTotal, setFinalOrderTotal] = useState(0);
     const [orderDetails, setOrderDetails] = useState(null);
+    const [productDetails, setProductDetails] = useState({});
     
-    const [shippingSettings, setShippingSettings] = useState({
+    const [globalSettings, setGlobalSettings] = useState({
         shippingFee: 5,
         freeShippingThreshold: 100,
         taxRate: 10,
@@ -93,22 +123,73 @@ const Checkout = () => {
         return 'https://via.placeholder.com/80x80?text=No+Image';
     };
 
-    // Load settings and saved data
-    useEffect(() => {
+    // Load product details
+    const loadProductDetails = () => {
+        const products = JSON.parse(localStorage.getItem('shop_products') || '[]');
+        const detailsMap = {};
+        products.forEach(product => {
+            if (product.id) {
+                detailsMap[product.id] = {
+                    taxRate: product.taxRate !== undefined ? parseFloat(product.taxRate) : null,
+                    shippingFee: product.shippingFee !== undefined ? parseFloat(product.shippingFee) : null,
+                    freeShippingThreshold: product.freeShippingThreshold !== undefined ? parseFloat(product.freeShippingThreshold) : null,
+                    deliveryDays: product.deliveryDays || null,
+                    returnPolicy: product.returnPolicy || null
+                };
+            }
+        });
+        setProductDetails(detailsMap);
+    };
+
+    // Load coupons assigned by Admin to the currently logged-in customer
+    const loadCustomerCoupons = () => {
+        try {
+            const userData = JSON.parse(localStorage.getItem('user') || 'null');
+            const rawEmail = userData?.email || '';
+            const email = rawEmail.toLowerCase();
+            const assignedCoupons = email
+                ? [
+                    ...JSON.parse(localStorage.getItem(`user_coupons_${rawEmail}`) || '[]'),
+                    ...JSON.parse(localStorage.getItem(`user_coupons_${email}`) || '[]')
+                ]
+                : [];
+            const adminCoupons = JSON.parse(localStorage.getItem('admin_coupons') || '[]');
+
+            // Merge assigned and public admin coupons without duplicates.
+            const merged = [...assignedCoupons, ...adminCoupons].reduce((list, coupon) => {
+                const code = String(coupon?.code || '').trim().toUpperCase();
+                if (!code || list.some(item => String(item.code).toUpperCase() === code)) return list;
+                list.push({ ...coupon, code });
+                return list;
+            }, []);
+
+            setCustomerCoupons(merged);
+        } catch (error) {
+            console.error('Error loading customer coupons:', error);
+            setCustomerCoupons([]);
+        }
+    };
+
+    // Load settings with real-time updates
+    const loadSettings = () => {
         try {
             const settings = JSON.parse(localStorage.getItem('site_settings') || '{}');
             const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
             setCurrencySymbol(symbols[settings.currency] || "$");
             setCurrencyCode(settings.currency || "USD");
             
-            setShippingSettings({
-                shippingFee: settings.shippingFee || 5,
-                freeShippingThreshold: settings.freeShippingThreshold || 100,
-                taxRate: settings.taxRate || 10,
+            setGlobalSettings({
+                shippingFee: settings.shippingFee !== undefined ? parseFloat(settings.shippingFee) : 5,
+                freeShippingThreshold: settings.freeShippingThreshold !== undefined ? parseFloat(settings.freeShippingThreshold) : 100,
+                taxRate: settings.taxRate !== undefined ? parseFloat(settings.taxRate) : 10,
                 deliveryInfoText: settings.deliveryInfoText || "Free delivery on orders over $100",
                 returnPolicyText: settings.returnPolicyText || "30-day easy returns",
                 securePaymentText: settings.securePaymentText || "Secure payment"
             });
+            
+            // Load product details and coupons created/sent from Admin
+            loadProductDetails();
+            loadCustomerCoupons();
             
             // Load user data
             const userData = localStorage.getItem('user');
@@ -142,9 +223,80 @@ const Checkout = () => {
         } catch (error) {
             console.error("Error loading settings:", error);
         }
+    };
+
+    // Load settings on mount and listen for changes
+    useEffect(() => {
+        loadSettings();
+
+        // Listen for settings updates
+        const handleSettingsUpdate = () => {
+            console.log("🔄 Checkout: Settings updated, reloading...");
+            loadSettings();
+        };
+
+        const handleProductsUpdate = () => {
+            console.log("🔄 Checkout: Products updated, reloading product details...");
+            loadProductDetails();
+        };
+
+        window.addEventListener('settingsSaved', handleSettingsUpdate);
+        window.addEventListener('siteInfoUpdated', handleSettingsUpdate);
+        window.addEventListener('currencyChanged', handleSettingsUpdate);
+        window.addEventListener('productsUpdated', handleProductsUpdate);
+        window.addEventListener('couponsUpdated', loadCustomerCoupons);
+        window.addEventListener('couponReceived', loadCustomerCoupons);
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'site_settings') {
+                handleSettingsUpdate();
+            }
+            if (e.key === 'shop_products') {
+                handleProductsUpdate();
+            }
+            if (e.key === 'admin_coupons' || e.key?.startsWith('user_coupons_')) {
+                loadCustomerCoupons();
+            }
+        });
+
+        return () => {
+            window.removeEventListener('settingsSaved', handleSettingsUpdate);
+            window.removeEventListener('siteInfoUpdated', handleSettingsUpdate);
+            window.removeEventListener('currencyChanged', handleSettingsUpdate);
+            window.removeEventListener('productsUpdated', handleProductsUpdate);
+            window.removeEventListener('couponsUpdated', loadCustomerCoupons);
+            window.removeEventListener('couponReceived', loadCustomerCoupons);
+            window.removeEventListener('storage', handleSettingsUpdate);
+        };
     }, []);
 
-    // Calculate totals
+    // Get product-specific tax rate or fallback to global
+    const getProductTaxRate = (productId) => {
+        const product = productDetails[productId];
+        if (product && product.taxRate !== null) {
+            return product.taxRate;
+        }
+        return globalSettings.taxRate || 10;
+    };
+
+    // Get product-specific shipping fee or fallback to global
+    const getProductShippingFee = (productId) => {
+        const product = productDetails[productId];
+        if (product && product.shippingFee !== null) {
+            return product.shippingFee;
+        }
+        return globalSettings.shippingFee || 5;
+    };
+
+    // Get product-specific free shipping threshold or fallback to global
+    const getProductFreeShippingThreshold = (productId) => {
+        const product = productDetails[productId];
+        if (product && product.freeShippingThreshold !== null) {
+            return product.freeShippingThreshold;
+        }
+        return globalSettings.freeShippingThreshold || 100;
+    };
+
+    // Calculate totals with product-specific rates
     const calculateSubtotal = () => {
         if (!cartItems || cartItems.length === 0) return 0;
         return cartItems.reduce((total, item) => {
@@ -156,25 +308,48 @@ const Checkout = () => {
 
     const subtotal = calculateSubtotal();
     const isLKR = currencyCode === 'LKR';
-    const freeThreshold = isLKR ? 10000 : shippingSettings.freeShippingThreshold;
     
-    const getShippingFee = () => {
-        if (!selectedShipping) return 0;
-        const baseFee = selectedShipping.price;
-        if (selectedShipping.id === 'standard' && subtotal > freeThreshold) {
-            return 0;
+    // Calculate shipping and tax with product-specific rates
+    let totalShipping = 0;
+    let totalTax = 0;
+    let hasFreeShipping = false;
+    let weightedTaxRate = 0;
+    let totalWeighted = 0;
+    
+    cartItems.forEach(item => {
+        const productTaxRate = getProductTaxRate(item.id);
+        const productShippingFee = getProductShippingFee(item.id);
+        const productFreeThreshold = getProductFreeShippingThreshold(item.id);
+        
+        const itemTotal = (typeof item.price === 'number' ? item.price : parseFloat(item.price) || 0) * (item.quantity || 1);
+        
+        // Calculate shipping for this item
+        const threshold = isLKR ? productFreeThreshold * 100 : productFreeThreshold;
+        const shippingFee = isLKR ? productShippingFee * 100 : productShippingFee;
+        
+        if (itemTotal >= threshold) {
+            hasFreeShipping = true;
+        } else {
+            totalShipping += shippingFee;
         }
-        return baseFee;
-    };
+        
+        // Calculate tax for this item
+        totalTax += itemTotal * (productTaxRate / 100);
+        
+        // Weighted average tax rate for display
+        totalWeighted += itemTotal;
+        weightedTaxRate += (productTaxRate * itemTotal);
+    });
     
-    const shippingFee = getShippingFee();
-    const taxAmount = subtotal * (shippingSettings.taxRate / 100);
+    const averageTaxRate = totalWeighted > 0 ? (weightedTaxRate / totalWeighted) : (globalSettings.taxRate || 10);
+    const shippingFee = hasFreeShipping ? 0 : totalShipping;
+    const taxAmount = totalTax;
     const discountAmount = appliedCoupon?.discountAmount || 0;
     const total = subtotal + shippingFee + taxAmount - discountAmount;
 
     useEffect(() => {
         setFinalOrderTotal(total);
-    }, [total]);
+    }, [total, cartItems, productDetails]);
 
     const validateCardDetails = () => {
         if (selectedSavedCard) return true;
@@ -243,55 +418,238 @@ const Checkout = () => {
         return `${currencySymbol}${numPrice.toFixed(2)}`;
     };
 
-    // Coupon handling
-    const availableCoupons = [
-        { code: "SAVE10", discount: 10, type: "percentage", minPurchase: 50 },
-        { code: "SAVE20", discount: 20, type: "percentage", minPurchase: 100 },
-        { code: "FLAT50", discount: 50, type: "fixed", minPurchase: 200 },
-        { code: "WELCOME15", discount: 15, type: "percentage", minPurchase: 0 },
-        { code: "FREESHIP", discount: shippingFee, type: "shipping", minPurchase: 0 }
-    ];
+    // Coupon handling - Admin coupons + customer-assigned coupons
+    const normalizeCoupon = (coupon) => ({
+        ...coupon,
+        code: String(coupon?.code || '').trim().toUpperCase(),
+        discountType: coupon?.discountType || coupon?.type || 'percentage',
+        discountValue: Number(coupon?.discountValue ?? coupon?.discount ?? 0),
+        minPurchase: Number(coupon?.minPurchase ?? coupon?.minimumPurchase ?? 0),
+        maxDiscount: coupon?.maxDiscount === null || coupon?.maxDiscount === '' || coupon?.maxDiscount === undefined
+            ? null
+            : Number(coupon.maxDiscount),
+        usageLimit: coupon?.usageLimit === null || coupon?.usageLimit === '' || coupon?.usageLimit === undefined
+            ? null
+            : Number(coupon.usageLimit),
+        perUserLimit: Number(coupon?.perUserLimit || 1),
+        usedCount: Number(coupon?.usedCount || 0),
+        status: coupon?.status || 'active'
+    });
+
+    const getCurrentUser = () => {
+        try {
+            return JSON.parse(localStorage.getItem('user') || 'null');
+        } catch {
+            return null;
+        }
+    };
+
+    const getCouponUsageKey = (email) => `coupon_usage_${String(email || 'guest').toLowerCase()}`;
+
+    const getUserCouponUsage = (email) => {
+        try {
+            return JSON.parse(localStorage.getItem(getCouponUsageKey(email)) || '{}');
+        } catch {
+            return {};
+        }
+    };
+
+    const getEligibleSubtotal = (coupon) => {
+        // Current Admin implementation uses "all" products. This also supports arrays
+        // of product IDs or category names when you add those controls later.
+        const applicableProducts = coupon.applicableProducts;
+        const applicableCategories = coupon.applicableCategories || [];
+
+        return cartItems.reduce((sum, item) => {
+            const productMatch = !applicableProducts || applicableProducts === 'all' ||
+                (Array.isArray(applicableProducts) && applicableProducts.map(String).includes(String(item.id)));
+            const categoryMatch = !applicableCategories.length || applicableCategories.includes(item.category);
+            if (!productMatch || !categoryMatch) return sum;
+            const price = Number(item.price) || 0;
+            const quantity = Number(item.quantity) || 1;
+            return sum + price * quantity;
+        }, 0);
+    };
+
+    const calculateCouponDiscount = (coupon, eligibleSubtotal) => {
+        let discount = 0;
+        const type = coupon.discountType;
+
+        if (type === 'percentage') {
+            discount = eligibleSubtotal * (coupon.discountValue / 100);
+            if (coupon.maxDiscount !== null && Number.isFinite(coupon.maxDiscount)) {
+                discount = Math.min(discount, coupon.maxDiscount);
+            }
+        } else if (type === 'fixed') {
+            discount = Math.min(coupon.discountValue, eligibleSubtotal);
+        } else if (type === 'shipping' || type === 'free_shipping') {
+            discount = shippingFee;
+        } else if (type === 'bogo' || type === 'buy_x_get_y') {
+            // Buy 2 Get 1: discount the cheapest eligible unit.
+            const eligibleUnits = cartItems
+                .flatMap(item => Array.from({ length: Number(item.quantity) || 1 }, () => Number(item.price) || 0))
+                .sort((a, b) => a - b);
+            if (eligibleUnits.length >= 3) discount = eligibleUnits[0];
+        }
+
+        return Math.max(0, Math.min(discount, subtotal + shippingFee));
+    };
 
     const applyCoupon = () => {
-        if (!couponCode.trim()) {
-            setCouponError("Please enter a coupon code");
+        const enteredCode = couponCode.trim().toUpperCase();
+        setCouponError('');
+        setCouponSuccess('');
+
+        if (!enteredCode) {
+            setCouponError('Please enter a coupon code');
             return;
         }
-        
-        const coupon = availableCoupons.find(c => c.code === couponCode.toUpperCase());
-        
+
+        const user = getCurrentUser();
+        const rawEmail = user?.email || '';
+        const email = rawEmail.toLowerCase();
+        const assignedCoupons = email
+            ? [
+                ...JSON.parse(localStorage.getItem(`user_coupons_${rawEmail}`) || '[]'),
+                ...JSON.parse(localStorage.getItem(`user_coupons_${email}`) || '[]')
+            ]
+            : [];
+        const adminCoupons = JSON.parse(localStorage.getItem('admin_coupons') || '[]');
+        const allCoupons = [...assignedCoupons, ...adminCoupons].map(normalizeCoupon);
+        const coupon = allCoupons.find(item => item.code === enteredCode);
+
         if (!coupon) {
-            setCouponError("Invalid coupon code");
-            setCouponSuccess("");
+            setCouponError('Invalid coupon code. Check the code in Profile → Coupons.');
             return;
         }
-        
-        if (subtotal < coupon.minPurchase) {
-            setCouponError(`Minimum purchase of ${formatPrice(coupon.minPurchase)} required`);
-            setCouponSuccess("");
+
+        const now = new Date();
+        const startDate = coupon.startDate ? new Date(`${String(coupon.startDate).split('T')[0]}T00:00:00`) : null;
+        const endDate = coupon.endDate ? new Date(`${String(coupon.endDate).split('T')[0]}T23:59:59`) : null;
+
+        if (coupon.status !== 'active') {
+            setCouponError('This coupon is currently inactive');
             return;
         }
-        
-        let discount = 0;
-        if (coupon.type === "percentage") {
-            discount = (subtotal * coupon.discount) / 100;
-        } else if (coupon.type === "fixed") {
-            discount = coupon.discount;
-        } else if (coupon.type === "shipping") {
-            discount = shippingFee;
+        if (startDate && now < startDate) {
+            setCouponError(`This coupon starts on ${startDate.toLocaleDateString()}`);
+            return;
         }
-        
-        setAppliedCoupon({ ...coupon, discountAmount: discount });
-        setCouponSuccess(`Coupon ${coupon.code} applied! You saved ${formatPrice(discount)}`);
-        setCouponError("");
+        if (endDate && now > endDate) {
+            setCouponError('This coupon has expired');
+            return;
+        }
+        if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
+            setCouponError('This coupon has reached its usage limit');
+            return;
+        }
+        if (coupon.memberOnly && !user?.isPremiumMember && !user?.premiumMember && user?.membershipTier !== 'premium') {
+            setCouponError('This offer is available to ZAMED Premium members only');
+            return;
+        }
+
+        const usage = getUserCouponUsage(email);
+        const customerUses = Number(usage[coupon.code] || 0);
+        if (coupon.perUserLimit && customerUses >= coupon.perUserLimit) {
+            setCouponError('You have already used this coupon');
+            return;
+        }
+
+        const userOrders = JSON.parse(localStorage.getItem('orders') || '[]')
+            .filter(order => String(order.userEmail || order.customerEmail || '').toLowerCase() === String(email || '').toLowerCase());
+        if (coupon.firstOrderOnly && userOrders.length > 0) {
+            setCouponError('This coupon is valid for first orders only');
+            return;
+        }
+
+        const eligibleSubtotal = getEligibleSubtotal(coupon);
+        if (eligibleSubtotal <= 0) {
+            setCouponError('This coupon is not valid for the products in your cart');
+            return;
+        }
+        if (eligibleSubtotal < coupon.minPurchase) {
+            setCouponError(`Spend ${formatPrice(coupon.minPurchase)} to use this coupon`);
+            return;
+        }
+
+        const discount = calculateCouponDiscount(coupon, eligibleSubtotal);
+        if (discount <= 0) {
+            setCouponError('This coupon does not provide a discount for the current cart');
+            return;
+        }
+
+        const applied = {
+            ...coupon,
+            discountAmount: discount,
+            eligibleSubtotal,
+            appliedAt: new Date().toISOString()
+        };
+        setAppliedCoupon(applied);
+        setCouponCode(coupon.code);
+        setCouponSuccess(`Coupon ${coupon.code} applied — you saved ${formatPrice(discount)}`);
         toast.success(`Coupon applied! You saved ${formatPrice(discount)}`);
     };
 
     const removeCoupon = () => {
         setAppliedCoupon(null);
-        setCouponCode("");
-        setCouponSuccess("");
-        toast.info("Coupon removed");
+        setCouponCode('');
+        setCouponError('');
+        setCouponSuccess('');
+        toast.info('Coupon removed');
+    };
+
+    const markCouponAsUsed = (coupon, orderId, customerEmail) => {
+        if (!coupon?.code) return;
+        const code = String(coupon.code).toUpperCase();
+        const email = String(customerEmail || '').toLowerCase();
+
+        // Update the global Admin coupon usage count.
+        const adminCoupons = JSON.parse(localStorage.getItem('admin_coupons') || '[]');
+        const updatedAdminCoupons = adminCoupons.map(item =>
+            String(item.code || '').toUpperCase() === code
+                ? { ...item, usedCount: Number(item.usedCount || 0) + 1, updatedAt: new Date().toISOString() }
+                : item
+        );
+        localStorage.setItem('admin_coupons', JSON.stringify(updatedAdminCoupons));
+
+        // Update the coupon shown in Profile → Coupons.
+        if (email) {
+            const key = `user_coupons_${email}`;
+            const assigned = JSON.parse(localStorage.getItem(key) || '[]');
+            const updatedAssigned = assigned.map(item =>
+                String(item.code || '').toUpperCase() === code
+                    ? {
+                        ...item,
+                        customerUsedCount: Number(item.customerUsedCount || 0) + 1,
+                        lastUsedAt: new Date().toISOString(),
+                        lastOrderId: orderId,
+                        redemptionStatus: 'used'
+                    }
+                    : item
+            );
+            localStorage.setItem(key, JSON.stringify(updatedAssigned));
+
+            const usage = getUserCouponUsage(email);
+            usage[code] = Number(usage[code] || 0) + 1;
+            localStorage.setItem(getCouponUsageKey(email), JSON.stringify(usage));
+
+            const notificationKey = `notifications_${email}`;
+            const notifications = JSON.parse(localStorage.getItem(notificationKey) || '[]');
+            notifications.unshift({
+                id: Date.now(),
+                title: 'Coupon successfully redeemed',
+                message: `${code} saved you ${formatPrice(coupon.discountAmount)} on order ${orderId}.`,
+                type: 'coupon',
+                date: new Date().toISOString(),
+                read: false,
+                couponCode: code,
+                orderId
+            });
+            localStorage.setItem(notificationKey, JSON.stringify(notifications.slice(0, 50)));
+        }
+
+        window.dispatchEvent(new CustomEvent('couponsUpdated', { detail: { code } }));
+        window.dispatchEvent(new CustomEvent('couponReceived', { detail: { email, couponCode: code } }));
     };
 
     // Address management
@@ -426,10 +784,32 @@ const Checkout = () => {
                 return total + (price * quantity);
             }, 0);
             
-            const finalShippingFee = (selectedShipping?.id === 'standard' && finalSubtotal > freeThreshold) ? 0 : (selectedShipping?.price || 0);
-            const finalTaxAmount = finalSubtotal * (shippingSettings.taxRate / 100);
+            // Calculate product-specific shipping and tax
+            let finalShippingFee = 0;
+            let finalTaxAmount = 0;
+            let hasFreeShipping = false;
+            
+            currentCartItems.forEach(item => {
+                const productTaxRate = getProductTaxRate(item.id);
+                const productShippingFee = getProductShippingFee(item.id);
+                const productFreeThreshold = getProductFreeShippingThreshold(item.id);
+                const itemTotal = (typeof item.price === 'number' ? item.price : parseFloat(item.price) || 0) * (item.quantity || 1);
+                
+                const threshold = isLKR ? productFreeThreshold * 100 : productFreeThreshold;
+                const shippingFee = isLKR ? productShippingFee * 100 : productShippingFee;
+                
+                if (itemTotal >= threshold) {
+                    hasFreeShipping = true;
+                } else {
+                    finalShippingFee += shippingFee;
+                }
+                
+                finalTaxAmount += itemTotal * (productTaxRate / 100);
+            });
+            
+            const finalShippingFeeAmount = hasFreeShipping ? 0 : finalShippingFee;
             const finalDiscountAmount = appliedCoupon?.discountAmount || 0;
-            const finalTotalAmount = finalSubtotal + finalShippingFee + finalTaxAmount - finalDiscountAmount;
+            const finalTotalAmount = finalSubtotal + finalShippingFeeAmount + finalTaxAmount - finalDiscountAmount;
             
             const orderData = {
                 id: orderId,
@@ -450,12 +830,15 @@ const Checkout = () => {
                     quantity: item.quantity,
                     size: item.size,
                     color: item.color,
-                    image: getValidImageUrl(item.image)
+                    image: getValidImageUrl(item.image),
+                    taxRate: getProductTaxRate(item.id),
+                    shippingFee: getProductShippingFee(item.id),
+                    freeShippingThreshold: getProductFreeShippingThreshold(item.id)
                 })),
                 subtotal: finalSubtotal,
-                shippingFee: finalShippingFee,
+                shippingFee: finalShippingFeeAmount,
                 shippingMethod: selectedShipping?.label,
-                taxRate: shippingSettings.taxRate,
+                taxRate: averageTaxRate,
                 taxAmount: finalTaxAmount,
                 discount: finalDiscountAmount,
                 couponCode: appliedCoupon?.code,
@@ -468,12 +851,18 @@ const Checkout = () => {
                 date: new Date().toISOString(),
                 deliveryDate: formData.deliveryDate,
                 deliveryStatus: "scheduled",
-                estimatedDelivery: selectedShipping?.estimated
+                estimatedDelivery: selectedShipping?.estimated,
+                hasFreeShipping: hasFreeShipping
             };
             
-            const saved = await saveOrder(orderData);
+            // Use orderService to save the order
+            const saved = await orderService.saveOrder(orderData);
             
             if (saved) {
+                if (appliedCoupon) {
+                    markCouponAsUsed(appliedCoupon, orderId, user?.email || formData.email);
+                }
+
                 if (showSaveCard && formData.paymentMethod === 'card' && cardDetails.cardNumber) {
                     saveCardForFuture();
                 }
@@ -558,13 +947,18 @@ const Checkout = () => {
                                     <span>{displayShipping === 0 ? 'Free' : formatPrice(displayShipping)}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Tax ({shippingSettings.taxRate}%):</span>
+                                    <span>Tax ({displayOrder.taxRate?.toFixed(1) || globalSettings.taxRate}%):</span>
                                     <span>{formatPrice(displayTax)}</span>
                                 </div>
                                 {displayDiscount > 0 && (
                                     <div className="flex justify-between text-green-600">
                                         <span>Discount:</span>
                                         <span>-{formatPrice(displayDiscount)}</span>
+                                    </div>
+                                )}
+                                {displayOrder.hasFreeShipping && (
+                                    <div className="text-green-600 text-xs text-center py-1 bg-green-50 rounded-lg">
+                                        ✨ Free Shipping Applied! ✨
                                     </div>
                                 )}
                                 <div className="border-t pt-2 mt-2">
@@ -593,6 +987,7 @@ const Checkout = () => {
                                                 <div>
                                                     <p className="font-medium">{item.name}</p>
                                                     <p className="text-xs text-gray-500">Qty: {item.quantity} | Size: {item.size} | Color: {item.color}</p>
+                                                    <p className="text-[10px] text-gray-400">Tax: {item.taxRate || globalSettings.taxRate}%</p>
                                                 </div>
                                             </div>
                                             <span>{formatPrice(item.price * item.quantity)}</span>
@@ -644,7 +1039,16 @@ const Checkout = () => {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50 py-8">
+        <div className="checkout-premium min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(245,197,66,0.18),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.12),_transparent_30%),linear-gradient(135deg,#f8fafc_0%,#fffaf0_45%,#f1f5f9_100%)] py-10">
+            <style>{`
+                .checkout-premium { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+                .checkout-premium h1, .checkout-premium h2, .checkout-premium h3 { font-family: "Plus Jakarta Sans", Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.025em; }
+                .checkout-3d-card { transform-style: preserve-3d; transition: transform .35s ease, box-shadow .35s ease, border-color .35s ease; }
+                .checkout-3d-card:hover { transform: translateY(-4px) rotateX(.35deg); box-shadow: 0 34px 90px rgba(15,23,42,.16); border-color: rgba(245,158,11,.38); }
+                .preserve-3d { transform-style: preserve-3d; perspective: 900px; }
+                .checkout-premium input, .checkout-premium select, .checkout-premium textarea { transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+                .checkout-premium input:focus, .checkout-premium select:focus, .checkout-premium textarea:focus { border-color: rgb(245 158 11); box-shadow: 0 0 0 4px rgba(245,158,11,.13); outline: none; }
+            `}</style>
             <div className="container mx-auto px-4 max-w-7xl">
                 {/* Progress Indicator */}
                 <div className="mb-8">
@@ -686,7 +1090,7 @@ const Checkout = () => {
                             <motion.div
                                 initial={{ opacity: 0, x: -20 }}
                                 animate={{ opacity: 1, x: 0 }}
-                                className="bg-white rounded-2xl shadow-md p-6"
+                                className="checkout-3d-card rounded-[28px] border border-white/70 bg-white/75 p-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur-xl"
                             >
                                 <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
                                     <FiShoppingBag className="text-blue-600" /> Review Cart Items ({cartItems.length} items)
@@ -696,6 +1100,7 @@ const Checkout = () => {
                                     {cartItems.map((item, index) => {
                                         const itemPrice = typeof item.price === 'number' ? item.price : parseFloat(item.price) || 0;
                                         const itemTotal = itemPrice * (item.quantity || 1);
+                                        const productTaxRate = getProductTaxRate(item.id);
                                         return (
                                             <div key={item.id || index} className="flex gap-4 p-4 border rounded-xl">
                                                 <img 
@@ -709,6 +1114,7 @@ const Checkout = () => {
                                                         <div>
                                                             <h3 className="font-semibold">{item.name}</h3>
                                                             <p className="text-sm text-gray-500">Size: {item.size} | Color: {item.color}</p>
+                                                            <p className="text-xs text-gray-400">Tax: {productTaxRate}%</p>
                                                         </div>
                                                         <button 
                                                             onClick={() => removeFromCart(item.id, item.size, item.color)}
@@ -746,12 +1152,12 @@ const Checkout = () => {
                             </motion.div>
                         )}
 
-                        {/* Step 2: Delivery Address */}
+                        {/* Step 2: Delivery Address - Same as before */}
                         {currentStep === 2 && (
                             <motion.div
                                 initial={{ opacity: 0, x: -20 }}
                                 animate={{ opacity: 1, x: 0 }}
-                                className="bg-white rounded-2xl shadow-md p-6"
+                                className="checkout-3d-card rounded-[28px] border border-white/70 bg-white/75 p-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur-xl"
                             >
                                 <div className="flex justify-between items-center mb-4">
                                     <h2 className="text-xl font-semibold flex items-center gap-2">
@@ -820,12 +1226,12 @@ const Checkout = () => {
                             </motion.div>
                         )}
 
-                        {/* Step 3: Shipping Method */}
+                        {/* Step 3: Shipping Method - Same as before */}
                         {currentStep === 3 && (
                             <motion.div
                                 initial={{ opacity: 0, x: -20 }}
                                 animate={{ opacity: 1, x: 0 }}
-                                className="bg-white rounded-2xl shadow-md p-6"
+                                className="checkout-3d-card rounded-[28px] border border-white/70 bg-white/75 p-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur-xl"
                             >
                                 <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
                                     <FiTruck className="text-blue-600" /> Select Shipping Method
@@ -834,7 +1240,7 @@ const Checkout = () => {
                                 <div className="space-y-3">
                                     {shippingOptions.map((option) => {
                                         const Icon = option.icon;
-                                        const actualPrice = (option.id === 'standard' && subtotal > freeThreshold) ? 0 : option.price;
+                                        const actualPrice = (option.id === 'standard' && hasFreeShipping) ? 0 : option.price;
                                         
                                         return (
                                             <label
@@ -865,7 +1271,7 @@ const Checkout = () => {
                                                     <p className="font-bold">
                                                         {actualPrice === 0 ? 'Free' : formatPrice(actualPrice)}
                                                     </p>
-                                                    {subtotal > freeThreshold && option.id === 'standard' && (
+                                                    {hasFreeShipping && option.id === 'standard' && (
                                                         <p className="text-xs text-green-600">Free Shipping Applied!</p>
                                                     )}
                                                 </div>
@@ -876,46 +1282,61 @@ const Checkout = () => {
                             </motion.div>
                         )}
 
-                        {/* Step 4: Payment Method */}
+                        {/* Step 4: Payment Method - Same as before */}
                         {currentStep === 4 && (
                             <motion.div
                                 initial={{ opacity: 0, x: -20 }}
                                 animate={{ opacity: 1, x: 0 }}
-                                className="bg-white rounded-2xl shadow-md p-6"
+                                className="checkout-3d-card rounded-[28px] border border-white/70 bg-white/75 p-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur-xl"
                             >
                                 <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
                                     <FiCreditCard className="text-blue-600" /> Payment Method
                                 </h2>
                                 
                                 <div className="space-y-4">
-                                    <div className="grid grid-cols-2 gap-3">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         {[
-                                            { id: "card", label: "Credit / Debit Card", icon: FiCreditCard },
-                                            { id: "paypal", label: "PayPal", icon: FiDollarSign },
-                                            { id: "apple_pay", label: "Apple Pay", icon: FiSmartphone },
-                                            { id: "google_pay", label: "Google Pay", icon: FiGlobe },
-                                            { id: "cod", label: "Cash on Delivery", icon: FiHome }
-                                        ].map((method) => (
-                                            <label
-                                                key={method.id}
-                                                className={`flex items-center gap-3 p-3 border-2 rounded-xl cursor-pointer transition-all ${
-                                                    formData.paymentMethod === method.id 
-                                                        ? 'border-blue-500 bg-blue-50' 
-                                                        : 'border-gray-200 hover:border-blue-300'
-                                                }`}
-                                            >
-                                                <input
-                                                    type="radio"
-                                                    name="paymentMethod"
-                                                    value={method.id}
-                                                    checked={formData.paymentMethod === method.id}
-                                                    onChange={handleInputChange}
-                                                    className="w-4 h-4"
-                                                />
-                                                <method.icon size={20} />
-                                                <span className="text-sm font-medium">{method.label}</span>
-                                            </label>
-                                        ))}
+                                            { id: "card", label: "Credit / Debit Card", subtitle: "Visa, Mastercard & Amex", logo: <div className="flex items-center gap-2"><FiCreditCard size={24} /><span className="font-semibold">Card</span></div> },
+                                            { id: "apple_pay", label: "Apple Pay", subtitle: "Fast checkout with Touch ID", logo: <ApplePayLogo /> },
+                                            { id: "google_pay", label: "Google Pay", subtitle: "Pay securely with Google", logo: <GooglePayLogo /> },
+                                            { id: "paypal", label: "PayPal", subtitle: "Use your PayPal balance", logo: <PayPalLogo /> },
+                                            { id: "cod", label: "Cash on Delivery", subtitle: "Pay when your order arrives", logo: <div className="flex items-center gap-2"><FiHome size={24} /><span className="font-semibold">Cash</span></div> }
+                                        ].map((method) => {
+                                            const selected = formData.paymentMethod === method.id;
+                                            return (
+                                                <motion.label
+                                                    key={method.id}
+                                                    whileHover={{ y: -5, rotateX: 2, rotateY: -2 }}
+                                                    whileTap={{ scale: 0.98 }}
+                                                    transition={{ type: "spring", stiffness: 280, damping: 20 }}
+                                                    className={`relative overflow-hidden rounded-2xl border p-4 cursor-pointer preserve-3d transition-all duration-300 ${
+                                                        selected
+                                                            ? 'border-amber-400 bg-gradient-to-br from-amber-50 via-white to-yellow-50 shadow-[0_18px_45px_rgba(180,130,35,0.20)]'
+                                                            : 'border-white/70 bg-white/75 shadow-[0_14px_35px_rgba(15,23,42,0.10)] hover:border-amber-300'
+                                                    }`}
+                                                >
+                                                    <input
+                                                        type="radio"
+                                                        name="paymentMethod"
+                                                        value={method.id}
+                                                        checked={selected}
+                                                        onChange={handleInputChange}
+                                                        className="sr-only"
+                                                    />
+                                                    <div className="relative z-10 flex items-start justify-between gap-3">
+                                                        <div>
+                                                            <div className="mb-3 min-h-7 text-gray-950">{method.logo}</div>
+                                                            <p className="font-semibold text-gray-950">{method.label}</p>
+                                                            <p className="mt-1 text-xs text-gray-500">{method.subtitle}</p>
+                                                        </div>
+                                                        <div className={`mt-1 flex h-5 w-5 items-center justify-center rounded-full border-2 ${selected ? 'border-amber-500 bg-amber-500' : 'border-gray-300 bg-white'}`}>
+                                                            {selected && <FiCheckCircle className="text-white" size={14} />}
+                                                        </div>
+                                                    </div>
+                                                    <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-amber-200/30 blur-2xl" />
+                                                </motion.label>
+                                            );
+                                        })}
                                     </div>
                                     
                                     {formData.paymentMethod === 'card' && (
@@ -1010,7 +1431,7 @@ const Checkout = () => {
                             <motion.div
                                 initial={{ opacity: 0, x: -20 }}
                                 animate={{ opacity: 1, x: 0 }}
-                                className="bg-white rounded-2xl shadow-md p-6"
+                                className="checkout-3d-card rounded-[28px] border border-white/70 bg-white/75 p-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur-xl"
                             >
                                 <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
                                     <FiCheckCircle className="text-green-600" /> Review Your Order
@@ -1037,6 +1458,9 @@ const Checkout = () => {
                                             <span>{shippingFee === 0 ? 'Free' : formatPrice(shippingFee)}</span>
                                         </div>
                                         <p className="text-xs text-gray-500">Est. delivery: {selectedShipping?.estimated}</p>
+                                        {hasFreeShipping && (
+                                            <p className="text-xs text-green-600 mt-1">✨ Free Shipping Applied!</p>
+                                        )}
                                     </div>
                                     
                                     <div className="border-b pb-3">
@@ -1061,13 +1485,18 @@ const Checkout = () => {
                                                 <span>{shippingFee === 0 ? 'Free' : formatPrice(shippingFee)}</span>
                                             </div>
                                             <div className="flex justify-between">
-                                                <span>Tax ({shippingSettings.taxRate}%):</span>
+                                                <span>Tax ({averageTaxRate.toFixed(1)}% avg):</span>
                                                 <span>{formatPrice(taxAmount)}</span>
                                             </div>
                                             {discountAmount > 0 && (
                                                 <div className="flex justify-between text-green-600">
                                                     <span>Discount:</span>
                                                     <span>-{formatPrice(discountAmount)}</span>
+                                                </div>
+                                            )}
+                                            {hasFreeShipping && (
+                                                <div className="text-green-600 text-xs text-center py-1 bg-green-50 rounded-lg">
+                                                    ✨ Free Shipping Applied! ✨
                                                 </div>
                                             )}
                                             <div className="border-t pt-2 mt-2">
@@ -1095,7 +1524,7 @@ const Checkout = () => {
                             <button
                                 onClick={handlePlaceOrder}
                                 disabled={loading}
-                                className="flex-1 bg-gray-900 text-white py-3 rounded-xl font-semibold hover:bg-gray-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                className="flex-1 rounded-2xl bg-gradient-to-r from-gray-950 via-gray-900 to-amber-900 px-6 py-3.5 font-semibold text-white shadow-[0_16px_34px_rgba(15,23,42,0.24)] transition-all hover:-translate-y-0.5 hover:shadow-[0_22px_45px_rgba(15,23,42,0.30)] flex items-center justify-center gap-2 disabled:opacity-50"
                             >
                                 {loading ? (
                                     <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
@@ -1111,7 +1540,7 @@ const Checkout = () => {
                     
                     {/* Right Section - Order Summary */}
                     <div className="lg:w-96">
-                        <div className="bg-white rounded-2xl shadow-md p-6 sticky top-24">
+                        <div className="checkout-3d-card rounded-[28px] border border-white/70 bg-white/80 p-6 shadow-[0_28px_80px_rgba(15,23,42,0.16)] backdrop-blur-xl sticky top-24">
                             <h2 className="text-xl font-semibold mb-4 pb-2 border-b">Order Summary</h2>
                             
                             <div className="space-y-3 max-h-64 overflow-y-auto mb-4">
@@ -1126,6 +1555,7 @@ const Checkout = () => {
                                         <div className="flex-1">
                                             <p className="font-medium text-sm line-clamp-1">{item.name}</p>
                                             <p className="text-xs text-gray-500">Qty: {item.quantity} | {item.size} | {item.color}</p>
+                                            <p className="text-[10px] text-gray-400">Tax: {getProductTaxRate(item.id)}%</p>
                                             <p className="text-sm font-semibold">{formatPrice((item.price || 0) * (item.quantity || 1))}</p>
                                         </div>
                                     </div>
@@ -1158,8 +1588,25 @@ const Checkout = () => {
                                         <button onClick={removeCoupon} className="text-red-500 text-sm">Remove</button>
                                     </div>
                                 )}
-                                {couponError && <p className="text-xs text-red-500 mt-1">{couponError}</p>}
-                                {couponSuccess && <p className="text-xs text-green-500 mt-1">{couponSuccess}</p>}
+                                {couponError && <p className="text-xs text-red-500 mt-2 flex items-center gap-1"><FiAlertCircle />{couponError}</p>}
+                                {couponSuccess && <p className="text-xs text-green-600 mt-2 flex items-center gap-1"><FiCheckCircle />{couponSuccess}</p>}
+                                {!appliedCoupon && customerCoupons.filter(c => c.status === 'active').length > 0 && (
+                                    <div className="mt-3 rounded-xl border border-[#eadfce] bg-[#fffaf1] p-3">
+                                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9a6828]">Your available offers</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {customerCoupons.filter(c => c.status === 'active').slice(0, 4).map(coupon => (
+                                                <button
+                                                    key={coupon.id || coupon.code}
+                                                    type="button"
+                                                    onClick={() => { setCouponCode(String(coupon.code).toUpperCase()); setCouponError(''); }}
+                                                    className="rounded-full border border-[#d7c09a] bg-white px-3 py-1.5 text-[11px] font-bold tracking-wide text-[#8f5e20] transition hover:-translate-y-0.5 hover:border-black hover:text-black"
+                                                >
+                                                    {String(coupon.code).toUpperCase()}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                             
                             <div className="space-y-2">
@@ -1172,7 +1619,7 @@ const Checkout = () => {
                                     <span>{shippingFee === 0 ? "Free" : formatPrice(shippingFee)}</span>
                                 </div>
                                 <div className="flex justify-between text-gray-600 text-sm">
-                                    <span>Tax ({shippingSettings.taxRate}%)</span>
+                                    <span>Tax ({averageTaxRate.toFixed(1)}% avg)</span>
                                     <span>{formatPrice(taxAmount)}</span>
                                 </div>
                                 {discountAmount > 0 && (
@@ -1181,7 +1628,7 @@ const Checkout = () => {
                                         <span>-{formatPrice(discountAmount)}</span>
                                     </div>
                                 )}
-                                {subtotal > freeThreshold && selectedShipping?.id === 'standard' && (
+                                {hasFreeShipping && (
                                     <div className="text-green-600 text-xs text-center py-1 bg-green-50 rounded-lg">
                                         ✨ Free Shipping Applied! ✨
                                     </div>
@@ -1197,7 +1644,7 @@ const Checkout = () => {
                             <div className="mt-6 pt-4 border-t space-y-2">
                                 <div className="flex items-center gap-2 text-xs text-gray-500">
                                     <FiShield className="text-green-600" size={14} />
-                                    <span>{shippingSettings.securePaymentText}</span>
+                                    <span>{globalSettings.securePaymentText}</span>
                                 </div>
                                 <div className="flex items-center gap-2 text-xs text-gray-500">
                                     <FiLock className="text-blue-600" size={14} />

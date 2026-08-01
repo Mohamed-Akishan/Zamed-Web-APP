@@ -1,9 +1,11 @@
+// src/components/Layout/Navbar.jsx
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { User, ShoppingBag, Menu, X } from "lucide-react";
 import SearchBar from "../Common/SearchBar";
 import CartDrawer from "../Cart/CartDrawer";
 import { useState, useEffect } from "react";
 import { useCart } from "../../context/CartContext";
+import { useSite } from "../../context/SiteContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 
@@ -14,12 +16,14 @@ const Navbar = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const { getCartItemsCount } = useCart();
+    const { siteInfo } = useSite();
     
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [userName, setUserName] = useState("");
-    const [siteName, setSiteName] = useState("Zamed");
-    const [siteLogo, setSiteLogo] = useState(null);
-    const [currencySymbol, setCurrencySymbol] = useState("$");
+
+    // Get site info from context
+    const siteName = siteInfo?.siteName || "Zamed";
+    const siteLogo = siteInfo?.logo || null;
 
     const scrollToTop = () => {
         window.scrollTo({
@@ -48,46 +52,27 @@ const Navbar = () => {
         scrollToTop();
     }, [location.pathname]);
 
-    const loadData = () => {
-        const siteInfo = JSON.parse(localStorage.getItem('site_info') || '{}');
-        const settings = JSON.parse(localStorage.getItem('site_settings') || '{}');
-        const merged = { ...siteInfo, ...settings };
-        
-        if (merged.siteName) setSiteName(merged.siteName);
-        if (merged.logo) setSiteLogo(merged.logo);
-        else if (merged.footerLogo) setSiteLogo(merged.footerLogo);
-        
-        const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
-        setCurrencySymbol(symbols[merged.currency] || "$");
-        
-        const user = localStorage.getItem('user');
-        if (user) {
-            const userData = JSON.parse(user);
-            setIsLoggedIn(true);
-            setUserName(userData.firstName || userData.email?.split('@')[0] || "User");
-        } else {
-            setIsLoggedIn(false);
-        }
-    };
-
+    // Load user data from localStorage
     useEffect(() => {
-        loadData();
-        
-        const handleUpdate = () => {
-            loadData();
+        const loadUser = () => {
+            const user = localStorage.getItem('user');
+            if (user) {
+                const userData = JSON.parse(user);
+                setIsLoggedIn(true);
+                setUserName(userData.firstName || userData.email?.split('@')[0] || "User");
+            } else {
+                setIsLoggedIn(false);
+            }
         };
-        
-        window.addEventListener('storage', handleUpdate);
-        window.addEventListener('siteInfoUpdated', handleUpdate);
-        window.addEventListener('settingsSaved', handleUpdate);
-        window.addEventListener('adminSettingsSaved', handleUpdate);
-        
-        return () => {
-            window.removeEventListener('storage', handleUpdate);
-            window.removeEventListener('siteInfoUpdated', handleUpdate);
-            window.removeEventListener('settingsSaved', handleUpdate);
-            window.removeEventListener('adminSettingsSaved', handleUpdate);
+
+        loadUser();
+
+        const handleStorageChange = () => {
+            loadUser();
         };
+
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
     }, []);
 
     const toggleNavDrawer = () => setNavDrawerOpen(!navDrawerOpen);
@@ -113,7 +98,10 @@ const Navbar = () => {
                     <img 
                         src={siteLogo} 
                         alt={siteName} 
-                        className="h-12 w-auto object-contain transition-transform duration-300 group-hover:scale-105" 
+                        className="h-12 w-auto object-contain transition-transform duration-300 group-hover:scale-105"
+                        onError={(e) => {
+                            e.target.style.display = 'none';
+                        }}
                     />
                     <div className="hidden sm:block">
                         <span className="text-lg font-bold text-gray-800 tracking-tight">{siteName}</span>
@@ -250,7 +238,14 @@ const Navbar = () => {
                                 }} className="cursor-pointer">
                                     {siteLogo ? (
                                         <div className="flex items-center gap-3">
-                                            <img src={siteLogo} alt={siteName} className="h-10 w-auto object-contain" />
+                                            <img 
+                                                src={siteLogo} 
+                                                alt={siteName} 
+                                                className="h-10 w-auto object-contain"
+                                                onError={(e) => {
+                                                    e.target.style.display = 'none';
+                                                }}
+                                            />
                                             <span className="text-lg font-bold text-gray-800">{siteName}</span>
                                         </div>
                                     ) : (

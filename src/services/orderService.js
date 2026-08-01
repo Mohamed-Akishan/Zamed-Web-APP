@@ -1,80 +1,160 @@
 // src/services/orderService.js
 const DB_NAME = 'ZamedOrdersDB';
-const DB_VERSION = 2; // Increased version to add return_requests store
+const DB_VERSION = 3;
 const ORDERS_STORE = 'orders';
 const RETURNS_STORE = 'return_requests';
 
 // Initialize IndexedDB
 const initDB = () => {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
-        request.onerror = () => reject(request.error);
-        
-        request.onsuccess = () => {
-            console.log("✅ Order database connected");
-            resolve(request.result);
-        };
-        
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-            const oldVersion = event.oldVersion;
+        try {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
             
-            // Create orders store if not exists
-            if (!db.objectStoreNames.contains(ORDERS_STORE)) {
+            request.onerror = (event) => {
+                console.error("❌ IndexedDB error:", event.target.error);
+                if (event.target.error.name === 'VersionError') {
+                    console.log("🔄 Version mismatch detected. Attempting to recreate database...");
+                    indexedDB.deleteDatabase(DB_NAME).onsuccess = () => {
+                        console.log("🗑️ Database deleted. Please refresh the page.");
+                        reject(new Error("Database version mismatch. Please refresh the page."));
+                    };
+                } else {
+                    reject(event.target.error);
+                }
+            };
+            
+            request.onsuccess = (event) => {
+                console.log("✅ Order database connected (version " + DB_VERSION + ")");
+                resolve(event.target.result);
+            };
+            
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                const oldVersion = event.oldVersion;
+                console.log(`🔄 Upgrading database from version ${oldVersion} to ${DB_VERSION}`);
+                
+                if (db.objectStoreNames.contains(ORDERS_STORE)) {
+                    db.deleteObjectStore(ORDERS_STORE);
+                    console.log("🗑️ Removed existing orders store");
+                }
+                if (db.objectStoreNames.contains(RETURNS_STORE)) {
+                    db.deleteObjectStore(RETURNS_STORE);
+                    console.log("🗑️ Removed existing returns store");
+                }
+                
                 const store = db.createObjectStore(ORDERS_STORE, { keyPath: 'id' });
                 store.createIndex('userEmail', 'userEmail', { unique: false });
                 store.createIndex('date', 'date', { unique: false });
                 store.createIndex('status', 'status', { unique: false });
                 console.log("📦 Order store created in IndexedDB");
-            }
-            
-            // Create return_requests store (new in version 2)
-            if (!db.objectStoreNames.contains(RETURNS_STORE)) {
+                
                 const returnsStore = db.createObjectStore(RETURNS_STORE, { keyPath: 'id' });
                 returnsStore.createIndex('orderId', 'orderId', { unique: false });
                 returnsStore.createIndex('userEmail', 'userEmail', { unique: false });
                 returnsStore.createIndex('status', 'status', { unique: false });
                 returnsStore.createIndex('date', 'date', { unique: false });
                 console.log("📦 Return requests store created in IndexedDB");
-            }
-        };
+            };
+        } catch (error) {
+            reject(error);
+        }
     });
+};
+
+// Helper function to handle IndexedDB transactions with retry
+const executeTransaction = async (storeName, mode, callback, retries = 3) => {
+    let lastError;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const db = await initDB();
+            return await new Promise((resolve, reject) => {
+                const transaction = db.transaction([storeName], mode);
+                
+                transaction.onerror = (event) => {
+                    console.error(`Transaction error (attempt ${attempt}):`, event.target.error);
+                    reject(event.target.error);
+                };
+                
+                transaction.oncomplete = () => {
+                    console.log(`Transaction completed successfully (attempt ${attempt})`);
+                };
+                
+                try {
+                    const store = transaction.objectStore(storeName);
+                    callback(store, resolve, reject);
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        } catch (error) {
+            lastError = error;
+            console.warn(`Transaction attempt ${attempt} failed:`, error);
+            if (attempt < retries) {
+                await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+            }
+        }
+    }
+    throw lastError;
 };
 
 // ==================== ORDER FUNCTIONS ====================
 
-// Save order to IndexedDB (UNLIMITED STORAGE!)
-export const saveOrder = async (order) => {
+const saveOrder = async (order) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([ORDERS_STORE], 'readwrite');
-            const store = transaction.objectStore(ORDERS_STORE);
-            const request = store.put(order);
+        if (!order.id) {
+            order.id = 'ORD-' + Date.now().toString().slice(-8) + Math.random().toString(36).substr(2, 4).toUpperCase();
+        }
+        
+        try {
+            await executeTransaction(ORDERS_STORE, 'readwrite', (store, resolve, reject) => {
+                const request = store.put(order);
+                request.onsuccess = () => {
+                    console.log(`✅ Order ${order.id} saved to IndexedDB`);
+                    resolve(order.id);
+                };
+                request.onerror = () => reject(request.error);
+            });
+        } catch (indexedDBError) {
+            console.warn("IndexedDB save failed, using localStorage fallback:", indexedDBError);
+        }
+        
+        try {
+            const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+            const existingIndex = localOrders.findIndex(o => o.id === order.id);
+            if (existingIndex >= 0) {
+                localOrders[existingIndex] = order;
+            } else {
+                localOrders.push(order);
+            }
+            localStorage.setItem('admin_orders', JSON.stringify(localOrders));
             
-            request.onsuccess = () => {
-                console.log(`✅ Order ${order.id} saved to IndexedDB`);
-                resolve(order.id);
-            };
-            request.onerror = () => reject(request.error);
-        });
+            if (order.userEmail || order.customerEmail) {
+                const email = order.userEmail || order.customerEmail;
+                const userOrders = JSON.parse(localStorage.getItem(`orders_${email}`) || '[]');
+                const userIndex = userOrders.findIndex(o => o.id === order.id);
+                if (userIndex >= 0) {
+                    userOrders[userIndex] = order;
+                } else {
+                    userOrders.push(order);
+                }
+                localStorage.setItem(`orders_${email}`, JSON.stringify(userOrders));
+            }
+        } catch (backupError) {
+            console.warn("Backup to localStorage failed:", backupError);
+        }
+        
+        return order.id;
     } catch (error) {
         console.error("Error saving order:", error);
         return null;
     }
 };
 
-// Get user orders from IndexedDB
-export const getUserOrders = async (userEmail) => {
+const getUserOrders = async (userEmail) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([ORDERS_STORE], 'readonly');
-            const store = transaction.objectStore(ORDERS_STORE);
+        return await executeTransaction(ORDERS_STORE, 'readonly', (store, resolve, reject) => {
             const index = store.index('userEmail');
             const request = index.getAll(userEmail);
-            
             request.onsuccess = () => {
                 const orders = request.result || [];
                 orders.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -83,20 +163,21 @@ export const getUserOrders = async (userEmail) => {
             request.onerror = () => reject(request.error);
         });
     } catch (error) {
-        console.error("Error getting orders:", error);
-        return [];
+        console.warn("IndexedDB getUserOrders failed, using localStorage:", error);
+        try {
+            const userOrders = JSON.parse(localStorage.getItem(`orders_${userEmail}`) || '[]');
+            userOrders.sort((a, b) => new Date(b.date) - new Date(a.date));
+            return userOrders;
+        } catch {
+            return [];
+        }
     }
 };
 
-// Get all orders for admin (from IndexedDB)
-export const getAllOrders = async () => {
+const getAllOrders = async () => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([ORDERS_STORE], 'readonly');
-            const store = transaction.objectStore(ORDERS_STORE);
+        return await executeTransaction(ORDERS_STORE, 'readonly', (store, resolve, reject) => {
             const request = store.getAll();
-            
             request.onsuccess = () => {
                 const orders = request.result || [];
                 orders.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -106,81 +187,159 @@ export const getAllOrders = async () => {
             request.onerror = () => reject(request.error);
         });
     } catch (error) {
-        console.error("Error getting all orders:", error);
-        return [];
+        console.warn("IndexedDB getAllOrders failed, using localStorage:", error);
+        try {
+            const allOrders = [];
+            const adminOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+            allOrders.push(...adminOrders);
+            
+            const guestOrders = JSON.parse(localStorage.getItem('guestOrders') || '[]');
+            allOrders.push(...guestOrders);
+            
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith('orders_')) {
+                    const userOrders = JSON.parse(localStorage.getItem(key) || '[]');
+                    allOrders.push(...userOrders);
+                }
+            }
+            
+            const uniqueOrders = [];
+            const ids = new Set();
+            allOrders.forEach(order => {
+                if (order.id && !ids.has(order.id)) {
+                    ids.add(order.id);
+                    uniqueOrders.push(order);
+                }
+            });
+            
+            uniqueOrders.sort((a, b) => new Date(b.date) - new Date(a.date));
+            console.log(`📦 Retrieved ${uniqueOrders.length} orders from localStorage`);
+            return uniqueOrders;
+        } catch (fallbackError) {
+            console.error("Fallback to localStorage failed:", fallbackError);
+            return [];
+        }
     }
 };
 
-// Get order by ID
-export const getOrderById = async (orderId) => {
+const getOrderById = async (orderId) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([ORDERS_STORE], 'readonly');
-            const store = transaction.objectStore(ORDERS_STORE);
+        return await executeTransaction(ORDERS_STORE, 'readonly', (store, resolve, reject) => {
             const request = store.get(orderId);
-            
             request.onsuccess = () => {
                 resolve(request.result);
             };
             request.onerror = () => reject(request.error);
         });
     } catch (error) {
-        console.error("Error getting order:", error);
-        return null;
+        console.warn("IndexedDB getOrderById failed, using localStorage:", error);
+        try {
+            const allOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+            return allOrders.find(o => o.id === orderId) || null;
+        } catch {
+            return null;
+        }
     }
 };
 
-// Update order status
-export const updateOrderStatus = async (orderId, status) => {
+const updateOrderStatus = async (orderId, status) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([ORDERS_STORE], 'readwrite');
-            const store = transaction.objectStore(ORDERS_STORE);
-            const request = store.get(orderId);
-            
-            request.onsuccess = () => {
-                const order = request.result;
-                if (order) {
-                    order.status = status;
-                    order.updatedAt = new Date().toISOString();
-                    const updateRequest = store.put(order);
-                    updateRequest.onsuccess = () => {
-                        console.log(`✅ Order ${orderId} status updated to ${status}`);
-                        resolve(true);
-                    };
-                    updateRequest.onerror = () => reject(updateRequest.error);
-                } else {
-                    reject(new Error("Order not found"));
+        let result = null;
+        
+        try {
+            result = await executeTransaction(ORDERS_STORE, 'readwrite', (store, resolve, reject) => {
+                const request = store.get(orderId);
+                request.onsuccess = () => {
+                    const order = request.result;
+                    if (order) {
+                        order.status = status;
+                        order.orderStatus = status;
+                        order.updatedAt = new Date().toISOString();
+                        
+                        if (!order.statusHistory) order.statusHistory = [];
+                        order.statusHistory.push({
+                            status: status,
+                            timestamp: new Date().toISOString(),
+                            note: `Status updated to ${status}`
+                        });
+                        
+                        const updateRequest = store.put(order);
+                        updateRequest.onsuccess = () => {
+                            console.log(`✅ Order ${orderId} status updated to ${status}`);
+                            resolve(order);
+                        };
+                        updateRequest.onerror = () => reject(updateRequest.error);
+                    } else {
+                        reject(new Error("Order not found"));
+                    }
+                };
+                request.onerror = () => reject(request.error);
+            });
+        } catch (indexedDBError) {
+            console.warn("IndexedDB update failed, using localStorage:", indexedDBError);
+            const allOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+            const index = allOrders.findIndex(o => o.id === orderId);
+            if (index >= 0) {
+                allOrders[index].status = status;
+                allOrders[index].orderStatus = status;
+                allOrders[index].updatedAt = new Date().toISOString();
+                if (!allOrders[index].statusHistory) allOrders[index].statusHistory = [];
+                allOrders[index].statusHistory.push({
+                    status: status,
+                    timestamp: new Date().toISOString(),
+                    note: `Status updated to ${status}`
+                });
+                localStorage.setItem('admin_orders', JSON.stringify(allOrders));
+                result = allOrders[index];
+            }
+        }
+        
+        if (result) {
+            try {
+                const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+                const index = localOrders.findIndex(o => o.id === orderId);
+                if (index >= 0) {
+                    localOrders[index] = result;
+                    localStorage.setItem('admin_orders', JSON.stringify(localOrders));
                 }
-            };
-            request.onerror = () => reject(request.error);
-        });
+                
+                if (result.userEmail || result.customerEmail) {
+                    const email = result.userEmail || result.customerEmail;
+                    const userOrders = JSON.parse(localStorage.getItem(`orders_${email}`) || '[]');
+                    const userIndex = userOrders.findIndex(o => o.id === orderId);
+                    if (userIndex >= 0) {
+                        userOrders[userIndex] = result;
+                        localStorage.setItem(`orders_${email}`, JSON.stringify(userOrders));
+                    }
+                }
+            } catch (backupError) {
+                console.warn("Backup update failed:", backupError);
+            }
+            return true;
+        }
+        
+        return false;
     } catch (error) {
         console.error("Error updating order status:", error);
         return false;
     }
 };
 
-// Update delivery date
-export const updateDeliveryDate = async (orderId, deliveryDate) => {
+const updateDeliveryDate = async (orderId, deliveryDate) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([ORDERS_STORE], 'readwrite');
-            const store = transaction.objectStore(ORDERS_STORE);
+        const result = await executeTransaction(ORDERS_STORE, 'readwrite', (store, resolve, reject) => {
             const request = store.get(orderId);
-            
             request.onsuccess = () => {
                 const order = request.result;
                 if (order) {
                     order.deliveryDate = deliveryDate;
                     order.deliveryStatus = "scheduled";
+                    order.updatedAt = new Date().toISOString();
                     const updateRequest = store.put(order);
                     updateRequest.onsuccess = () => {
                         console.log(`✅ Order ${orderId} delivery date updated to ${deliveryDate}`);
-                        resolve(true);
+                        resolve(order);
                     };
                     updateRequest.onerror = () => reject(updateRequest.error);
                 } else {
@@ -189,43 +348,56 @@ export const updateDeliveryDate = async (orderId, deliveryDate) => {
             };
             request.onerror = () => reject(request.error);
         });
+        
+        try {
+            const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+            const index = localOrders.findIndex(o => o.id === orderId);
+            if (index >= 0) {
+                localOrders[index] = result;
+                localStorage.setItem('admin_orders', JSON.stringify(localOrders));
+            }
+        } catch (backupError) {
+            console.warn("Backup update failed:", backupError);
+        }
+        
+        return true;
     } catch (error) {
         console.error("Error updating delivery date:", error);
         return false;
     }
 };
 
-// Delete order from IndexedDB
-export const deleteOrder = async (orderId) => {
+const deleteOrder = async (orderId) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([ORDERS_STORE], 'readwrite');
-            const store = transaction.objectStore(ORDERS_STORE);
+        await executeTransaction(ORDERS_STORE, 'readwrite', (store, resolve, reject) => {
             const request = store.delete(orderId);
-            
             request.onsuccess = () => {
                 console.log(`✅ Order ${orderId} deleted from IndexedDB`);
                 resolve(true);
             };
             request.onerror = () => reject(request.error);
         });
+        
+        try {
+            const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+            const filtered = localOrders.filter(o => o.id !== orderId);
+            localStorage.setItem('admin_orders', JSON.stringify(filtered));
+        } catch (backupError) {
+            console.warn("Backup delete failed:", backupError);
+        }
+        
+        return true;
     } catch (error) {
         console.error("Error deleting order:", error);
         return false;
     }
 };
 
-// Get orders by status
-export const getOrdersByStatus = async (status) => {
+const getOrdersByStatus = async (status) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([ORDERS_STORE], 'readonly');
-            const store = transaction.objectStore(ORDERS_STORE);
+        return await executeTransaction(ORDERS_STORE, 'readonly', (store, resolve, reject) => {
             const index = store.index('status');
             const request = index.getAll(status);
-            
             request.onsuccess = () => {
                 const orders = request.result || [];
                 orders.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -239,8 +411,7 @@ export const getOrdersByStatus = async (status) => {
     }
 };
 
-// Get orders within date range
-export const getOrdersByDateRange = async (startDate, endDate) => {
+const getOrdersByDateRange = async (startDate, endDate) => {
     try {
         const allOrders = await getAllOrders();
         return allOrders.filter(order => {
@@ -253,19 +424,20 @@ export const getOrdersByDateRange = async (startDate, endDate) => {
     }
 };
 
-// Get order statistics
-export const getOrderStats = async () => {
+const getOrderStats = async () => {
     try {
         const allOrders = await getAllOrders();
         
         const stats = {
             total: allOrders.length,
-            pending: allOrders.filter(o => o.status === 'pending').length,
-            processing: allOrders.filter(o => o.status === 'processing').length,
-            shipped: allOrders.filter(o => o.status === 'shipped').length,
-            delivered: allOrders.filter(o => o.status === 'delivered').length,
-            cancelled: allOrders.filter(o => o.status === 'cancelled').length,
-            totalRevenue: allOrders.reduce((sum, o) => sum + (o.total || 0), 0),
+            pending: allOrders.filter(o => (o.status || o.orderStatus) === 'pending').length,
+            processing: allOrders.filter(o => (o.status || o.orderStatus) === 'processing').length,
+            shipped: allOrders.filter(o => (o.status || o.orderStatus) === 'shipped').length,
+            delivered: allOrders.filter(o => (o.status || o.orderStatus) === 'delivered').length,
+            cancelled: allOrders.filter(o => (o.status || o.orderStatus) === 'cancelled').length,
+            totalRevenue: allOrders
+                .filter(o => (o.status || o.orderStatus) === 'delivered')
+                .reduce((sum, o) => sum + (o.total || 0), 0),
             totalOrdersToday: allOrders.filter(o => {
                 const today = new Date().toDateString();
                 return new Date(o.date).toDateString() === today;
@@ -290,8 +462,7 @@ export const getOrderStats = async () => {
     }
 };
 
-// Get monthly revenue
-export const getMonthlyRevenue = async (year, month) => {
+const getMonthlyRevenue = async (year, month) => {
     try {
         const allOrders = await getAllOrders();
         return allOrders
@@ -299,7 +470,7 @@ export const getMonthlyRevenue = async (year, month) => {
                 const date = new Date(o.date);
                 return date.getFullYear() === year && 
                        date.getMonth() === month && 
-                       o.status !== 'cancelled';
+                       (o.status || o.orderStatus) !== 'cancelled';
             })
             .reduce((sum, o) => sum + (o.total || 0), 0);
     } catch (error) {
@@ -308,8 +479,7 @@ export const getMonthlyRevenue = async (year, month) => {
     }
 };
 
-// Get daily revenue for chart
-export const getDailyRevenue = async (days = 7) => {
+const getDailyRevenue = async (days = 7) => {
     try {
         const allOrders = await getAllOrders();
         const result = [];
@@ -322,7 +492,7 @@ export const getDailyRevenue = async (days = 7) => {
             const dailyTotal = allOrders
                 .filter(o => {
                     const orderDate = new Date(o.date).toISOString().split('T')[0];
-                    return orderDate === dateStr && o.status !== 'cancelled';
+                    return orderDate === dateStr && (o.status || o.orderStatus) !== 'cancelled';
                 })
                 .reduce((sum, o) => sum + (o.total || 0), 0);
             
@@ -331,7 +501,7 @@ export const getDailyRevenue = async (days = 7) => {
                 amount: dailyTotal,
                 count: allOrders.filter(o => {
                     const orderDate = new Date(o.date).toISOString().split('T')[0];
-                    return orderDate === dateStr && o.status !== 'cancelled';
+                    return orderDate === dateStr && (o.status || o.orderStatus) !== 'cancelled';
                 }).length
             });
         }
@@ -345,37 +515,61 @@ export const getDailyRevenue = async (days = 7) => {
 
 // ==================== RETURN REQUEST FUNCTIONS ====================
 
-// Save return request to IndexedDB
-export const saveReturnRequest = async (returnRequest) => {
+const saveReturnRequest = async (returnRequest) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([RETURNS_STORE], 'readwrite');
-            const store = transaction.objectStore(RETURNS_STORE);
-            const request = store.put(returnRequest);
+        if (!returnRequest.id) {
+            returnRequest.id = 'RET-' + Date.now().toString().slice(-8) + Math.random().toString(36).substr(2, 4).toUpperCase();
+        }
+        
+        try {
+            await executeTransaction(RETURNS_STORE, 'readwrite', (store, resolve, reject) => {
+                const request = store.put(returnRequest);
+                request.onsuccess = () => {
+                    console.log(`✅ Return request ${returnRequest.id} saved to IndexedDB`);
+                    resolve(returnRequest.id);
+                };
+                request.onerror = () => reject(request.error);
+            });
+        } catch (indexedDBError) {
+            console.warn("IndexedDB saveReturnRequest failed, using localStorage:", indexedDBError);
+        }
+        
+        try {
+            const localReturns = JSON.parse(localStorage.getItem('return_requests') || '[]');
+            const existingIndex = localReturns.findIndex(r => r.id === returnRequest.id);
+            if (existingIndex >= 0) {
+                localReturns[existingIndex] = returnRequest;
+            } else {
+                localReturns.push(returnRequest);
+            }
+            localStorage.setItem('return_requests', JSON.stringify(localReturns));
             
-            request.onsuccess = () => {
-                console.log(`✅ Return request ${returnRequest.id} saved to IndexedDB`);
-                resolve(returnRequest.id);
-            };
-            request.onerror = () => reject(request.error);
-        });
+            if (returnRequest.userEmail) {
+                const userReturns = JSON.parse(localStorage.getItem(`returns_${returnRequest.userEmail}`) || '[]');
+                const userIndex = userReturns.findIndex(r => r.id === returnRequest.id);
+                if (userIndex >= 0) {
+                    userReturns[userIndex] = returnRequest;
+                } else {
+                    userReturns.push(returnRequest);
+                }
+                localStorage.setItem(`returns_${returnRequest.userEmail}`, JSON.stringify(userReturns));
+            }
+        } catch (backupError) {
+            console.warn("Backup to localStorage failed:", backupError);
+        }
+        
+        return returnRequest.id;
     } catch (error) {
         console.error("Error saving return request:", error);
         return null;
     }
 };
 
-// Get return requests for a specific order
-export const getReturnRequestsByOrder = async (orderId) => {
+const getReturnRequestsByOrder = async (orderId) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([RETURNS_STORE], 'readonly');
-            const store = transaction.objectStore(RETURNS_STORE);
+        return await executeTransaction(RETURNS_STORE, 'readonly', (store, resolve, reject) => {
             const index = store.index('orderId');
             const request = index.getAll(orderId);
-            
             request.onsuccess = () => {
                 const returns = request.result || [];
                 returns.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -389,16 +583,11 @@ export const getReturnRequestsByOrder = async (orderId) => {
     }
 };
 
-// Get return requests for a user
-export const getUserReturnRequests = async (userEmail) => {
+const getUserReturnRequests = async (userEmail) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([RETURNS_STORE], 'readonly');
-            const store = transaction.objectStore(RETURNS_STORE);
+        return await executeTransaction(RETURNS_STORE, 'readonly', (store, resolve, reject) => {
             const index = store.index('userEmail');
             const request = index.getAll(userEmail);
-            
             request.onsuccess = () => {
                 const returns = request.result || [];
                 returns.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -407,20 +596,21 @@ export const getUserReturnRequests = async (userEmail) => {
             request.onerror = () => reject(request.error);
         });
     } catch (error) {
-        console.error("Error getting user returns:", error);
-        return [];
+        console.warn("IndexedDB getUserReturnRequests failed, using localStorage:", error);
+        try {
+            const userReturns = JSON.parse(localStorage.getItem(`returns_${userEmail}`) || '[]');
+            userReturns.sort((a, b) => new Date(b.date) - new Date(a.date));
+            return userReturns;
+        } catch {
+            return [];
+        }
     }
 };
 
-// Get all return requests for admin
-export const getAllReturnRequests = async () => {
+const getAllReturnRequests = async () => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([RETURNS_STORE], 'readonly');
-            const store = transaction.objectStore(RETURNS_STORE);
+        return await executeTransaction(RETURNS_STORE, 'readonly', (store, resolve, reject) => {
             const request = store.getAll();
-            
             request.onsuccess = () => {
                 const returns = request.result || [];
                 returns.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -431,20 +621,21 @@ export const getAllReturnRequests = async () => {
         });
     } catch (error) {
         console.error("Error getting all returns:", error);
-        return [];
+        try {
+            const localReturns = JSON.parse(localStorage.getItem('return_requests') || '[]');
+            localReturns.sort((a, b) => new Date(b.date) - new Date(a.date));
+            return localReturns;
+        } catch {
+            return [];
+        }
     }
 };
 
-// Get return requests by status
-export const getReturnRequestsByStatus = async (status) => {
+const getReturnRequestsByStatus = async (status) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([RETURNS_STORE], 'readonly');
-            const store = transaction.objectStore(RETURNS_STORE);
+        return await executeTransaction(RETURNS_STORE, 'readonly', (store, resolve, reject) => {
             const index = store.index('status');
             const request = index.getAll(status);
-            
             request.onsuccess = () => {
                 const returns = request.result || [];
                 returns.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -458,15 +649,10 @@ export const getReturnRequestsByStatus = async (status) => {
     }
 };
 
-// Update return request status
-export const updateReturnStatus = async (returnId, status, adminNote = null, refundAmount = null) => {
+const updateReturnStatus = async (returnId, status, adminNote = null, refundAmount = null) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([RETURNS_STORE], 'readwrite');
-            const store = transaction.objectStore(RETURNS_STORE);
+        const result = await executeTransaction(RETURNS_STORE, 'readwrite', (store, resolve, reject) => {
             const request = store.get(returnId);
-            
             request.onsuccess = () => {
                 const returnReq = request.result;
                 if (returnReq) {
@@ -475,7 +661,6 @@ export const updateReturnStatus = async (returnId, status, adminNote = null, ref
                     if (adminNote) returnReq.adminNote = adminNote;
                     if (refundAmount !== null) returnReq.refundAmount = refundAmount;
                     
-                    // Add to tracking history
                     if (!returnReq.trackingHistory) returnReq.trackingHistory = [];
                     returnReq.trackingHistory.push({
                         stage: status,
@@ -486,7 +671,7 @@ export const updateReturnStatus = async (returnId, status, adminNote = null, ref
                     const updateRequest = store.put(returnReq);
                     updateRequest.onsuccess = () => {
                         console.log(`✅ Return request ${returnId} status updated to ${status}`);
-                        resolve(true);
+                        resolve(returnReq);
                     };
                     updateRequest.onerror = () => reject(updateRequest.error);
                 } else {
@@ -495,35 +680,61 @@ export const updateReturnStatus = async (returnId, status, adminNote = null, ref
             };
             request.onerror = () => reject(request.error);
         });
+        
+        try {
+            const localReturns = JSON.parse(localStorage.getItem('return_requests') || '[]');
+            const index = localReturns.findIndex(r => r.id === returnId);
+            if (index >= 0) {
+                localReturns[index] = result;
+                localStorage.setItem('return_requests', JSON.stringify(localReturns));
+            }
+            
+            if (result.userEmail) {
+                const userReturns = JSON.parse(localStorage.getItem(`returns_${result.userEmail}`) || '[]');
+                const userIndex = userReturns.findIndex(r => r.id === returnId);
+                if (userIndex >= 0) {
+                    userReturns[userIndex] = result;
+                    localStorage.setItem(`returns_${result.userEmail}`, JSON.stringify(userReturns));
+                }
+            }
+        } catch (backupError) {
+            console.warn("Backup update failed:", backupError);
+        }
+        
+        return true;
     } catch (error) {
         console.error("Error updating return status:", error);
         return false;
     }
 };
 
-// Delete return request
-export const deleteReturnRequest = async (returnId) => {
+const deleteReturnRequest = async (returnId) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([RETURNS_STORE], 'readwrite');
-            const store = transaction.objectStore(RETURNS_STORE);
+        await executeTransaction(RETURNS_STORE, 'readwrite', (store, resolve, reject) => {
             const request = store.delete(returnId);
-            
             request.onsuccess = () => {
                 console.log(`✅ Return request ${returnId} deleted from IndexedDB`);
                 resolve(true);
             };
             request.onerror = () => reject(request.error);
         });
+        
+        try {
+            const localReturns = JSON.parse(localStorage.getItem('return_requests') || '[]');
+            const filtered = localReturns.filter(r => r.id !== returnId);
+            localStorage.setItem('return_requests', JSON.stringify(filtered));
+        } catch (backupError) {
+            console.warn("Backup delete failed:", backupError);
+        }
+        
+        return true;
     } catch (error) {
         console.error("Error deleting return request:", error);
         return false;
     }
 };
 
-// Get return statistics (UPDATED for all statuses)
-export const getReturnStats = async () => {
+const getReturnStats = async () => {
     try {
         const allReturns = await getAllReturnRequests();
         
@@ -562,15 +773,10 @@ export const getReturnStats = async () => {
     }
 };
 
-// Get return request by ID
-export const getReturnRequestById = async (returnId) => {
+const getReturnRequestById = async (returnId) => {
     try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([RETURNS_STORE], 'readonly');
-            const store = transaction.objectStore(RETURNS_STORE);
+        return await executeTransaction(RETURNS_STORE, 'readonly', (store, resolve, reject) => {
             const request = store.get(returnId);
-            
             request.onsuccess = () => {
                 resolve(request.result);
             };
@@ -578,12 +784,16 @@ export const getReturnRequestById = async (returnId) => {
         });
     } catch (error) {
         console.error("Error getting return request:", error);
-        return null;
+        try {
+            const localReturns = JSON.parse(localStorage.getItem('return_requests') || '[]');
+            return localReturns.find(r => r.id === returnId) || null;
+        } catch {
+            return null;
+        }
     }
 };
 
-// Get returns by date range
-export const getReturnRequestsByDateRange = async (startDate, endDate) => {
+const getReturnRequestsByDateRange = async (startDate, endDate) => {
     try {
         const allReturns = await getAllReturnRequests();
         return allReturns.filter(returnReq => {
@@ -598,8 +808,7 @@ export const getReturnRequestsByDateRange = async (startDate, endDate) => {
 
 // ==================== MIGRATION FUNCTIONS ====================
 
-// Sync local storage orders to IndexedDB (for migration)
-export const syncLocalOrdersToIndexedDB = async () => {
+const syncLocalOrdersToIndexedDB = async () => {
     try {
         const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         let syncedCount = 0;
@@ -612,7 +821,6 @@ export const syncLocalOrdersToIndexedDB = async () => {
             }
         }
         
-        // Also sync user-specific orders
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
             if (key && key.startsWith('orders_')) {
@@ -635,8 +843,7 @@ export const syncLocalOrdersToIndexedDB = async () => {
     }
 };
 
-// Sync return requests from localStorage to IndexedDB
-export const syncLocalReturnsToIndexedDB = async () => {
+const syncLocalReturnsToIndexedDB = async () => {
     try {
         const localReturns = JSON.parse(localStorage.getItem('return_requests') || '[]');
         let syncedCount = 0;
@@ -650,13 +857,6 @@ export const syncLocalReturnsToIndexedDB = async () => {
         }
         
         console.log(`✅ Synced ${syncedCount} return requests to IndexedDB`);
-        
-        // Optionally clear localStorage after sync
-        if (syncedCount > 0) {
-            // Don't auto-clear, just log
-            console.log(`💡 ${syncedCount} returns synced to IndexedDB. localStorage can be cleared manually if needed.`);
-        }
-        
         return syncedCount;
     } catch (error) {
         console.error("Error syncing returns:", error);
@@ -664,22 +864,20 @@ export const syncLocalReturnsToIndexedDB = async () => {
     }
 };
 
-// Clear all orders from IndexedDB (use with caution)
-export const clearAllOrders = async () => {
+const clearAllOrders = async () => {
     if (window.confirm("⚠️ WARNING: This will delete ALL orders from IndexedDB. Continue?")) {
         try {
-            const db = await initDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([ORDERS_STORE], 'readwrite');
-                const store = transaction.objectStore(ORDERS_STORE);
+            await executeTransaction(ORDERS_STORE, 'readwrite', (store, resolve, reject) => {
                 const request = store.clear();
-                
                 request.onsuccess = () => {
                     console.log("✅ All orders cleared from IndexedDB");
                     resolve(true);
                 };
                 request.onerror = () => reject(request.error);
             });
+            
+            localStorage.setItem('admin_orders', JSON.stringify([]));
+            return true;
         } catch (error) {
             console.error("Error clearing orders:", error);
             return false;
@@ -688,22 +886,20 @@ export const clearAllOrders = async () => {
     return false;
 };
 
-// Clear all return requests from IndexedDB
-export const clearAllReturnRequests = async () => {
+const clearAllReturnRequests = async () => {
     if (window.confirm("⚠️ WARNING: This will delete ALL return requests from IndexedDB. Continue?")) {
         try {
-            const db = await initDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([RETURNS_STORE], 'readwrite');
-                const store = transaction.objectStore(RETURNS_STORE);
+            await executeTransaction(RETURNS_STORE, 'readwrite', (store, resolve, reject) => {
                 const request = store.clear();
-                
                 request.onsuccess = () => {
                     console.log("✅ All return requests cleared from IndexedDB");
                     resolve(true);
                 };
                 request.onerror = () => reject(request.error);
             });
+            
+            localStorage.setItem('return_requests', JSON.stringify([]));
+            return true;
         } catch (error) {
             console.error("Error clearing return requests:", error);
             return false;
@@ -712,9 +908,10 @@ export const clearAllReturnRequests = async () => {
     return false;
 };
 
-// Export all functions
+// ==================== EXPORTS ====================
+
+// Default export
 export default {
-    // Order functions
     saveOrder,
     getUserOrders,
     getAllOrders,
@@ -727,8 +924,6 @@ export default {
     getOrderStats,
     getMonthlyRevenue,
     getDailyRevenue,
-    
-    // Return request functions
     saveReturnRequest,
     getReturnRequestsByOrder,
     getUserReturnRequests,
@@ -739,8 +934,36 @@ export default {
     deleteReturnRequest,
     getReturnStats,
     getReturnRequestById,
-    
-    // Migration functions
+    syncLocalOrdersToIndexedDB,
+    syncLocalReturnsToIndexedDB,
+    clearAllOrders,
+    clearAllReturnRequests
+};
+
+// Named exports for backward compatibility
+export {
+    saveOrder,
+    getUserOrders,
+    getAllOrders,
+    getOrderById,
+    updateOrderStatus,
+    updateDeliveryDate,
+    deleteOrder,
+    getOrdersByStatus,
+    getOrdersByDateRange,
+    getOrderStats,
+    getMonthlyRevenue,
+    getDailyRevenue,
+    saveReturnRequest,
+    getReturnRequestsByOrder,
+    getUserReturnRequests,
+    getAllReturnRequests,
+    getReturnRequestsByStatus,
+    getReturnRequestsByDateRange,
+    updateReturnStatus,
+    deleteReturnRequest,
+    getReturnStats,
+    getReturnRequestById,
     syncLocalOrdersToIndexedDB,
     syncLocalReturnsToIndexedDB,
     clearAllOrders,

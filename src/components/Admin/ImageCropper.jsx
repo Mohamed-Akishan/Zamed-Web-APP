@@ -5,7 +5,7 @@ import 'react-image-crop/dist/ReactCrop.css';
 import { FiX, FiCheck, FiZoomIn, FiZoomOut, FiRotateCw, FiMove, FiRefreshCw } from 'react-icons/fi';
 import { toast } from 'sonner';
 
-const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) => {
+const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null, cropType = null }) => {
     const [crop, setCrop] = useState(undefined);
     const [completedCrop, setCompletedCrop] = useState(null);
     const [zoom, setZoom] = useState(1);
@@ -230,8 +230,24 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null }) =>
     const handleSkipCrop = () => {
         // Still compress even when skipping crop
         toast.loading("Compressing image...", { id: "compress" });
-        
-        compressImage(image, 600, 0.6)
+
+        // Use the same type-based sizing as the crop path so skipped
+        // uploads (logo/favicon/heroImage/slide) get sized correctly too.
+        let maxWidth = 600;
+        let quality = 0.6;
+
+        if (cropType === 'favicon') {
+            maxWidth = 64;
+            quality = 0.5;
+        } else if (cropType === 'logo' || cropType === 'footerLogo') {
+            maxWidth = 200;
+            quality = 0.7;
+        } else if (cropType === 'heroImage' || cropType === 'slide') {
+            maxWidth = 800;
+            quality = 0.5;
+        }
+
+        compressImage(image, maxWidth, quality)
             .then(compressed => {
                 toast.dismiss("compress");
                 onCropComplete(compressed);

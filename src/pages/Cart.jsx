@@ -1,3 +1,4 @@
+// src/pages/Cart.jsx
 import { Link, useNavigate } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { FiTrash2, FiPlus, FiMinus, FiArrowLeft, FiTruck, FiShield } from "react-icons/fi";
@@ -15,27 +16,84 @@ const Cart = () => {
     
     const [currencySymbol, setCurrencySymbol] = useState("$");
     const [currencyCode, setCurrencyCode] = useState("USD");
-    const [shippingSettings, setShippingSettings] = useState({
+    const [globalSettings, setGlobalSettings] = useState({
         shippingFee: 5,
         freeShippingThreshold: 100,
         taxRate: 10
     });
     const [productImages, setProductImages] = useState({});
+    const [productDetails, setProductDetails] = useState({});
 
-    useEffect(() => {
+    // Load settings with real-time updates
+    const loadSettings = () => {
         const settings = JSON.parse(localStorage.getItem('site_settings') || '{}');
         const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
         setCurrencySymbol(symbols[settings.currency] || "$");
         setCurrencyCode(settings.currency || "USD");
         
-        setShippingSettings({
-            shippingFee: settings.shippingFee || 5,
-            freeShippingThreshold: settings.freeShippingThreshold || 100,
-            taxRate: settings.taxRate || 10
+        setGlobalSettings({
+            shippingFee: settings.shippingFee !== undefined ? parseFloat(settings.shippingFee) : 5,
+            freeShippingThreshold: settings.freeShippingThreshold !== undefined ? parseFloat(settings.freeShippingThreshold) : 100,
+            taxRate: settings.taxRate !== undefined ? parseFloat(settings.taxRate) : 10
         });
         
-        // Load product images from localStorage
         loadProductImages();
+        loadProductDetails();
+    };
+
+    // Load product details from products storage
+    const loadProductDetails = () => {
+        const products = JSON.parse(localStorage.getItem('shop_products') || '[]');
+        const detailsMap = {};
+        products.forEach(product => {
+            if (product.id) {
+                detailsMap[product.id] = {
+                    taxRate: product.taxRate !== undefined ? parseFloat(product.taxRate) : null,
+                    shippingFee: product.shippingFee !== undefined ? parseFloat(product.shippingFee) : null,
+                    freeShippingThreshold: product.freeShippingThreshold !== undefined ? parseFloat(product.freeShippingThreshold) : null,
+                    deliveryDays: product.deliveryDays || null,
+                    returnPolicy: product.returnPolicy || null
+                };
+            }
+        });
+        setProductDetails(detailsMap);
+    };
+
+    useEffect(() => {
+        loadSettings();
+        
+        // Listen for settings updates
+        const handleSettingsUpdate = () => {
+            console.log("🔄 Cart: Settings updated, reloading...");
+            loadSettings();
+        };
+
+        const handleProductsUpdate = () => {
+            console.log("🔄 Cart: Products updated, reloading product details...");
+            loadProductDetails();
+            loadProductImages();
+        };
+
+        window.addEventListener('settingsSaved', handleSettingsUpdate);
+        window.addEventListener('siteInfoUpdated', handleSettingsUpdate);
+        window.addEventListener('currencyChanged', handleSettingsUpdate);
+        window.addEventListener('productsUpdated', handleProductsUpdate);
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'site_settings') {
+                handleSettingsUpdate();
+            }
+            if (e.key === 'shop_products') {
+                handleProductsUpdate();
+            }
+        });
+
+        return () => {
+            window.removeEventListener('settingsSaved', handleSettingsUpdate);
+            window.removeEventListener('siteInfoUpdated', handleSettingsUpdate);
+            window.removeEventListener('currencyChanged', handleSettingsUpdate);
+            window.removeEventListener('productsUpdated', handleProductsUpdate);
+            window.removeEventListener('storage', handleSettingsUpdate);
+        };
     }, []);
 
     // Load product images from products storage
@@ -46,7 +104,6 @@ const Cart = () => {
             if (product.id && product.image) {
                 imageMap[product.id] = product.image;
             }
-            // Also store color images if needed
             if (product.colorImages) {
                 Object.values(product.colorImages).forEach(img => {
                     if (img) imageMap[product.id] = img;
@@ -58,19 +115,43 @@ const Cart = () => {
 
     // Get valid image URL
     const getProductImage = (item) => {
-        // First check if we have an image from product storage
         if (productImages[item.id]) {
             return productImages[item.id];
         }
-        // Then check if the item itself has an image
         if (item.image && (item.image.startsWith('data:') || item.image.startsWith('http'))) {
             return item.image;
         }
-        // Fallback to placeholder
         return 'https://via.placeholder.com/80x80?text=No+Image';
     };
 
-    // Calculate totals directly from cartItems
+    // Get product-specific tax rate or fallback to global
+    const getProductTaxRate = (productId) => {
+        const product = productDetails[productId];
+        if (product && product.taxRate !== null) {
+            return product.taxRate;
+        }
+        return globalSettings.taxRate || 10;
+    };
+
+    // Get product-specific shipping fee or fallback to global
+    const getProductShippingFee = (productId) => {
+        const product = productDetails[productId];
+        if (product && product.shippingFee !== null) {
+            return product.shippingFee;
+        }
+        return globalSettings.shippingFee || 5;
+    };
+
+    // Get product-specific free shipping threshold or fallback to global
+    const getProductFreeShippingThreshold = (productId) => {
+        const product = productDetails[productId];
+        if (product && product.freeShippingThreshold !== null) {
+            return product.freeShippingThreshold;
+        }
+        return globalSettings.freeShippingThreshold || 100;
+    };
+
+    // Calculate totals with product-specific rates
     const calculateSubtotal = () => {
         if (!cartItems || cartItems.length === 0) return 0;
         return cartItems.reduce((total, item) => {
@@ -82,14 +163,36 @@ const Cart = () => {
 
     const subtotal = calculateSubtotal();
     
-    // Calculate shipping based on currency and subtotal
+    // Calculate shipping - use product-specific rates
     const isLKR = currencyCode === 'LKR';
-    const freeThreshold = isLKR ? 10000 : shippingSettings.freeShippingThreshold;
-    const shippingAmount = isLKR ? 500 : shippingSettings.shippingFee;
-    const calculatedShipping = subtotal > freeThreshold ? 0 : shippingAmount;
+    let totalShipping = 0;
+    let totalTax = 0;
+    let hasFreeShipping = false;
     
-    // Calculate tax
-    const taxAmount = subtotal * (shippingSettings.taxRate / 100);
+    cartItems.forEach(item => {
+        const productShippingFee = getProductShippingFee(item.id);
+        const productFreeThreshold = getProductFreeShippingThreshold(item.id);
+        const productTaxRate = getProductTaxRate(item.id);
+        
+        const itemTotal = (typeof item.price === 'number' ? item.price : parseFloat(item.price) || 0) * (item.quantity || 1);
+        
+        // Calculate shipping for this item
+        const threshold = isLKR ? productFreeThreshold * 100 : productFreeThreshold;
+        const shippingFee = isLKR ? productShippingFee * 100 : productShippingFee;
+        
+        if (itemTotal >= threshold) {
+            hasFreeShipping = true;
+        } else {
+            totalShipping += shippingFee;
+        }
+        
+        // Calculate tax for this item
+        totalTax += itemTotal * (productTaxRate / 100);
+    });
+
+    // If any item qualifies for free shipping, make shipping free
+    const calculatedShipping = hasFreeShipping ? 0 : totalShipping;
+    const taxAmount = totalTax;
     const total = subtotal + calculatedShipping + taxAmount;
     const itemsCount = cartItems.reduce((sum, item) => sum + (item.quantity || 1), 0);
 
@@ -169,20 +272,22 @@ const Cart = () => {
                     <div className="lg:col-span-2">
                         <div className="bg-white rounded-lg shadow-md overflow-hidden">
                             <div className="hidden md:grid grid-cols-12 gap-4 p-4 bg-gray-50 border-b font-semibold text-gray-600">
-                                <div className="col-span-6">Product</div>
+                                <div className="col-span-5">Product</div>
                                 <div className="col-span-2 text-center">Price</div>
                                 <div className="col-span-2 text-center">Quantity</div>
-                                <div className="col-span-2 text-right">Total</div>
+                                <div className="col-span-3 text-right">Total</div>
                             </div>
                             
                             {cartItems.map((item, idx) => {
                                 const itemPrice = typeof item.price === 'number' ? item.price : parseFloat(item.price) || 0;
                                 const itemTotal = itemPrice * (item.quantity || 1);
                                 const productImage = getProductImage(item);
+                                const productTaxRate = getProductTaxRate(item.id);
+                                const productShippingFee = getProductShippingFee(item.id);
                                 
                                 return (
                                     <div key={`${item.id}-${item.size}-${item.color}-${idx}`} className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 border-b items-center">
-                                        <div className="md:col-span-6 flex items-center space-x-4">
+                                        <div className="md:col-span-5 flex items-center space-x-4">
                                             <img 
                                                 src={productImage} 
                                                 alt={item.name} 
@@ -194,6 +299,10 @@ const Cart = () => {
                                                 <p className="text-sm text-gray-500 capitalize">{item.category || 'Fashion'}</p>
                                                 {item.size && <p className="text-xs text-gray-400">Size: {item.size}</p>}
                                                 {item.color && <p className="text-xs text-gray-400">Color: {item.color}</p>}
+                                                <div className="flex gap-2 mt-1 flex-wrap">
+                                                    <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">Tax: {productTaxRate}%</span>
+                                                    <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">Shipping: {formatPrice(productShippingFee)}</span>
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="md:col-span-2 text-center">
@@ -216,7 +325,7 @@ const Cart = () => {
                                                 </button>
                                             </div>
                                         </div>
-                                        <div className="md:col-span-2 flex items-center justify-between md:justify-end">
+                                        <div className="md:col-span-3 flex items-center justify-between md:justify-end">
                                             <span className="font-semibold text-blue-600">{formatPrice(itemTotal)}</span>
                                             <button 
                                                 onClick={() => handleRemoveItem(item.id, item.size, item.color, item.name)} 
@@ -262,11 +371,11 @@ const Cart = () => {
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="text-gray-600 flex items-center gap-1">
-                                        <FiShield size={14} /> Tax ({shippingSettings.taxRate}%)
+                                        <FiShield size={14} /> Tax
                                     </span>
                                     <span>{formatPrice(taxAmount)}</span>
                                 </div>
-                                {subtotal > freeThreshold && (
+                                {hasFreeShipping && (
                                     <div className="text-green-600 text-sm text-center py-2 bg-green-50 rounded-lg">
                                         ✨ Free Shipping Applied! ✨
                                     </div>
