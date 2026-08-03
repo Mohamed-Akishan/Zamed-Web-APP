@@ -51,7 +51,7 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null, crop
      * @param {number} quality - JPEG quality (0-1)
      * @returns {Promise<string>} - Compressed base64 string
      */
-    const compressImage = (base64String, maxWidth = 600, quality = 0.6) => {
+    const compressImage = (base64String, maxWidth = 1600, quality = 0.9) => {
         return new Promise((resolve, reject) => {
             const img = new Image();
             img.onload = () => {
@@ -76,7 +76,18 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null, crop
                     ctx.drawImage(img, 0, 0, width, height);
                     
                     // Compress to JPEG with quality
-                    const compressed = canvas.toDataURL('image/jpeg', quality);
+                    const mimeType =
+                        cropType === 'favicon' ||
+                        cropType === 'logo' ||
+                        cropType === 'footerLogo'
+                            ? 'image/png'
+                            : (
+                                cropType === 'product' ||
+                                cropType === 'productColor'
+                                    ? 'image/webp'
+                                    : 'image/jpeg'
+                            );
+                    const compressed = canvas.toDataURL(mimeType, quality);
                     resolve(compressed);
                 } catch (error) {
                     reject(error);
@@ -138,32 +149,49 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null, crop
                 rotatedCtx.rotate(rad);
                 rotatedCtx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
                 
-                croppedImage = rotatedCanvas.toDataURL('image/jpeg', 0.85);
+                croppedImage = rotatedCanvas.toDataURL(
+                    cropType === "product" ||
+                    cropType === "productColor"
+                        ? "image/webp"
+                        : "image/jpeg",
+                    cropType === "product" ||
+                    cropType === "productColor"
+                        ? 0.98
+                        : 0.95
+                );
             } else {
-                croppedImage = canvas.toDataURL('image/jpeg', 0.85);
+                croppedImage = canvas.toDataURL(
+                    cropType === "product" ||
+                    cropType === "productColor"
+                        ? "image/webp"
+                        : "image/jpeg",
+                    cropType === "product" ||
+                    cropType === "productColor"
+                        ? 0.98
+                        : 0.95
+                );
             }
             
             // COMPRESS THE IMAGE before saving to avoid localStorage quota exceeded
             toast.loading("Compressing image...", { id: "compress" });
             
             // Determine compression settings based on image type
-            let maxWidth = 600;
-            let quality = 0.6;
-            
-            // For favicon, use smaller size
+            let maxWidth = 1600;
+            let quality = 0.9;
+
             if (cropType === 'favicon' || cropWidth < 100 || cropHeight < 100) {
-                maxWidth = 64;
-                quality = 0.5;
-            }
-            // For logo, use medium size
-            else if (cropType === 'logo' || cropType === 'footerLogo') {
-                maxWidth = 200;
-                quality = 0.7;
-            }
-            // For hero images and slides, use larger but still compressed
-            else if (cropType === 'heroImage' || cropType === 'slide') {
+                maxWidth = 256;
+                quality = 0.95;
+            } else if (cropType === 'logo' || cropType === 'footerLogo') {
                 maxWidth = 800;
-                quality = 0.5;
+                quality = 0.95;
+            } else if (
+                cropType === 'heroImage' ||
+                cropType === 'slide' ||
+                (typeof cropType === 'string' && cropType.startsWith('slide_'))
+            ) {
+                maxWidth = 3840;
+                quality = 0.95;
             }
             
             const compressedImage = await compressImage(croppedImage, maxWidth, quality);
@@ -233,18 +261,22 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null, crop
 
         // Use the same type-based sizing as the crop path so skipped
         // uploads (logo/favicon/heroImage/slide) get sized correctly too.
-        let maxWidth = 600;
-        let quality = 0.6;
+        let maxWidth = 1600;
+        let quality = 0.9;
 
         if (cropType === 'favicon') {
-            maxWidth = 64;
-            quality = 0.5;
+            maxWidth = 256;
+            quality = 0.95;
         } else if (cropType === 'logo' || cropType === 'footerLogo') {
-            maxWidth = 200;
-            quality = 0.7;
-        } else if (cropType === 'heroImage' || cropType === 'slide') {
             maxWidth = 800;
-            quality = 0.5;
+            quality = 0.95;
+        } else if (
+            cropType === 'heroImage' ||
+            cropType === 'slide' ||
+            (typeof cropType === 'string' && cropType.startsWith('slide_'))
+        ) {
+            maxWidth = 3840;
+            quality = 0.95;
         }
 
         compressImage(image, maxWidth, quality)
@@ -355,7 +387,7 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null, crop
                             crop={crop}
                             onChange={(_, percentCrop) => setCrop(percentCrop)}
                             onComplete={(c) => setCompletedCrop(c)}
-                            aspect={undefined}
+                            aspect={aspectRatio || undefined}
                             circularCrop={false}
                             keepSelection={true}
                             minWidth={50}
@@ -391,7 +423,7 @@ const ImageCropper = ({ image, onCropComplete, onClose, aspectRatio = null, crop
                                 <span>• Drag corners to resize crop area</span>
                                 <span>• Click & drag inside to move selection</span>
                                 <span>• Use zoom for precise cropping</span>
-                                <span>• Images are automatically compressed to save storage</span>
+                                <span>• Hero images keep up to 4K web quality; smaller assets are optimized automatically</span>
                             </p>
                         </div>
                         

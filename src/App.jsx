@@ -25,6 +25,7 @@ import Coupons from "./pages/Admin/Coupons";
 import Reviews from "./pages/Admin/Reviews";
 import Payments from "./pages/Admin/Payments";
 import Reports from "./pages/Admin/Reports";
+import ReturnManagement from "./pages/Admin/ReturnManagement";
 import { CartProvider } from "./context/CartContext";
 import { SiteProvider } from "./context/SiteContext";
 import { AuthProvider } from "./context/AuthContext";
@@ -73,6 +74,7 @@ const App = () => {
                   <Route path="reports" element={<Reports />} />
                   <Route path="admins" element={<AdminUsers />} />
                   <Route path="settings" element={<Settings />} />
+                  <Route path="returns" element={<ReturnManagement />} />
                 </Route>
               </Routes>
             </CartProvider>

@@ -14,6 +14,29 @@ import ImageCropper from "../../components/Admin/ImageCropper";
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
+const MAX_UPLOAD_BYTES = 60 * 1024 * 1024; // supports large 8K source files
+const IMAGE_TYPES = [
+    'logo',
+    'footerLogo',
+    'favicon',
+    'loginBackground',
+    'registerBackground',
+    'authSideImage',
+    'loginPromoImage',
+    'registerPromoImage'
+];
+
+const IMAGE_ID_FIELDS = IMAGE_TYPES.reduce((acc, type) => {
+    acc[type] = `${type}Id`;
+    return acc;
+}, {});
+
+const isHeroStorageType = (type = '') =>
+    type === 'slide' ||
+    type === 'heroImage' ||
+    String(type).startsWith('slide_');
+
+
 const PLACEHOLDER_IMAGE = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%23f3f4f6'/%3E%3Ctext x='50%25' y='50%25' font-family='sans-serif' font-size='14' fill='%239ca3af' text-anchor='middle' dominant-baseline='middle'%3ENo Image%3C/text%3E%3C/svg%3E";
 
 const FONT_OPTIONS = [
@@ -36,67 +59,91 @@ const ImageStorage = {
     db: null,
     initialized: false,
     initPromise: null,
-    isInitializing: false,
-    currentVersion: 3,
+
+    createStore(db) {
+        if (!db.objectStoreNames.contains(this.storeName)) {
+            const store = db.createObjectStore(this.storeName, { keyPath: 'id' });
+            store.createIndex('type', 'type', { unique: false });
+            store.createIndex('timestamp', 'timestamp', { unique: false });
+        }
+    },
+
+    async openCurrent() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName);
+
+            request.onupgradeneeded = () => {
+                this.createStore(request.result);
+            };
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+            request.onblocked = () => {
+                console.warn('IndexedDB is blocked by another tab. Close other ZAMED tabs and retry.');
+            };
+        });
+    },
+
+    async openUpgrade(version) {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, version);
+
+            request.onupgradeneeded = () => {
+                this.createStore(request.result);
+            };
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+            request.onblocked = () => {
+                console.warn('IndexedDB upgrade blocked by another tab.');
+            };
+        });
+    },
 
     async init() {
-        if (this.initPromise) return this.initPromise;
         if (this.initialized && this.db) return this.db;
-        if (this.isInitializing) {
-            return new Promise((resolve) => {
-                const checkInit = setInterval(() => {
-                    if (this.initialized) {
-                        clearInterval(checkInit);
-                        resolve(this.db);
-                    }
-                }, 100);
-            });
-        }
+        if (this.initPromise) return this.initPromise;
 
-        this.isInitializing = true;
-        this.initPromise = new Promise((resolve, reject) => {
+        this.initPromise = (async () => {
             try {
-                const request = indexedDB.open(this.dbName, this.currentVersion);
-                
-                request.onupgradeneeded = (event) => {
-                    const db = event.target.result;
-                    if (db.objectStoreNames.contains(this.storeName)) {
-                        db.deleteObjectStore(this.storeName);
-                    }
-                    const store = db.createObjectStore(this.storeName, { keyPath: 'id' });
-                    store.createIndex('type', 'type', { unique: false });
-                    store.createIndex('timestamp', 'timestamp', { unique: false });
-                };
-                
-                request.onsuccess = (event) => {
-                    this.db = event.target.result;
-                    this.initialized = true;
-                    this.isInitializing = false;
-                    this.initPromise = null;
-                    resolve(this.db);
-                };
-                
-                request.onerror = (event) => {
-                    if (event.target.error.name === 'VersionError') {
-                        indexedDB.deleteDatabase(this.dbName).onsuccess = () => {
-                            this.currentVersion++;
-                            this.isInitializing = false;
-                            this.initPromise = null;
-                            this.init().then(resolve).catch(reject);
-                        };
-                        return;
-                    }
+                if (typeof indexedDB === 'undefined') {
+                    throw new Error('IndexedDB is not supported in this browser.');
+                }
+
+                // Open the CURRENT database version. Never force v1/v2/v3.
+                let db = await this.openCurrent();
+
+                // Never delete an existing object store.
+                // If the store is missing, upgrade current version + 1.
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    const nextVersion = db.version + 1;
+                    db.close();
+                    db = await this.openUpgrade(nextVersion);
+                }
+
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    throw new Error(`Object store "${this.storeName}" is unavailable.`);
+                }
+
+                this.db = db;
+                this.initialized = true;
+
+                this.db.onversionchange = () => {
+                    this.db?.close();
+                    this.db = null;
                     this.initialized = false;
-                    this.isInitializing = false;
                     this.initPromise = null;
-                    reject(event.target.error);
                 };
+
+                return this.db;
             } catch (error) {
-                this.isInitializing = false;
+                this.db = null;
+                this.initialized = false;
+                throw error;
+            } finally {
                 this.initPromise = null;
-                reject(error);
             }
-        });
+        })();
 
         return this.initPromise;
     },
@@ -107,48 +154,72 @@ const ImageStorage = {
                 await this.init();
             }
             return this.db;
-        } catch {
+        } catch (error) {
+            console.error('IndexedDB init failed:', error);
             return null;
         }
     },
 
-    async saveImage(id, type, data) {
+    async saveImage(id, type, data, metadata = {}) {
         try {
             const db = await this.ensureInitialized();
             if (!db) return false;
-            
-            return new Promise((resolve) => {
-                try {
-                    const transaction = db.transaction([this.storeName], 'readwrite');
-                    const store = transaction.objectStore(this.storeName);
-                    const request = store.put({ id, type, data, timestamp: Date.now() });
-                    request.onsuccess = () => resolve(true);
-                    request.onerror = () => resolve(false);
-                } catch {
-                    resolve(false);
-                }
+
+            return await new Promise((resolve, reject) => {
+                const transaction = db.transaction(this.storeName, 'readwrite');
+                const store = transaction.objectStore(this.storeName);
+
+                const request = store.put({
+                    id: String(id),
+                    type,
+                    data,
+                    timestamp: Date.now(),
+                    ...metadata
+                });
+
+                request.onsuccess = () => resolve(true);
+                request.onerror = () => reject(request.error);
+                transaction.onerror = () => reject(transaction.error);
             });
-        } catch {
+        } catch (error) {
+            console.error(`Failed to save ${type} image:`, error);
             return false;
         }
     },
 
     async getImage(id) {
         if (!id) return null;
+
         try {
             const db = await this.ensureInitialized();
             if (!db) return null;
-            
-            return new Promise((resolve) => {
-                try {
-                    const transaction = db.transaction([this.storeName], 'readonly');
-                    const store = transaction.objectStore(this.storeName);
-                    const request = store.get(id);
-                    request.onsuccess = () => resolve(request.result ? request.result.data : null);
-                    request.onerror = () => resolve(null);
-                } catch {
-                    resolve(null);
-                }
+
+            return await new Promise((resolve) => {
+                const transaction = db.transaction(this.storeName, 'readonly');
+                const request = transaction.objectStore(this.storeName).get(String(id));
+
+                request.onsuccess = () => resolve(request.result?.data || null);
+                request.onerror = () => resolve(null);
+            });
+        } catch (error) {
+            console.warn('Failed to read image:', error);
+            return null;
+        }
+    },
+
+    async getRecord(id) {
+        if (!id) return null;
+
+        try {
+            const db = await this.ensureInitialized();
+            if (!db) return null;
+
+            return await new Promise((resolve) => {
+                const transaction = db.transaction(this.storeName, 'readonly');
+                const request = transaction.objectStore(this.storeName).get(String(id));
+
+                request.onsuccess = () => resolve(request.result || null);
+                request.onerror = () => resolve(null);
             });
         } catch {
             return null;
@@ -156,42 +227,18 @@ const ImageStorage = {
     },
 
     async deleteImage(id) {
-        if (!id) return false;
-        try {
-            const db = await this.ensureInitialized();
-            if (!db) return false;
-            
-            return new Promise((resolve) => {
-                try {
-                    const transaction = db.transaction([this.storeName], 'readwrite');
-                    const store = transaction.objectStore(this.storeName);
-                    const request = store.delete(id);
-                    request.onsuccess = () => resolve(true);
-                    request.onerror = () => resolve(false);
-                } catch {
-                    resolve(false);
-                }
-            });
-        } catch {
-            return false;
-        }
-    },
+        if (!id) return true;
 
-    async clearAll() {
         try {
             const db = await this.ensureInitialized();
             if (!db) return false;
-            
-            return new Promise((resolve) => {
-                try {
-                    const transaction = db.transaction([this.storeName], 'readwrite');
-                    const store = transaction.objectStore(this.storeName);
-                    const request = store.clear();
-                    request.onsuccess = () => resolve(true);
-                    request.onerror = () => resolve(false);
-                } catch {
-                    resolve(false);
-                }
+
+            return await new Promise((resolve) => {
+                const transaction = db.transaction(this.storeName, 'readwrite');
+                const request = transaction.objectStore(this.storeName).delete(String(id));
+
+                request.onsuccess = () => resolve(true);
+                request.onerror = () => resolve(false);
             });
         } catch {
             return false;
@@ -200,26 +247,21 @@ const ImageStorage = {
 
     async getAllImages() {
         try {
-            await this.ensureInitialized();
-            if (!this.db) return [];
-            
-            return new Promise((resolve) => {
-                try {
-                    const transaction = this.db.transaction([this.storeName], 'readonly');
-                    const store = transaction.objectStore(this.storeName);
-                    const request = store.getAll();
-                    request.onsuccess = () => resolve(request.result || []);
-                    request.onerror = () => resolve([]);
-                } catch {
-                    resolve([]);
-                }
+            const db = await this.ensureInitialized();
+            if (!db) return [];
+
+            return await new Promise((resolve) => {
+                const transaction = db.transaction(this.storeName, 'readonly');
+                const request = transaction.objectStore(this.storeName).getAll();
+
+                request.onsuccess = () => resolve(request.result || []);
+                request.onerror = () => resolve([]);
             });
         } catch {
             return [];
         }
     }
 };
-
 const Settings = () => {
     const [settings, setSettings] = useState({
         siteName: "Zamed Premium Wear",
@@ -308,6 +350,17 @@ const Settings = () => {
         authPrimaryColor: "#ff650f",
         authSecondaryColor: "#071b3f",
         authTextColor: "#ffffff",
+        authUseSiteTypography: true,
+        authHeadingFont: "Poppins",
+        authBodyFont: "Inter",
+        authTitleColor: "#081b3c",
+        authSubtitleColor: "#64748b",
+        authLabelColor: "#322b25",
+        authInputTextColor: "#111827",
+        authPlaceholderColor: "#94a3b8",
+        authLinkColor: "#ff650f",
+        authButtonTextColor: "#ffffff",
+        authMutedTextColor: "#64748b",
         authOverlayOpacity: 62,
         authImagePosition: "center",
         showAuthBenefits: true,
@@ -316,37 +369,16 @@ const Settings = () => {
         loginBackground: null,
         registerBackground: null,
         authSideImage: null,
+        loginPromoImage: null,
+        registerPromoImage: null,
         logoId: null,
         footerLogoId: null,
         faviconId: null,
         loginBackgroundId: null,
         registerBackgroundId: null,
         authSideImageId: null,
-
-        // Enhanced Login / Register experience
-        loginPromoImage: null,
-        registerPromoImage: null,
         loginPromoImageId: null,
         registerPromoImageId: null,
-        loginPromoTitle: "Premium shopping, made personal.",
-        loginPromoText: "Track orders, save favourites and access member-only offers from one secure account.",
-        registerPromoTitle: "Join the ZAMED experience.",
-        registerPromoText: "Create your account to unlock faster checkout, personalised offers and order tracking.",
-        loginButtonText: "Sign In",
-        registerButtonText: "Create Account",
-        forgotPasswordText: "Forgot password?",
-        rememberMeText: "Remember me",
-        authAnimationStyle: "premium",
-        authPanelStyle: "glass",
-        authBorderRadius: 28,
-        authBackgroundBlur: 18,
-        showPasswordStrength: true,
-        showRememberMe: true,
-        showForgotPassword: true,
-        showNewsletterOptIn: true,
-        showTermsAgreement: true,
-        showAuthTrustBadges: true,
-        showAuthPromoImage: true,
         slideImageIds: {}
     });
 
@@ -389,16 +421,26 @@ const Settings = () => {
     const [backendAvailable, setBackendAvailable] = useState(true);
     const [storageUsed, setStorageUsed] = useState(0);
     
-    const fileInputRefs = { 
-        logo: useRef(null), 
-        footerLogo: useRef(null), 
-        favicon: useRef(null),
-        loginBackground: useRef(null),
-        registerBackground: useRef(null),
-        authSideImage: useRef(null),
-        loginPromoImage: useRef(null),
-        registerPromoImage: useRef(null),
-        slide: {} 
+    const logoInputRef = useRef(null);
+    const footerLogoInputRef = useRef(null);
+    const faviconInputRef = useRef(null);
+    const loginBackgroundInputRef = useRef(null);
+    const registerBackgroundInputRef = useRef(null);
+    const authSideImageInputRef = useRef(null);
+    const loginPromoImageInputRef = useRef(null);
+    const registerPromoImageInputRef = useRef(null);
+    const slideInputRefs = useRef({});
+
+    const fileInputRefs = {
+        logo: logoInputRef,
+        footerLogo: footerLogoInputRef,
+        favicon: faviconInputRef,
+        loginBackground: loginBackgroundInputRef,
+        registerBackground: registerBackgroundInputRef,
+        authSideImage: authSideImageInputRef,
+        loginPromoImage: loginPromoImageInputRef,
+        registerPromoImage: registerPromoImageInputRef,
+        slide: slideInputRefs.current
     };
 
     const getToken = () => localStorage.getItem('token');
@@ -431,47 +473,127 @@ const Settings = () => {
         }
     };
 
-    const compressImage = (base64String, maxWidth = 1200, quality = 0.85) => {
+    const compressImage = (
+        base64String,
+        maxWidth = 4096,
+        quality = 0.94,
+        preferredMimeType = null
+    ) => {
         return new Promise((resolve, reject) => {
             const img = new Image();
+
             img.onload = () => {
                 try {
+                    const sourceWidth = img.naturalWidth || img.width;
+                    const sourceHeight = img.naturalHeight || img.height;
+
+                    // Never upscale smaller files.
+                    const width = Math.min(sourceWidth, maxWidth);
+                    const ratio = width / sourceWidth;
+                    const height = Math.max(1, Math.round(sourceHeight * ratio));
+
                     const canvas = document.createElement('canvas');
-                    let width = img.width;
-                    let height = img.height;
-                    
-                    if (width > maxWidth) {
-                        height = (height * maxWidth) / width;
-                        width = maxWidth;
-                    }
-                    
                     canvas.width = width;
                     canvas.height = height;
-                    const ctx = canvas.getContext('2d');
+
+                    const ctx = canvas.getContext('2d', {
+                        alpha: preferredMimeType === 'image/png'
+                    });
+
+                    if (!ctx) {
+                        reject(new Error('Canvas is unavailable.'));
+                        return;
+                    }
+
                     ctx.imageSmoothingEnabled = true;
                     ctx.imageSmoothingQuality = 'high';
-                    ctx.drawImage(img, 0, 0, width, height);
-                    
-                    const isTransparent = base64String.includes('png') || base64String.includes('gif');
-                    const mimeType = isTransparent ? 'image/png' : 'image/jpeg';
-                    const compressed = canvas.toDataURL(mimeType, quality);
-                    resolve(compressed);
+
+                    // Preserve transparent logos / favicons as PNG.
+                    const sourceIsTransparent =
+                        base64String.startsWith('data:image/png') ||
+                        base64String.startsWith('data:image/webp');
+
+                    const mimeType =
+                        preferredMimeType ||
+                        (sourceIsTransparent ? 'image/png' : 'image/jpeg');
+
+                    if (mimeType === 'image/jpeg') {
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, width, height);
+                    }
+
+                    ctx.drawImage(
+                        img,
+                        0,
+                        0,
+                        sourceWidth,
+                        sourceHeight,
+                        0,
+                        0,
+                        width,
+                        height
+                    );
+
+                    resolve(canvas.toDataURL(mimeType, quality));
                 } catch (error) {
                     reject(error);
                 }
             };
-            img.onerror = () => reject(new Error('Failed to load image for compression'));
+
+            img.onerror = () => reject(
+                new Error('Failed to load image for processing.')
+            );
+
             img.src = base64String;
         });
     };
 
     const getCompressionSettings = (type) => {
-        if (type === 'favicon') return { maxWidth: 256, quality: 0.9 };
-        if (type === 'logo' || type === 'footerLogo') return { maxWidth: 400, quality: 0.92 };
-        if (['loginBackground', 'registerBackground'].includes(type)) return { maxWidth: 1920, quality: 0.84 };
-        if (['authSideImage', 'loginPromoImage', 'registerPromoImage'].includes(type)) return { maxWidth: 1200, quality: 0.88 };
-        if (typeof type === 'string' && type.startsWith('slide_')) return { maxWidth: 1920, quality: 0.85 };
-        return { maxWidth: 1200, quality: 0.85 };
+        if (type === 'favicon') {
+            return {
+                maxWidth: 512,
+                quality: 1,
+                mimeType: 'image/png'
+            };
+        }
+
+        if (type === 'logo' || type === 'footerLogo') {
+            return {
+                maxWidth: 2048,
+                quality: 1,
+                mimeType: 'image/png'
+            };
+        }
+
+        if (
+            [
+                'loginBackground',
+                'registerBackground',
+                'authSideImage',
+                'loginPromoImage',
+                'registerPromoImage'
+            ].includes(type)
+        ) {
+            return {
+                maxWidth: 7680,
+                quality: 0.97,
+                mimeType: 'image/jpeg'
+            };
+        }
+
+        if (isHeroStorageType(type)) {
+            return {
+                maxWidth: 7680,
+                quality: 0.97,
+                mimeType: 'image/jpeg'
+            };
+        }
+
+        return {
+            maxWidth: 4096,
+            quality: 0.95,
+            mimeType: null
+        };
     };
 
     const storeImageInIndexedDB = async (imageData, type) => {
@@ -502,29 +624,98 @@ const Settings = () => {
     };
 
     const uploadImage = async (imageData, type) => {
-        const { maxWidth, quality } = getCompressionSettings(type);
+        const { maxWidth, quality, mimeType } = getCompressionSettings(type);
 
         try {
-            const compressed = await compressImage(imageData, maxWidth, quality);
-            
-            // Try to store in IndexedDB
+            const compressed = await compressImage(imageData, maxWidth, quality, mimeType);
+
             const id = await storeImageInIndexedDB(compressed, type);
-            if (id) {
-                return { type: 'indexeddb', id, data: compressed };
+
+            if (!id) {
+                throw new Error(
+                    "Unable to save this image in IndexedDB. Please refresh the page and try again."
+                );
             }
-            
-            // Fallback: store in localStorage as base64
-            try {
-                localStorage.setItem(`${type}_fallback`, compressed);
-                return { type: 'fallback', data: compressed };
-            } catch (storageError) {
-                console.warn('LocalStorage fallback failed:', storageError);
-                return { type: 'fallback', data: compressed };
-            }
+
+            // IMPORTANT:
+            // The Base64 data is returned only for the current React preview.
+            // It is NOT written to localStorage.
+            return {
+                type: 'indexeddb',
+                id,
+                data: compressed
+            };
         } catch (error) {
             console.error('Upload error:', error);
-            return { type: 'fallback', data: imageData };
+            throw error;
         }
+    };
+
+
+    // Create a small compatibility preview for UI components that still read
+    // site_images.logo / footerLogo / favicon from localStorage.
+    // Full-resolution originals remain in IndexedDB.
+    const createPublicAssetPreview = async (
+        imageData,
+        type
+    ) => {
+        if (!imageData) return null;
+
+        const config = {
+            logo: { maxWidth: 512, quality: 0.9 },
+            footerLogo: { maxWidth: 512, quality: 0.9 },
+            favicon: { maxWidth: 128, quality: 0.95 }
+        }[type];
+
+        if (!config) return null;
+
+        return new Promise((resolve) => {
+            const img = new Image();
+
+            img.onload = () => {
+                try {
+                    const scale = Math.min(
+                        1,
+                        config.maxWidth / img.naturalWidth
+                    );
+
+                    const width = Math.max(
+                        1,
+                        Math.round(img.naturalWidth * scale)
+                    );
+                    const height = Math.max(
+                        1,
+                        Math.round(img.naturalHeight * scale)
+                    );
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+
+                    const ctx = canvas.getContext('2d');
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    // PNG preserves transparent logos and favicons.
+                    resolve(
+                        canvas.toDataURL(
+                            'image/png',
+                            config.quality
+                        )
+                    );
+                } catch (error) {
+                    console.warn(
+                        `Unable to create ${type} preview:`,
+                        error
+                    );
+                    resolve(null);
+                }
+            };
+
+            img.onerror = () => resolve(null);
+            img.src = imageData;
+        });
     };
 
     const updateFaviconInBrowser = (faviconUrl) => {
@@ -537,7 +728,9 @@ const Settings = () => {
                 link.rel = 'shortcut icon';
                 document.head.appendChild(link);
             }
-            link.type = 'image/x-icon';
+            link.type = faviconUrl.startsWith('data:image/png')
+                ? 'image/png'
+                : 'image/x-icon';
             link.href = faviconUrl;
             
             let appleLink = document.querySelector("link[rel='apple-touch-icon']");
@@ -557,23 +750,108 @@ const Settings = () => {
     // UPDATED: Save to localStorage with proper slide image handling
     const saveToLocalStorage = async (sourceSettings = settings) => {
         const current = sourceSettings;
-        
-        // Create a clean copy without large image data for site_settings
+
+        // Large image data must live ONLY in IndexedDB.
+        // localStorage stores lightweight IDs + text configuration.
+        const imageKeys = IMAGE_TYPES;
+
         const lightweightSettings = { ...current };
-        const imageKeys = ['logo', 'footerLogo', 'favicon', 'loginBackground', 'registerBackground', 'authSideImage', 'loginPromoImage', 'registerPromoImage'];
-        imageKeys.forEach((key) => delete lightweightSettings[key]);
 
-        // Prepare slides - PRESERVE slide images
-        const slidesWithData = (current.slides || []).map((slide, index) => ({
-            ...slide,
-            image: slide.image || null,
-            imageId: slide.imageId || current.slideImageIds?.[slide.id] || null,
-            order: slide.order ?? index + 1
-        }));
+        imageKeys.forEach((key) => {
+            delete lightweightSettings[key];
+        });
 
-        lightweightSettings.slides = slidesWithData;
+        const lightweightSlides = (current.slides || []).map((slide, index) => {
+            const imageId =
+                slide.imageId ||
+                current.slideImageIds?.[slide.id] ||
+                null;
 
-        // Prepare site info with all settings including slide images
+            // Never place slide.image Base64 data in localStorage.
+            const {
+                image,
+                ...slideWithoutImage
+            } = slide;
+
+            return {
+                ...slideWithoutImage,
+                imageId,
+                order: slide.order ?? index + 1
+            };
+        });
+
+        lightweightSettings.slides = lightweightSlides;
+
+        // Make sure no accidental nested Base64 fields survive.
+        lightweightSettings.slideImageIds = {
+            ...(current.slideImageIds || {})
+        };
+
+        const authSettings = {
+            authEyebrow: current.authEyebrow,
+            loginTitle: current.loginTitle,
+            loginSubtitle: current.loginSubtitle,
+            registerTitle: current.registerTitle,
+            registerSubtitle: current.registerSubtitle,
+            loginPromoTitle: current.loginPromoTitle,
+            loginPromoText: current.loginPromoText,
+            registerPromoTitle: current.registerPromoTitle,
+            registerPromoText: current.registerPromoText,
+            loginButtonText: current.loginButtonText,
+            registerButtonText: current.registerButtonText,
+            forgotPasswordText: current.forgotPasswordText,
+            rememberMeText: current.rememberMeText,
+            authPrimaryColor: current.authPrimaryColor,
+            authSecondaryColor: current.authSecondaryColor,
+            authTextColor: current.authTextColor,
+            authUseSiteTypography: current.authUseSiteTypography,
+            authHeadingFont: current.authHeadingFont,
+            authBodyFont: current.authBodyFont,
+            authTitleColor: current.authTitleColor,
+            authSubtitleColor: current.authSubtitleColor,
+            authLabelColor: current.authLabelColor,
+            authInputTextColor: current.authInputTextColor,
+            authPlaceholderColor: current.authPlaceholderColor,
+            authLinkColor: current.authLinkColor,
+            authButtonTextColor: current.authButtonTextColor,
+            authMutedTextColor: current.authMutedTextColor,
+            authOverlayOpacity: current.authOverlayOpacity,
+            authImagePosition: current.authImagePosition,
+            authBorderRadius: current.authBorderRadius,
+            authBackgroundBlur: current.authBackgroundBlur,
+            authAnimationStyle: current.authAnimationStyle,
+            authPanelStyle: current.authPanelStyle,
+            showAuthBenefits: current.showAuthBenefits,
+            showGoogleLogin: current.showGoogleLogin,
+            showFacebookLogin: current.showFacebookLogin,
+            showRememberMe: current.showRememberMe,
+            showForgotPassword: current.showForgotPassword,
+            showPasswordStrength: current.showPasswordStrength,
+            showNewsletterOptIn: current.showNewsletterOptIn,
+            showTermsAgreement: current.showTermsAgreement,
+            showAuthTrustBadges: current.showAuthTrustBadges,
+
+            // IDs only
+            loginBackgroundId: current.loginBackgroundId || null,
+            registerBackgroundId: current.registerBackgroundId || null,
+            authSideImageId: current.authSideImageId || null,
+            loginPromoImageId: current.loginPromoImageId || null,
+            registerPromoImageId: current.registerPromoImageId || null
+        };
+
+
+        // Small compatibility copies for Header/SiteContext.
+        // These are intentionally tiny; large hero/auth assets stay ID-only.
+        const [
+            publicLogo,
+            publicFooterLogo,
+            publicFavicon
+        ] = await Promise.all([
+            createPublicAssetPreview(current.logo, 'logo'),
+            createPublicAssetPreview(current.footerLogo, 'footerLogo'),
+            createPublicAssetPreview(current.favicon, 'favicon')
+        ]);
+
         const siteInfoData = {
             siteName: current.siteName,
             siteEmail: current.siteEmail,
@@ -597,80 +875,41 @@ const Settings = () => {
                 bodyFont: current.bodyFont,
                 fontScale: current.fontScale
             },
-            authSettings: {
-                authEyebrow: current.authEyebrow,
-                loginTitle: current.loginTitle,
-                loginSubtitle: current.loginSubtitle,
-                registerTitle: current.registerTitle,
-                registerSubtitle: current.registerSubtitle,
-                authPrimaryColor: current.authPrimaryColor,
-                authSecondaryColor: current.authSecondaryColor,
-                authTextColor: current.authTextColor,
-                authOverlayOpacity: current.authOverlayOpacity,
-                authImagePosition: current.authImagePosition,
-                showAuthBenefits: current.showAuthBenefits,
-                showGoogleLogin: current.showGoogleLogin,
-                showFacebookLogin: current.showFacebookLogin,
-                loginBackgroundId: current.loginBackgroundId || null,
-                registerBackgroundId: current.registerBackgroundId || null,
-                authSideImageId: current.authSideImageId || null,
-                loginBackground: current.loginBackgroundId ? null : (current.loginBackground || null),
-                registerBackground: current.registerBackgroundId ? null : (current.registerBackground || null),
-                authSideImage: current.authSideImageId ? null : (current.authSideImage || null),
-                loginPromoImageId: current.loginPromoImageId || null,
-                registerPromoImageId: current.registerPromoImageId || null,
-                loginPromoTitle: current.loginPromoTitle,
-                loginPromoText: current.loginPromoText,
-                registerPromoTitle: current.registerPromoTitle,
-                registerPromoText: current.registerPromoText,
-                loginButtonText: current.loginButtonText,
-                registerButtonText: current.registerButtonText,
-                forgotPasswordText: current.forgotPasswordText,
-                rememberMeText: current.rememberMeText,
-                authAnimationStyle: current.authAnimationStyle,
-                authPanelStyle: current.authPanelStyle,
-                authBorderRadius: current.authBorderRadius,
-                authBackgroundBlur: current.authBackgroundBlur,
-                showPasswordStrength: current.showPasswordStrength,
-                showRememberMe: current.showRememberMe,
-                showForgotPassword: current.showForgotPassword,
-                showNewsletterOptIn: current.showNewsletterOptIn,
-                showTermsAgreement: current.showTermsAgreement,
-                showAuthTrustBadges: current.showAuthTrustBadges,
-                showAuthPromoImage: current.showAuthPromoImage
-            },
+            authSettings,
+
+            // Lightweight public logo/favicon + full image IDs.
+            logo: publicLogo || null,
             logoId: current.logoId || null,
+            footerLogo: publicFooterLogo || null,
             footerLogoId: current.footerLogoId || null,
+            favicon: publicFavicon || null,
             faviconId: current.faviconId || null,
             loginBackgroundId: current.loginBackgroundId || null,
             registerBackgroundId: current.registerBackgroundId || null,
             authSideImageId: current.authSideImageId || null,
             loginPromoImageId: current.loginPromoImageId || null,
             registerPromoImageId: current.registerPromoImageId || null,
-            slides: slidesWithData
+
+            slides: lightweightSlides
         };
 
-        // Store image URLs for website access - INCLUDING SLIDE IMAGES
         const imageManifest = {
-            logo: current.logo || null,
+            // Small public UI previews for existing Header/SiteContext code.
+            // Full-resolution files still live only in IndexedDB.
+            logo: publicLogo || null,
             logoId: current.logoId || null,
-            footerLogo: current.footerLogo || null,
+            footerLogo: publicFooterLogo || null,
             footerLogoId: current.footerLogoId || null,
-            favicon: current.favicon || null,
+            favicon: publicFavicon || null,
             faviconId: current.faviconId || null,
-            loginBackground: current.loginBackgroundId ? null : (current.loginBackground || null),
             loginBackgroundId: current.loginBackgroundId || null,
-            registerBackground: current.registerBackgroundId ? null : (current.registerBackground || null),
             registerBackgroundId: current.registerBackgroundId || null,
-            authSideImage: current.authSideImageId ? null : (current.authSideImage || null),
             authSideImageId: current.authSideImageId || null,
-            loginPromoImage: current.loginPromoImageId ? null : (current.loginPromoImage || null),
             loginPromoImageId: current.loginPromoImageId || null,
-            registerPromoImage: current.registerPromoImageId ? null : (current.registerPromoImage || null),
             registerPromoImageId: current.registerPromoImageId || null,
-            slides: slidesWithData.map((slide) => ({
+
+            slides: lightweightSlides.map((slide) => ({
                 id: slide.id,
-                image: slide.image || null,
                 imageId: slide.imageId || null,
                 title: slide.title,
                 subtitle: slide.subtitle,
@@ -678,52 +917,137 @@ const Settings = () => {
                 buttonLink: slide.buttonLink,
                 color: slide.color,
                 active: slide.active,
-                order: slide.order
+                order: slide.order,
+                imagePosition: slide.imagePosition || null
             }))
         };
 
         try {
-            localStorage.setItem('site_settings', JSON.stringify(lightweightSettings));
-            localStorage.setItem('site_info', JSON.stringify(siteInfoData));
-            localStorage.setItem('site_images', JSON.stringify(imageManifest));
-            
-            // Store slide images separately for quick access
-            const slideImagesMap = {};
-            slidesWithData.forEach((slide, index) => {
-                if (slide.image) {
-                    slideImagesMap[index] = slide.image;
+            // Remove legacy Base64 caches before saving.
+            // This immediately frees several MB left by the previous implementation.
+            localStorage.removeItem('slide_images_cache');
+            localStorage.removeItem('site_favicon');
+
+            Object.keys(localStorage).forEach((key) => {
+                if (
+                    key.endsWith('_fallback') ||
+                    key.startsWith('slide_') && key.endsWith('_fallback')
+                ) {
+                    localStorage.removeItem(key);
                 }
             });
-            if (Object.keys(slideImagesMap).length > 0) {
-                localStorage.setItem('slide_images_cache', JSON.stringify(slideImagesMap));
+
+            const writeLightweightSettings = () => {
+                localStorage.setItem(
+                    'site_settings',
+                    JSON.stringify(lightweightSettings)
+                );
+                localStorage.setItem(
+                    'site_info',
+                    JSON.stringify(siteInfoData)
+                );
+                localStorage.setItem(
+                    'site_images',
+                    JSON.stringify(imageManifest)
+                );
+            };
+
+            try {
+                writeLightweightSettings();
+            } catch (error) {
+                if (
+                    error?.name === 'QuotaExceededError' ||
+                    error?.code === 22
+                ) {
+                    // Existing versions of these keys may still contain several
+                    // megabytes of Base64. Remove them once, then write the new
+                    // lightweight format.
+                    localStorage.removeItem('site_settings');
+                    localStorage.removeItem('site_info');
+                    localStorage.removeItem('site_images');
+
+                    writeLightweightSettings();
+                } else {
+                    throw error;
+                }
             }
-            
-            // Store favicon separately
-            if (current.favicon) {
-                localStorage.setItem('site_favicon', current.favicon);
-            }
-            
-            console.log('✅ Settings saved to localStorage with slides:', slidesWithData.length);
-            console.log('📸 Slide images saved:', Object.keys(slideImagesMap).length);
-            
+
+            console.log(
+                '✅ Lightweight settings saved. Images remain in IndexedDB.'
+            );
         } catch (error) {
-            console.error('Error saving to localStorage:', error);
-            toast.error('Failed to save settings to localStorage');
+            console.error('Error saving lightweight settings:', error);
+
+            if (
+                error?.name === 'QuotaExceededError' ||
+                error?.code === 22
+            ) {
+                toast.error(
+                    'Browser local storage is full. Large image data has been removed, but another localStorage item is using too much space.'
+                );
+            } else {
+                toast.error('Failed to save settings.');
+            }
+
             return false;
         }
 
-        // Update favicon
-        if (current.favicon) {
+        // Keep the browser favicon working from the in-memory/IndexedDB preview.
+        if (publicFavicon) {
+            updateFaviconInBrowser(publicFavicon);
+        } else if (current.favicon) {
             updateFaviconInBrowser(current.favicon);
+        } else if (current.faviconId) {
+            const faviconData = await getImageFromIndexedDB(current.faviconId);
+            if (faviconData) {
+                updateFaviconInBrowser(faviconData);
+            }
         }
 
-        // Dispatch events
         window.dispatchEvent(new Event('storage'));
-        window.dispatchEvent(new CustomEvent('settingsSaved', { detail: lightweightSettings }));
-        window.dispatchEvent(new CustomEvent('siteInfoUpdated', { detail: siteInfoData }));
-        window.dispatchEvent(new CustomEvent('siteImagesUpdated', { detail: imageManifest }));
-        window.dispatchEvent(new CustomEvent('authSettingsUpdated', { detail: siteInfoData.authSettings }));
-        window.dispatchEvent(new CustomEvent('heroSlidesUpdated', { detail: { slides: slidesWithData } }));
+        window.dispatchEvent(
+            new CustomEvent('settingsSaved', {
+                detail: lightweightSettings
+            })
+        );
+        window.dispatchEvent(
+            new CustomEvent('siteInfoUpdated', {
+                detail: siteInfoData
+            })
+        );
+        window.dispatchEvent(
+            new CustomEvent('siteImagesUpdated', {
+                detail: imageManifest
+            })
+        );
+        window.dispatchEvent(
+            new CustomEvent('logoUpdated', {
+                detail: {
+                    logo: publicLogo || null,
+                    logoId: current.logoId || null
+                }
+            })
+        );
+        window.dispatchEvent(
+            new CustomEvent('faviconUpdated', {
+                detail: {
+                    favicon: publicFavicon || null,
+                    faviconId: current.faviconId || null
+                }
+            })
+        );
+        window.dispatchEvent(
+            new CustomEvent('authSettingsUpdated', {
+                detail: authSettings
+            })
+        );
+        window.dispatchEvent(
+            new CustomEvent('heroSlidesUpdated', {
+                detail: {
+                    slides: lightweightSlides
+                }
+            })
+        );
 
         return true;
     };
@@ -732,121 +1056,152 @@ const Settings = () => {
     const loadSettings = async () => {
         setLoading(true);
         setError(null);
-        
+
         try {
             await ImageStorage.init();
-            
-            const savedSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
-            const savedSiteInfo = JSON.parse(localStorage.getItem('site_info') || '{}');
-            const savedImages = JSON.parse(localStorage.getItem('site_images') || '{}');
-            const savedSlideCache = JSON.parse(localStorage.getItem('slide_images_cache') || '{}');
-            
-            // Merge all settings
-            const mergedSettings = { ...settings, ...savedSettings, ...savedSiteInfo };
-            
-            // Load images from IndexedDB
+
+            const savedSettings = JSON.parse(
+                localStorage.getItem('site_settings') || '{}'
+            );
+            const savedSiteInfo = JSON.parse(
+                localStorage.getItem('site_info') || '{}'
+            );
+            const savedImages = JSON.parse(
+                localStorage.getItem('site_images') || '{}'
+            );
+
+            const mergedSettings = {
+                ...settings,
+                ...savedSettings,
+                ...savedSiteInfo,
+                ...(savedSiteInfo.authSettings || {})
+            };
+
             const previews = {};
             const slideImagesMap = {};
-            
-            // Helper to load image from IndexedDB or fallback
-            const loadImage = async (id, fallback) => {
+
+            const loadImage = async (id, legacyFallback = null) => {
                 if (id) {
                     const data = await ImageStorage.getImage(id);
                     if (data) return data;
                 }
-                return fallback || null;
+
+                // Compatibility only for old data created before this fix.
+                // It is never re-saved to localStorage.
+                return legacyFallback || null;
             };
 
-            // Load Logo
-            const logoImage = await loadImage(mergedSettings.logoId, savedImages.logo);
-            if (logoImage) {
-                previews.logo = logoImage;
-                mergedSettings.logo = logoImage;
-            }
+            const imageTypes = IMAGE_TYPES;
 
-            // Load Footer Logo
-            const footerLogoImage = await loadImage(mergedSettings.footerLogoId, savedImages.footerLogo);
-            if (footerLogoImage) {
-                previews.footerLogo = footerLogoImage;
-                mergedSettings.footerLogo = footerLogoImage;
-            }
-
-            // Load Favicon
-            const faviconImage = await loadImage(mergedSettings.faviconId, savedImages.favicon);
-            if (faviconImage) {
-                previews.favicon = faviconImage;
-                mergedSettings.favicon = faviconImage;
-                updateFaviconInBrowser(faviconImage);
-            }
-
-            // Load Authentication Images
-            const authImageTypes = ['loginBackground', 'registerBackground', 'authSideImage', 'loginPromoImage', 'registerPromoImage'];
-            for (const type of authImageTypes) {
+            for (const type of imageTypes) {
                 const idField = `${type}Id`;
-                const image = await loadImage(mergedSettings[idField], savedImages[type]);
+
+                const imageId =
+                    mergedSettings[idField] ||
+                    savedSiteInfo[idField] ||
+                    savedSiteInfo.authSettings?.[idField] ||
+                    savedImages[idField] ||
+                    null;
+
+                if (imageId) {
+                    mergedSettings[idField] = imageId;
+                }
+
+                const legacyFallback =
+                    savedImages[type] ||
+                    savedSiteInfo.authSettings?.[type] ||
+                    null;
+
+                const image = await loadImage(
+                    imageId,
+                    legacyFallback
+                );
+
                 if (image) {
                     previews[type] = image;
                     mergedSettings[type] = image;
                 }
             }
 
-            // Load Slides - From savedSlideCache first, then from savedImages
-            const slidesData = savedImages.slides || mergedSettings.slides || [];
-            
-            // First, try to load from slide cache
-            if (Object.keys(savedSlideCache).length > 0) {
-                Object.keys(savedSlideCache).forEach(index => {
-                    const slideIndex = parseInt(index);
-                    if (savedSlideCache[index]) {
-                        slideImagesMap[slideIndex] = savedSlideCache[index];
-                        if (mergedSettings.slides && mergedSettings.slides[slideIndex]) {
-                            mergedSettings.slides[slideIndex].image = savedSlideCache[index];
-                        }
-                    }
-                });
-                console.log('📸 Loaded slides from cache:', Object.keys(savedSlideCache).length);
+            if (previews.favicon) {
+                updateFaviconInBrowser(previews.favicon);
             }
-            
-            // If no cache, try to load from savedImages or IndexedDB
-            if (Object.keys(slideImagesMap).length === 0 && slidesData) {
-                for (let i = 0; i < slidesData.length; i++) {
-                    const slide = slidesData[i];
-                    let imageData = null;
-                    
-                    if (slide.imageId) {
-                        const data = await ImageStorage.getImage(slide.imageId);
-                        if (data) {
-                            imageData = data;
-                        }
-                    }
-                    
-                    if (!imageData && slide.image) {
-                        imageData = slide.image;
-                    }
-                    
-                    if (imageData) {
-                        slideImagesMap[i] = imageData;
-                        if (mergedSettings.slides && mergedSettings.slides[i]) {
-                            mergedSettings.slides[i].image = imageData;
-                        }
-                    }
+
+            const slidesMetadata =
+                savedSiteInfo.slides ||
+                savedImages.slides ||
+                savedSettings.slides ||
+                mergedSettings.slides ||
+                [];
+
+            const hydratedSlides = [];
+
+            for (let index = 0; index < slidesMetadata.length; index++) {
+                const slide = slidesMetadata[index];
+
+                const imageId =
+                    slide.imageId ||
+                    mergedSettings.slideImageIds?.[slide.id] ||
+                    savedImages.slides?.find(
+                        (item) =>
+                            String(item.id) === String(slide.id)
+                    )?.imageId ||
+                    null;
+
+                let imageData = null;
+
+                if (imageId) {
+                    imageData = await ImageStorage.getImage(imageId);
                 }
-                console.log('📸 Loaded slides from storage:', Object.keys(slideImagesMap).length);
+
+                // Legacy fallback for old saved data only.
+                if (!imageData && slide.image) {
+                    imageData = slide.image;
+                }
+
+                hydratedSlides.push({
+                    ...slide,
+                    imageId,
+                    image: imageData || null
+                });
+
+                if (imageData) {
+                    slideImagesMap[index] = imageData;
+                }
+            }
+
+            if (hydratedSlides.length > 0) {
+                mergedSettings.slides = hydratedSlides;
             }
 
             setSettings(mergedSettings);
-            setSiteNameInput(mergedSettings.siteName || settings.siteName);
+            setSiteNameInput(
+                mergedSettings.siteName ||
+                settings.siteName
+            );
             setImagePreviews(previews);
             setSlideImages(slideImagesMap);
-            
+
+            // Delete previous Base64 caches once data has been hydrated.
+            localStorage.removeItem('slide_images_cache');
+            localStorage.removeItem('site_favicon');
+
+            Object.keys(localStorage).forEach((key) => {
+                if (key.endsWith('_fallback')) {
+                    localStorage.removeItem(key);
+                }
+            });
+
             await checkStorageUsage();
-            
-            console.log('✅ Settings loaded successfully');
-            console.log('📸 Slides loaded:', Object.keys(slideImagesMap).length);
-            
+
+            console.log(
+                '✅ Settings loaded. Image assets are using IndexedDB.'
+            );
         } catch (error) {
             console.error("Error loading settings:", error);
-            setError("Failed to load settings. Using default settings.");
+            setError(
+                "Failed to load settings. Using default settings."
+            );
         } finally {
             setLoading(false);
         }
@@ -860,7 +1215,7 @@ const Settings = () => {
 
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
-        const numericFields = new Set(['authOverlayOpacity', 'authBorderRadius', 'authBackgroundBlur', 'productsPerRow', 'itemsPerPage', 'animationDuration']);
+        const numericFields = new Set(['authOverlayOpacity', 'productsPerRow', 'itemsPerPage', 'animationDuration']);
         const newValue = type === 'checkbox'
             ? checked
             : numericFields.has(name)
@@ -920,11 +1275,17 @@ const Settings = () => {
         }
         
         const updatedSlides = settings.slides.filter((_, i) => i !== index);
-        setSettings(prev => ({ 
-            ...prev, 
+        const updatedImageIds = { ...(settings.slideImageIds || {}) };
+        delete updatedImageIds[slide.id];
+
+        const nextSettings = {
+            ...settings,
             slides: updatedSlides,
-            slideImageIds: { ...prev.slideImageIds }
-        }));
+            slideImageIds: updatedImageIds
+        };
+
+        setSettings(nextSettings);
+        await saveToLocalStorage(nextSettings);
         const updatedSlideImages = { ...slideImages };
         delete updatedSlideImages[index];
         setSlideImages(updatedSlideImages);
@@ -938,18 +1299,35 @@ const Settings = () => {
         toast.success(`✅ Slide ${updatedSlides[index].active ? 'activated' : 'deactivated'}`);
     };
 
-    const handleSlideImageUpload = (index, file) => {
-        if (file && file.size <= 5 * 1024 * 1024) {
-            const reader = new FileReader();
-            reader.onloadend = () => { 
-                setCropImage(reader.result); 
-                setCropType("slide"); 
-                setCropSlideId(index); 
-            };
-            reader.readAsDataURL(file);
-        } else {
-            toast.error("Image must be less than 5MB");
+    const validateImageFile = (file) => {
+        if (!file) return false;
+
+        if (!file.type?.startsWith('image/')) {
+            toast.error('Please select a valid image file.');
+            return false;
         }
+
+        if (file.size > MAX_UPLOAD_BYTES) {
+            toast.error('Image must be less than 60MB.');
+            return false;
+        }
+
+        return true;
+    };
+
+    const handleSlideImageUpload = (index, file) => {
+        if (!validateImageFile(file)) return;
+
+        const reader = new FileReader();
+
+        reader.onloadend = () => {
+            setCropImage(reader.result);
+            setCropType("slide");
+            setCropSlideId(index);
+        };
+
+        reader.onerror = () => toast.error("Unable to read this image.");
+        reader.readAsDataURL(file);
     };
 
     const handleSlideImageCropComplete = async (croppedImage) => {
@@ -1050,17 +1428,18 @@ const Settings = () => {
     };
 
     const handleImageUpload = (type, file) => {
-        if (file && file.size <= 5 * 1024 * 1024) {
-            const reader = new FileReader();
-            reader.onloadend = () => { 
-                setCropImage(reader.result); 
-                setCropType(type); 
-                setCropSlideId(null); 
-            };
-            reader.readAsDataURL(file);
-        } else {
-            toast.error("Image must be less than 5MB");
-        }
+        if (!validateImageFile(file)) return;
+
+        const reader = new FileReader();
+
+        reader.onloadend = () => {
+            setCropImage(reader.result);
+            setCropType(type);
+            setCropSlideId(null);
+        };
+
+        reader.onerror = () => toast.error("Unable to read this image.");
+        reader.readAsDataURL(file);
     };
 
     const handleCropComplete = async (croppedImage) => {
@@ -1095,6 +1474,31 @@ const Settings = () => {
                 [selectedType]: imageUrl
             }));
             await saveToLocalStorage(nextSettings);
+
+            window.dispatchEvent(
+                new CustomEvent('siteAssetUpdated', {
+                    detail: {
+                        type: selectedType,
+                        id: imageId
+                    }
+                })
+            );
+
+            if (selectedType === 'logo') {
+                window.dispatchEvent(
+                    new CustomEvent('logoUpdated', {
+                        detail: { logoId: imageId }
+                    })
+                );
+            }
+
+            if (selectedType === 'favicon') {
+                window.dispatchEvent(
+                    new CustomEvent('faviconUpdated', {
+                        detail: { faviconId: imageId }
+                    })
+                );
+            }
 
             if (previousId && previousId !== imageId) {
                 await deleteImageFromIndexedDB(previousId);
@@ -1154,8 +1558,20 @@ const Settings = () => {
             if (token) {
                 try {
                     const backendData = { ...settings };
-                    const imageKeys = ['logo', 'footerLogo', 'favicon', 'loginBackground', 'registerBackground', 'authSideImage', 'loginPromoImage', 'registerPromoImage'];
+
+                    const imageKeys = IMAGE_TYPES;
+
                     imageKeys.forEach((key) => delete backendData[key]);
+
+                    backendData.slides = (settings.slides || []).map(
+                        ({ image, ...slide }) => ({
+                            ...slide,
+                            imageId:
+                                slide.imageId ||
+                                settings.slideImageIds?.[slide.id] ||
+                                null
+                        })
+                    );
                     
                     const response = await fetch(`${API_URL}/settings`, {
                         method: 'PUT',
@@ -1241,11 +1657,11 @@ const Settings = () => {
                 />
                 <div className="flex-1">
                     <p className="text-xs text-gray-500">{recommended}</p>
-                    <p className="text-xs text-gray-400 mt-1">JPG, PNG, GIF (Max 5MB)</p>
+                    <p className="text-xs text-gray-400 mt-1">JPG, PNG, WEBP (Max 60MB source file)</p>
                     {storageUsed > 0 && (
                         <p className="text-xs text-blue-600 mt-1">💾 ~{storageUsed}MB used in storage</p>
                     )}
-                    <p className="text-xs text-green-600 mt-1">✓ Auto-compressed and stored in IndexedDB</p>
+                    <p className="text-xs text-green-600 mt-1">✓ Stored independently in IndexedDB • 8K supported where appropriate</p>
                 </div>
             </div>
         </div>
@@ -1274,7 +1690,7 @@ const Settings = () => {
             <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
                 <div>
                     <h1 className="text-2xl font-bold dark:text-white">Site Settings</h1>
-                    <p className="text-gray-500 dark:text-gray-400 text-sm">Customize your website appearance and functionality</p>
+                    <p className="text-gray-500 dark:text-gray-400 text-sm">Independent image storage for logo, favicon, hero, authentication artwork and promotional assets</p>
                     {lastSaved && <p className="text-xs text-green-600 mt-1">Last saved: {lastSaved.toLocaleTimeString()}</p>}
                     {!backendAvailable && (
                         <p className="text-xs text-yellow-600 mt-1">⚠️ Working in offline mode (backend unavailable)</p>
@@ -1284,7 +1700,13 @@ const Settings = () => {
                     )}
                 </div>
                 <div className="flex gap-3 flex-wrap">
-                    <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-red-700">
+                    <button onClick={() => {
+                        ['site_settings','site_info','site_images','slide_images_cache','site_favicon'].forEach(key => localStorage.removeItem(key));
+                        Object.keys(localStorage).forEach(key => {
+                            if (key.endsWith('_fallback')) localStorage.removeItem(key);
+                        });
+                        window.location.reload();
+                    }} className="bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-red-700">
                         <FiAlertCircle /> Clear Cache
                     </button>
                     <button onClick={saveSettings} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700">
@@ -1329,8 +1751,8 @@ const Settings = () => {
                         <FiGlobe className="mr-2 text-blue-600" /> General Settings
                     </h2>
                     <div className="space-y-4">
-                        <ImageUploadField label="Site Logo" type="logo" preview={imagePreviews.logo} recommended="Square image (400x400px recommended)" />
-                        <ImageUploadField label="Favicon" type="favicon" preview={imagePreviews.favicon} recommended="64x64px or larger (PNG, ICO)" />
+                        <ImageUploadField label="Site Logo" type="logo" preview={imagePreviews.logo} recommended="Transparent PNG recommended. Up to 2048px retained." />
+                        <ImageUploadField label="Favicon" type="favicon" preview={imagePreviews.favicon} recommended="Square PNG recommended. Up to 512px retained for sharp browser icons." />
                         <div>
                             <label className="block text-sm font-medium mb-1 dark:text-white">Site Name</label>
                             <input 
@@ -1475,7 +1897,7 @@ const Settings = () => {
                                                             />
                                                             <div className="absolute inset-0 bg-black bg-opacity-50 rounded-lg opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1">
                                                                 <button 
-                                                                    onClick={() => fileInputRefs.slide[index]?.click()} 
+                                                                    onClick={() => slideInputRefs.current[index]?.click()} 
                                                                     className="bg-blue-500 text-white rounded-full p-1 hover:bg-blue-600"
                                                                     title="Change image"
                                                                 >
@@ -1492,7 +1914,7 @@ const Settings = () => {
                                                         </div>
                                                     ) : (
                                                         <div 
-                                                            onClick={() => fileInputRefs.slide[index]?.click()} 
+                                                            onClick={() => slideInputRefs.current[index]?.click()} 
                                                             className="w-24 h-24 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all"
                                                         >
                                                             <FiUpload size={20} className="text-gray-400" />
@@ -1501,15 +1923,15 @@ const Settings = () => {
                                                     )}
                                                     <input 
                                                         type="file" 
-                                                        ref={el => fileInputRefs.slide[index] = el} 
+                                                        ref={(el) => { slideInputRefs.current[index] = el; }} 
                                                         onChange={(e) => handleSlideImageUpload(index, e.target.files[0])} 
                                                         accept="image/*" 
                                                         className="hidden" 
                                                     />
                                                     <div className="flex-1">
-                                                        <p className="text-xs text-gray-500">Recommended: 1920x1080px</p>
+                                                        <p className="text-xs text-gray-500">Recommended: 3840×2160 or 7680×4320 (8K)</p>
                                                         <p className="text-xs text-gray-400 mt-1">Upload an image for this slide</p>
-                                                        <p className="text-xs text-green-600 mt-1">✓ Auto-compressed</p>
+                                                        <p className="text-xs text-green-600 mt-1">✓ High-quality IndexedDB storage</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1587,152 +2009,73 @@ const Settings = () => {
             {/* Authentication Page Settings */}
             {activeTab === "authentication" && (
                 <div className="space-y-6">
-                    <section className="relative overflow-hidden rounded-[30px] border border-[#203b68] bg-gradient-to-br from-[#06152d] via-[#0a2858] to-[#123d7a] p-6 text-white shadow-[0_28px_75px_rgba(7,24,47,.24)] sm:p-8">
+                    <section className="relative overflow-hidden rounded-[28px] border border-[#203b68] bg-gradient-to-br from-[#07182f] via-[#0a2858] to-[#123d7a] p-6 text-white shadow-[0_28px_75px_rgba(7,24,47,.24)] sm:p-8">
                         <div className="pointer-events-none absolute -right-24 -top-28 h-72 w-72 rounded-full bg-orange-500/25 blur-3xl" />
-                        <div className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-blue-400/20 blur-3xl" />
                         <div className="relative flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
                             <div>
-                                <p className="text-xs font-black tracking-[.26em] text-orange-300">ZAMED AUTH STUDIO</p>
-                                <h2 className="mt-3 text-3xl font-black sm:text-4xl">Login & Register Experience</h2>
+                                <p className="text-xs font-bold tracking-[.24em] text-orange-300">ZAMED AUTH EXPERIENCE</p>
+                                <h2 className="mt-3 text-3xl font-black sm:text-4xl">Login & Register Design</h2>
                                 <p className="mt-3 max-w-2xl text-sm leading-6 text-white/65">
-                                    Create premium authentication pages with separate backgrounds, promotional artwork, animations and conversion-focused content.
+                                    Control both authentication pages, their messaging, colours and responsive background artwork from one place.
                                 </p>
                             </div>
                             <div className="rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-sm backdrop-blur-xl">
-                                <p className="font-semibold">Live website connection</p>
-                                <p className="mt-1 text-white/60">Saving publishes through authSettingsUpdated instantly.</p>
+                                <p className="font-semibold">Live connection</p>
+                                <p className="mt-1 text-white/60">Changes publish through authSettingsUpdated.</p>
                             </div>
                         </div>
                     </section>
 
-                    <section className="rounded-[26px] border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-                        <div className="mb-6">
-                            <h3 className="text-xl font-bold dark:text-white">Page artwork</h3>
-                            <p className="mt-1 text-sm text-gray-500">Use a background image plus a separate promotional product/lifestyle image for each page.</p>
-                        </div>
+                    <section className="grid gap-6 xl:grid-cols-[1.15fr_.85fr]">
+                        <div className="rounded-[24px] border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                            <div className="mb-6">
+                                <h3 className="text-xl font-bold dark:text-white">Authentication artwork</h3>
+                                <p className="mt-1 text-sm text-gray-500">Images are compressed and saved safely in IndexedDB.</p>
+                            </div>
 
-                        <div className="grid gap-6 xl:grid-cols-2">
-                            <div className="rounded-2xl border border-gray-200 p-5 dark:border-gray-700">
-                                <div className="mb-4 flex items-center gap-3">
-                                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-600 dark:bg-orange-950/30"><FiUser /></div>
-                                    <div>
-                                        <h4 className="font-bold dark:text-white">Login artwork</h4>
-                                        <p className="text-xs text-gray-500">Returning-customer experience</p>
-                                    </div>
-                                </div>
+                            <div className="grid gap-6 md:grid-cols-2">
                                 <ImageUploadField
-                                    label="Login background image"
+                                    label="Login background"
                                     type="loginBackground"
                                     preview={imagePreviews.loginBackground}
-                                    recommended="1920×1200 landscape recommended"
+                                    recommended="Landscape image, 1920×1200 recommended"
                                 />
                                 <ImageUploadField
-                                    label="Login promotion image"
-                                    type="loginPromoImage"
-                                    preview={imagePreviews.loginPromoImage}
-                                    recommended="Product, model, shopping bag or app artwork; transparent PNG works best"
-                                />
-                            </div>
-
-                            <div className="rounded-2xl border border-gray-200 p-5 dark:border-gray-700">
-                                <div className="mb-4 flex items-center gap-3">
-                                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/30"><FiPlus /></div>
-                                    <div>
-                                        <h4 className="font-bold dark:text-white">Register artwork</h4>
-                                        <p className="text-xs text-gray-500">New-customer experience</p>
-                                    </div>
-                                </div>
-                                <ImageUploadField
-                                    label="Register background image"
+                                    label="Register background"
                                     type="registerBackground"
                                     preview={imagePreviews.registerBackground}
-                                    recommended="1920×1200 landscape recommended"
-                                />
-                                <ImageUploadField
-                                    label="Register promotion image"
-                                    type="registerPromoImage"
-                                    preview={imagePreviews.registerPromoImage}
-                                    recommended="Membership, products or shopping artwork; transparent PNG works best"
+                                    recommended="Landscape image, 1920×1200 recommended"
                                 />
                             </div>
-                        </div>
 
-                        <div className="mt-4 rounded-2xl border border-dashed border-gray-300 p-5 dark:border-gray-600">
                             <ImageUploadField
-                                label="Fallback shared promotional image"
+                                label="Shared promotional image"
                                 type="authSideImage"
                                 preview={imagePreviews.authSideImage}
-                                recommended="Used automatically when a page-specific promotional image is not uploaded"
+                                recommended="Product, shopping bag or mobile-app artwork; transparent PNG is ideal"
                             />
-                        </div>
-                    </section>
 
-                    <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-                        <div className="rounded-[26px] border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-                            <h3 className="text-xl font-bold dark:text-white">Login content</h3>
-                            <div className="mt-5 space-y-4">
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Main title</label>
-                                    <input name="loginTitle" value={settings.loginTitle} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                </div>
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Subtitle</label>
-                                    <textarea name="loginSubtitle" value={settings.loginSubtitle} onChange={handleChange} rows="2" className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                </div>
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Promotion title</label>
-                                    <input name="loginPromoTitle" value={settings.loginPromoTitle} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                </div>
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Promotion message</label>
-                                    <textarea name="loginPromoText" value={settings.loginPromoText} onChange={handleChange} rows="3" className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                </div>
-                                <div className="grid gap-3 sm:grid-cols-2">
-                                    <div>
-                                        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Button text</label>
-                                        <input name="loginButtonText" value={settings.loginButtonText} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                    </div>
-                                    <div>
-                                        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Forgot password text</label>
-                                        <input name="forgotPasswordText" value={settings.forgotPasswordText} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                    </div>
-                                </div>
+                            <div className="mt-6 grid gap-6 md:grid-cols-2">
+                                <ImageUploadField
+                                    label="Login promotional image"
+                                    type="loginPromoImage"
+                                    preview={imagePreviews.loginPromoImage}
+                                    recommended="8K supported. Use a product/lifestyle image with clean composition."
+                                />
+                                <ImageUploadField
+                                    label="Register promotional image"
+                                    type="registerPromoImage"
+                                    preview={imagePreviews.registerPromoImage}
+                                    recommended="8K supported. Use a fashion campaign or shopping image."
+                                />
                             </div>
                         </div>
 
-                        <div className="rounded-[26px] border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-                            <h3 className="text-xl font-bold dark:text-white">Register content</h3>
+                        <div className="rounded-[24px] border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                            <h3 className="text-xl font-bold dark:text-white">Design controls</h3>
                             <div className="mt-5 space-y-4">
                                 <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Main title</label>
-                                    <input name="registerTitle" value={settings.registerTitle} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                </div>
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Subtitle</label>
-                                    <textarea name="registerSubtitle" value={settings.registerSubtitle} onChange={handleChange} rows="2" className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                </div>
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Promotion title</label>
-                                    <input name="registerPromoTitle" value={settings.registerPromoTitle} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                </div>
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Promotion message</label>
-                                    <textarea name="registerPromoText" value={settings.registerPromoText} onChange={handleChange} rows="3" className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                </div>
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Button text</label>
-                                    <input name="registerButtonText" value={settings.registerButtonText} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section className="grid gap-6 xl:grid-cols-[.9fr_1.1fr]">
-                        <div className="rounded-[26px] border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-                            <h3 className="text-xl font-bold dark:text-white">Appearance & motion</h3>
-                            <div className="mt-5 space-y-5">
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Eyebrow</label>
+                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Eyebrow text</label>
                                     <input name="authEyebrow" value={settings.authEyebrow} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
                                 </div>
                                 <div className="grid grid-cols-2 gap-3">
@@ -1745,45 +2088,95 @@ const Settings = () => {
                                         <input type="color" name="authSecondaryColor" value={settings.authSecondaryColor} onChange={handleChange} className="h-10 w-full cursor-pointer rounded-lg" />
                                     </label>
                                 </div>
+
+                                <div className="rounded-2xl border border-gray-200 p-4 dark:border-gray-600">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div>
+                                            <p className="text-sm font-bold dark:text-white">Use website typography</p>
+                                            <p className="mt-1 text-xs text-gray-500">
+                                                When enabled, Login & Register automatically follow the same Heading and Body fonts used across your website/profile pages.
+                                            </p>
+                                        </div>
+                                        <input
+                                            type="checkbox"
+                                            name="authUseSiteTypography"
+                                            checked={Boolean(settings.authUseSiteTypography)}
+                                            onChange={handleChange}
+                                            className="h-5 w-5 accent-orange-500"
+                                        />
+                                    </div>
+                                </div>
+
+                                {!settings.authUseSiteTypography && (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                        <div>
+                                            <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Auth heading font</label>
+                                            <select
+                                                name="authHeadingFont"
+                                                value={settings.authHeadingFont || settings.headingFont}
+                                                onChange={handleChange}
+                                                className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700"
+                                            >
+                                                {FONT_OPTIONS.map(font => (
+                                                    <option key={`auth-heading-${font.value}`} value={font.value}>
+                                                        {font.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Auth body font</label>
+                                            <select
+                                                name="authBodyFont"
+                                                value={settings.authBodyFont || settings.bodyFont}
+                                                onChange={handleChange}
+                                                className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700"
+                                            >
+                                                {FONT_OPTIONS.map(font => (
+                                                    <option key={`auth-body-${font.value}`} value={font.value}>
+                                                        {font.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-gray-500">Authentication text colours</p>
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                        {[
+                                            ['authTitleColor', 'Title'],
+                                            ['authSubtitleColor', 'Subtitle'],
+                                            ['authLabelColor', 'Labels'],
+                                            ['authInputTextColor', 'Input text'],
+                                            ['authPlaceholderColor', 'Placeholder'],
+                                            ['authLinkColor', 'Links'],
+                                            ['authButtonTextColor', 'Button text'],
+                                            ['authMutedTextColor', 'Muted / helper text']
+                                        ].map(([name, label]) => (
+                                            <label key={name} className="flex items-center justify-between gap-3 rounded-xl border p-3 dark:border-gray-600">
+                                                <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">{label}</span>
+                                                <input
+                                                    type="color"
+                                                    name={name}
+                                                    value={settings[name] || '#000000'}
+                                                    onChange={handleChange}
+                                                    className="h-9 w-14 cursor-pointer rounded-lg border-0 bg-transparent"
+                                                />
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
                                 <div>
                                     <div className="mb-2 flex justify-between text-xs font-semibold text-gray-500">
-                                        <span>Background overlay</span><span>{settings.authOverlayOpacity}%</span>
+                                        <span>Image overlay</span>
+                                        <span>{settings.authOverlayOpacity}%</span>
                                     </div>
                                     <input type="range" min="0" max="90" name="authOverlayOpacity" value={settings.authOverlayOpacity} onChange={handleChange} className="w-full accent-orange-500" />
                                 </div>
                                 <div>
-                                    <div className="mb-2 flex justify-between text-xs font-semibold text-gray-500">
-                                        <span>Panel corner radius</span><span>{settings.authBorderRadius}px</span>
-                                    </div>
-                                    <input type="range" min="8" max="44" name="authBorderRadius" value={settings.authBorderRadius} onChange={handleChange} className="w-full accent-orange-500" />
-                                </div>
-                                <div>
-                                    <div className="mb-2 flex justify-between text-xs font-semibold text-gray-500">
-                                        <span>Glass blur</span><span>{settings.authBackgroundBlur}px</span>
-                                    </div>
-                                    <input type="range" min="0" max="40" name="authBackgroundBlur" value={settings.authBackgroundBlur} onChange={handleChange} className="w-full accent-orange-500" />
-                                </div>
-                                <div className="grid gap-3 sm:grid-cols-2">
-                                    <div>
-                                        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Animation</label>
-                                        <select name="authAnimationStyle" value={settings.authAnimationStyle} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700">
-                                            <option value="premium">Premium slide</option>
-                                            <option value="fade">Soft fade</option>
-                                            <option value="float">Floating</option>
-                                            <option value="minimal">Minimal</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Panel style</label>
-                                        <select name="authPanelStyle" value={settings.authPanelStyle} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700">
-                                            <option value="glass">Glass</option>
-                                            <option value="solid">Solid</option>
-                                            <option value="floating">Floating</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Background position</label>
+                                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Image position</label>
                                     <select name="authImagePosition" value={settings.authImagePosition} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700">
                                         <option value="center">Centre</option>
                                         <option value="top">Top</option>
@@ -1792,24 +2185,10 @@ const Settings = () => {
                                         <option value="right">Right</option>
                                     </select>
                                 </div>
-                            </div>
-                        </div>
-
-                        <div className="rounded-[26px] border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-                            <h3 className="text-xl font-bold dark:text-white">Features</h3>
-                            <p className="mt-1 text-sm text-gray-500">Choose exactly what customers see.</p>
-                            <div className="mt-5 grid gap-3 sm:grid-cols-2">
                                 {[
-                                    ['showAuthBenefits', 'Shopping benefits'],
-                                    ['showAuthPromoImage', 'Promotion artwork'],
-                                    ['showGoogleLogin', 'Google sign-in'],
-                                    ['showFacebookLogin', 'Facebook sign-in'],
-                                    ['showRememberMe', 'Remember me'],
-                                    ['showForgotPassword', 'Forgot password'],
-                                    ['showPasswordStrength', 'Password strength'],
-                                    ['showNewsletterOptIn', 'Newsletter opt-in'],
-                                    ['showTermsAgreement', 'Terms agreement'],
-                                    ['showAuthTrustBadges', 'Security badges']
+                                    ['showAuthBenefits', 'Show shopping benefits'],
+                                    ['showGoogleLogin', 'Show Google sign-in'],
+                                    ['showFacebookLogin', 'Show Facebook sign-in']
                                 ].map(([name, label]) => (
                                     <label key={name} className="flex items-center justify-between rounded-xl border p-3 dark:border-gray-600">
                                         <span className="text-sm font-medium dark:text-white">{label}</span>
@@ -1820,17 +2199,51 @@ const Settings = () => {
                         </div>
                     </section>
 
+                    <section className="grid gap-6 lg:grid-cols-2">
+                        {[
+                            {
+                                title: "Login page content",
+                                fields: [
+                                    ['loginTitle', 'Main title'],
+                                    ['loginSubtitle', 'Subtitle']
+                                ]
+                            },
+                            {
+                                title: "Register page content",
+                                fields: [
+                                    ['registerTitle', 'Main title'],
+                                    ['registerSubtitle', 'Subtitle']
+                                ]
+                            }
+                        ].map((group) => (
+                            <div key={group.title} className="rounded-[24px] border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                                <h3 className="text-lg font-bold dark:text-white">{group.title}</h3>
+                                <div className="mt-5 space-y-4">
+                                    {group.fields.map(([name, label]) => (
+                                        <div key={name}>
+                                            <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">{label}</label>
+                                            {name.endsWith('Subtitle') ? (
+                                                <textarea name={name} value={settings[name]} onChange={handleChange} rows="3" className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
+                                            ) : (
+                                                <input name={name} value={settings[name]} onChange={handleChange} className="w-full rounded-xl border px-4 py-3 dark:border-gray-600 dark:bg-gray-700" />
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </section>
+
                     <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:p-6">
-                        <div className="mb-5">
-                            <h3 className="text-lg font-bold dark:text-white">Live Login preview</h3>
-                            <p className="text-sm text-gray-500">A compact preview of the customer-facing design.</p>
+                        <div className="mb-4 flex items-center justify-between">
+                            <div>
+                                <h3 className="text-lg font-bold dark:text-white">Live visual preview</h3>
+                                <p className="text-sm text-gray-500">Preview of the customer-facing authentication design.</p>
+                            </div>
                         </div>
-                        <div
-                            className="grid overflow-hidden border border-white/20 bg-[#07182f] shadow-2xl lg:grid-cols-[1.05fr_.95fr]"
-                            style={{ borderRadius: `${settings.authBorderRadius}px` }}
-                        >
+                        <div className="grid overflow-hidden rounded-[24px] border border-white/20 bg-[#07182f] shadow-2xl lg:grid-cols-2">
                             <div
-                                className="relative min-h-[430px] overflow-hidden bg-cover p-8 text-white"
+                                className="relative min-h-[400px] bg-cover p-8 text-white"
                                 style={{
                                     backgroundImage: imagePreviews.loginBackground
                                         ? `linear-gradient(rgba(4,15,36,${Number(settings.authOverlayOpacity || 0) / 100}),rgba(4,15,36,${Number(settings.authOverlayOpacity || 0) / 100})),url("${imagePreviews.loginBackground}")`
@@ -1838,27 +2251,42 @@ const Settings = () => {
                                     backgroundPosition: settings.authImagePosition
                                 }}
                             >
-                                <div className="relative z-10 max-w-md">
-                                    <p className="text-xs font-black tracking-[.24em]" style={{ color: settings.authPrimaryColor }}>{settings.authEyebrow}</p>
-                                    <h4 className="mt-16 text-4xl font-black">{settings.loginPromoTitle || settings.loginTitle}</h4>
-                                    <p className="mt-4 text-sm leading-6 text-white/70">{settings.loginPromoText || settings.loginSubtitle}</p>
-                                </div>
-                                {settings.showAuthPromoImage && (imagePreviews.loginPromoImage || imagePreviews.authSideImage) && (
-                                    <img src={imagePreviews.loginPromoImage || imagePreviews.authSideImage} alt="" className="absolute bottom-4 right-4 h-44 w-44 object-contain drop-shadow-2xl" />
-                                )}
+                                <p className="text-xs font-bold tracking-[.24em]" style={{ color: settings.authPrimaryColor }}>{settings.authEyebrow}</p>
+                                <h4
+                                    className="mt-20 max-w-sm text-5xl font-black"
+                                    style={{
+                                        color: settings.authTitleColor,
+                                        fontFamily: settings.authUseSiteTypography ? settings.headingFont : settings.authHeadingFont
+                                    }}
+                                >
+                                    {settings.loginTitle}
+                                </h4>
+                                <p
+                                    className="mt-4 max-w-sm text-sm leading-6"
+                                    style={{
+                                        color: settings.authSubtitleColor,
+                                        fontFamily: settings.authUseSiteTypography ? settings.bodyFont : settings.authBodyFont
+                                    }}
+                                >
+                                    {settings.loginSubtitle}
+                                </p>
+                                {imagePreviews.authSideImage && <img src={imagePreviews.authSideImage} alt="" className="absolute bottom-5 right-5 h-36 w-36 object-contain drop-shadow-2xl" />}
                             </div>
                             <div className="bg-[#fbfcff] p-8">
-                                <p className="text-xs font-black tracking-[.2em]" style={{ color: settings.authPrimaryColor }}>MEMBER ACCESS</p>
-                                <h4 className="mt-2 text-3xl font-black text-[#081b3c]">{settings.loginTitle}</h4>
-                                <p className="mt-2 text-sm text-gray-500">{settings.loginSubtitle}</p>
+                                <p className="text-xs font-bold tracking-[.2em]" style={{ color: settings.authPrimaryColor }}>MEMBER ACCESS</p>
+                                <h4
+                                    className="mt-2 text-3xl font-black"
+                                    style={{
+                                        color: settings.authTitleColor,
+                                        fontFamily: settings.authUseSiteTypography ? settings.headingFont : settings.authHeadingFont
+                                    }}
+                                >
+                                    Sign in
+                                </h4>
                                 <div className="mt-7 space-y-3">
                                     <div className="h-12 rounded-xl border bg-white" />
                                     <div className="h-12 rounded-xl border bg-white" />
                                     <div className="h-12 rounded-xl" style={{ background: settings.authPrimaryColor }} />
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div className="h-10 rounded-xl border bg-white" />
-                                        <div className="h-10 rounded-xl border bg-white" />
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2113,8 +2541,17 @@ const Settings = () => {
             {/* Image Cropper Modal */}
             {cropImage && (
                 <ImageCropper 
-                    image={cropImage} 
+                    image={cropImage}
                     cropType={cropType}
+                    aspectRatio={
+                        cropType === 'favicon' ||
+                        cropType === 'logo' ||
+                        cropType === 'footerLogo'
+                            ? 1
+                            : cropType === 'slide'
+                                ? 16 / 9
+                                : null
+                    }
                     onCropComplete={handleCropComplete} 
                     onClose={() => { 
                         setCropImage(null); 

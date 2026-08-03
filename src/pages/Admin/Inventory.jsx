@@ -27,6 +27,199 @@ const Inventory = () => {
         valueAtCost: 0
     });
 
+    const resolveImageValue = (value) => {
+        if (!value) return null;
+
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+
+            if (
+                trimmed.startsWith("data:image") ||
+                trimmed.startsWith("http://") ||
+                trimmed.startsWith("https://") ||
+                trimmed.startsWith("blob:") ||
+                trimmed.startsWith("/")
+            ) {
+                return trimmed;
+            }
+
+            return null;
+        }
+
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                const resolved = resolveImageValue(item);
+                if (resolved) return resolved;
+            }
+
+            return null;
+        }
+
+        if (typeof value === "object") {
+            return (
+                resolveImageValue(value.url) ||
+                resolveImageValue(value.src) ||
+                resolveImageValue(value.data) ||
+                resolveImageValue(value.image) ||
+                resolveImageValue(value.thumbnail) ||
+                resolveImageValue(value.preview) ||
+                null
+            );
+        }
+
+        return null;
+    };
+
+    const getProductImage = (product = {}) => {
+        return (
+            resolveImageValue(product.image) ||
+            resolveImageValue(product.thumbnail) ||
+            resolveImageValue(product.mainImage) ||
+            resolveImageValue(product.coverImage) ||
+            resolveImageValue(product.featuredImage) ||
+            resolveImageValue(product.images) ||
+            resolveImageValue(product.gallery) ||
+            resolveImageValue(product.media) ||
+            resolveImageValue(product.variants?.[0]?.image) ||
+            resolveImageValue(product.variants?.[0]?.images) ||
+            null
+        );
+    };
+
+    const getProductStock = (product = {}) => {
+        const directCandidates = [
+            product.stock,
+            product.quantity,
+            product.inventory,
+            product.stockQuantity,
+            product.availableStock
+        ];
+
+        for (const value of directCandidates) {
+            if (value !== undefined && value !== null && value !== "") {
+                const parsed = Number(value);
+                if (!Number.isNaN(parsed)) return parsed;
+            }
+        }
+
+        if (Array.isArray(product.variants) && product.variants.length > 0) {
+            return product.variants.reduce((sum, variant) => {
+                const stock =
+                    Number(
+                        variant.stock ??
+                        variant.quantity ??
+                        variant.inventory ??
+                        variant.stockQuantity ??
+                        0
+                    ) || 0;
+
+                return sum + stock;
+            }, 0);
+        }
+
+        return 0;
+    };
+
+    const getProductId = (product = {}, index = 0) =>
+        product._id ||
+        product.id ||
+        product.productId ||
+        product.sku ||
+        product.slug ||
+        `product-${index}`;
+
+    const normalizeProduct = (product = {}, index = 0) => {
+        const stock = getProductStock(product);
+
+        return {
+            ...product,
+            id: getProductId(product, index),
+            name:
+                product.name ||
+                product.title ||
+                product.productName ||
+                "Unnamed product",
+            brand:
+                product.brand ||
+                product.vendor ||
+                product.manufacturer ||
+                "",
+            price:
+                Number(
+                    product.price ??
+                    product.salePrice ??
+                    product.regularPrice ??
+                    product.variants?.[0]?.price ??
+                    0
+                ) || 0,
+            stock,
+            resolvedImage: getProductImage(product)
+        };
+    };
+
+    const getStoredProducts = () => {
+        const keys = [
+            "shop_products",
+            "products",
+            "admin_products",
+            "all_products",
+            "zamed_products",
+            "product_data"
+        ];
+
+        let found = [];
+
+        for (const key of keys) {
+            try {
+                const raw = JSON.parse(localStorage.getItem(key) || "null");
+
+                if (Array.isArray(raw) && raw.length > 0) {
+                    found = raw;
+                    break;
+                }
+
+                if (Array.isArray(raw?.products) && raw.products.length > 0) {
+                    found = raw.products;
+                    break;
+                }
+            } catch (error) {
+                console.warn(`Unable to read product storage key ${key}:`, error);
+            }
+        }
+
+        return found.map(normalizeProduct);
+    };
+
+    const ProductImage = ({
+        product,
+        className = "h-12 w-12"
+    }) => {
+        const [failed, setFailed] = useState(false);
+        const src =
+            product?.resolvedImage ||
+            getProductImage(product);
+
+        if (!src || failed) {
+            return (
+                <div
+                    className={`${className} flex shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gradient-to-br from-gray-50 to-gray-100 dark:border-gray-600 dark:from-gray-700 dark:to-gray-800`}
+                >
+                    <FiPackage className="text-gray-300 dark:text-gray-500" />
+                </div>
+            );
+        }
+
+        return (
+            <img
+                src={src}
+                alt={product?.name || "Product"}
+                className={`${className} shrink-0 rounded-xl border border-gray-100 bg-white object-cover dark:border-gray-700`}
+                loading="lazy"
+                onError={() => setFailed(true)}
+            />
+        );
+    };
+
     useEffect(() => {
         const checkDarkMode = () => {
             const isDark = document.documentElement.classList.contains('dark');
@@ -49,22 +242,49 @@ const Inventory = () => {
     }, [products, searchTerm, stockFilter]);
 
     const loadInventory = () => {
-        const allProducts = JSON.parse(localStorage.getItem('shop_products') || '[]');
+        const allProducts = getStoredProducts();
+
         setProducts(allProducts);
-        
-        const totalStock = allProducts.reduce((sum, p) => sum + (p.stock || 0), 0);
-        const lowStock = allProducts.filter(p => p.stock > 0 && p.stock < 10).length;
-        const outOfStock = allProducts.filter(p => p.stock === 0).length;
-        const topStock = allProducts.length > 0 ? Math.max(...allProducts.map(p => p.stock || 0)) : 0;
-        const valueAtCost = allProducts.reduce((sum, p) => sum + ((p.price || 0) * (p.stock || 0)), 0);
-        
+
+        const totalStock = allProducts.reduce(
+            (sum, product) => sum + (product.stock || 0),
+            0
+        );
+
+        const lowStock = allProducts.filter(
+            (product) =>
+                product.stock > 0 &&
+                product.stock < 10
+        ).length;
+
+        const outOfStock = allProducts.filter(
+            (product) => product.stock === 0
+        ).length;
+
+        const topStock =
+            allProducts.length > 0
+                ? Math.max(
+                    ...allProducts.map(
+                        (product) => product.stock || 0
+                    )
+                )
+                : 0;
+
+        const valueAtCost = allProducts.reduce(
+            (sum, product) =>
+                sum +
+                (Number(product.price) || 0) *
+                (product.stock || 0),
+            0
+        );
+
         setStats({
             totalProducts: allProducts.length,
-            totalStock: totalStock,
-            lowStock: lowStock,
-            outOfStock: outOfStock,
-            topStock: topStock,
-            valueAtCost: valueAtCost
+            totalStock,
+            lowStock,
+            outOfStock,
+            topStock,
+            valueAtCost
         });
     };
 
@@ -100,8 +320,21 @@ const Inventory = () => {
         if (!selectedProduct) return;
         
         const newStock = Math.max(0, (selectedProduct.stock || 0) + adjustQuantity);
-        const updatedProducts = products.map(p =>
-            p.id === selectedProduct.id ? { ...p, stock: newStock } : p
+        const updatedProducts = products.map((product) =>
+            product.id === selectedProduct.id
+                ? {
+                    ...product,
+                    stock: newStock,
+                    quantity:
+                        product.quantity !== undefined
+                            ? newStock
+                            : product.quantity,
+                    stockQuantity:
+                        product.stockQuantity !== undefined
+                            ? newStock
+                            : product.stockQuantity
+                }
+                : product
         );
         
         setProducts(updatedProducts);
@@ -366,13 +599,12 @@ const Inventory = () => {
                                     const status = getStockStatus(product.stock);
                                     const StatusIcon = status.icon;
                                     return (
-                                        <tr key={product.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                        <tr key={product.id || product.sku} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-3">
-                                                    <img 
-                                                        src={product.image && product.image.startsWith('data:') ? product.image : 'https://via.placeholder.com/40'} 
-                                                        alt={product.name} 
-                                                        className="w-10 h-10 object-cover rounded" 
+                                                    <ProductImage
+                                                        product={product}
+                                                        className="h-12 w-12"
                                                     />
                                                     <div>
                                                         <p className="font-medium dark:text-white">{product.name}</p>
@@ -380,7 +612,7 @@ const Inventory = () => {
                                                     </div>
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3 font-mono text-sm dark:text-gray-300">{product.id || product.sku || 'N/A'}</td>
+                                            <td className="px-4 py-3 font-mono text-sm dark:text-gray-300">{product.sku || product.id || 'N/A'}</td>
                                             <td className="px-4 py-3 dark:text-gray-300">{formatPrice(product.price)}</td>
                                             <td className="px-4 py-3">
                                                 <span className={`text-lg font-bold ${
@@ -440,10 +672,32 @@ const Inventory = () => {
                                 <button onClick={() => setShowAdjustModal(false)} className="text-gray-500 text-2xl">&times;</button>
                             </div>
                             <div className="space-y-4">
-                                <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded-lg">
-                                    <p className="text-sm text-gray-500">Product</p>
-                                    <p className="font-semibold dark:text-white">{selectedProduct.name}</p>
-                                    <p className="text-sm">Current Stock: <span className="font-bold text-blue-600">{selectedProduct.stock}</span></p>
+                                <div className="rounded-2xl bg-gray-50 p-4 dark:bg-gray-700">
+                                    <div className="flex items-center gap-4">
+                                        <ProductImage
+                                            product={selectedProduct}
+                                            className="h-20 w-20"
+                                        />
+                                        <div className="min-w-0">
+                                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                                                Product
+                                            </p>
+                                            <p className="mt-1 truncate font-bold dark:text-white">
+                                                {selectedProduct.name}
+                                            </p>
+                                            {selectedProduct.brand && (
+                                                <p className="mt-1 text-xs text-gray-500">
+                                                    {selectedProduct.brand}
+                                                </p>
+                                            )}
+                                            <p className="mt-2 text-sm dark:text-gray-300">
+                                                Current Stock:{" "}
+                                                <span className="font-black text-blue-600">
+                                                    {selectedProduct.stock}
+                                                </span>
+                                            </p>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium mb-1 dark:text-white">Adjustment Quantity</label>
@@ -484,7 +738,7 @@ const Inventory = () => {
                                     adjustQuantity < 0 ? 'bg-red-50 dark:bg-red-900/20' : 
                                     'bg-gray-50 dark:bg-gray-700'
                                 }`}>
-                                    <p className="text-sm">New Stock: <span className="font-bold text-blue-600">{selectedProduct.stock + adjustQuantity}</span></p>
+                                    <p className="text-sm">New Stock: <span className="font-bold text-blue-600">{Math.max(0, (selectedProduct.stock || 0) + adjustQuantity)}</span></p>
                                     <p className="text-xs text-gray-500 mt-1">Change: {adjustQuantity > 0 ? '+' : ''}{adjustQuantity} units</p>
                                 </div>
                                 <div className="flex gap-3 pt-4">

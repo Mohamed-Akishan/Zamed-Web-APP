@@ -1,4 +1,3 @@
-// src/pages/Login.jsx
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -15,10 +14,73 @@ import { toast } from "sonner";
 
 const API_URL =
   import.meta.env.VITE_API_URL ||
-  "https://zamed-backend.onrender.com/api";
+  (window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1"
+    ? "http://localhost:5000/api"
+    : "https://zamed-backend.onrender.com/api");
 
 const DB_NAME = "ZamedImageStore";
 const STORE_NAME = "images";
+
+const normalizeAuthResponse = (payload = {}) => {
+  const root = payload?.data && typeof payload.data === "object"
+    ? payload.data
+    : payload;
+
+  const user =
+    payload.user ||
+    root.user ||
+    root.customer ||
+    payload.customer ||
+    (root && (root.email || root.firstName || root._id || root.id) ? root : null);
+
+  const token =
+    payload.token ||
+    payload.accessToken ||
+    payload.jwt ||
+    root.token ||
+    root.accessToken ||
+    root.jwt ||
+    null;
+
+  return { user, token };
+};
+
+const saveAuthenticatedUser = (user, token, fallback = {}) => {
+  if (!user) return null;
+
+  const normalizedUser = {
+    id: user._id || user.id || fallback.id || null,
+    _id: user._id || user.id || fallback.id || null,
+    firstName: user.firstName || fallback.firstName || "",
+    lastName: user.lastName || fallback.lastName || "",
+    email: user.email || fallback.email || "",
+    phone: user.phone || user.phoneNumber || fallback.phone || "",
+    role: user.role || fallback.role || "user",
+    profileImage: user.profileImage || user.avatar || fallback.profileImage || "",
+    avatar: user.avatar || user.profileImage || fallback.profileImage || "",
+    ...user,
+  };
+
+  if (token) {
+    localStorage.setItem("token", token);
+  }
+
+  localStorage.setItem("user", JSON.stringify(normalizedUser));
+  localStorage.setItem("auth_timestamp", String(Date.now()));
+
+  window.dispatchEvent(
+    new CustomEvent("authChanged", {
+      detail: {
+        authenticated: Boolean(token),
+        user: normalizedUser,
+        token,
+      },
+    })
+  );
+
+  return normalizedUser;
+};
 
 const DEFAULT_AUTH = {
   siteName: "Zamed Premium Wear",
@@ -32,6 +94,17 @@ const DEFAULT_AUTH = {
   rememberMeText: "Remember me",
   authPrimaryColor: "#c79342",
   authSecondaryColor: "#2a2118",
+  authUseSiteTypography: true,
+  authHeadingFont: "Poppins",
+  authBodyFont: "Inter",
+  authTitleColor: "#081b3c",
+  authSubtitleColor: "#64748b",
+  authLabelColor: "#322b25",
+  authInputTextColor: "#111827",
+  authPlaceholderColor: "#94a3b8",
+  authLinkColor: "#c79342",
+  authButtonTextColor: "#ffffff",
+  authMutedTextColor: "#64748b",
   authImagePosition: "center",
   authBorderRadius: 28,
   authBackgroundBlur: 18,
@@ -140,6 +213,15 @@ const Login = () => {
   const [socialLoading, setSocialLoading] = useState("");
   const [errors, setErrors] = useState({});
 
+  useEffect(() => {
+    const registeredEmail = location.state?.registeredEmail;
+
+    if (registeredEmail && !email) {
+      setEmail(registeredEmail);
+      toast.success("Account created. Please sign in.");
+    }
+  }, [location.state, email]);
+
   const redirectTarget = useMemo(
     () =>
       location.state?.from ||
@@ -168,13 +250,19 @@ const Login = () => {
           siteSettings.siteName ||
           DEFAULT_AUTH.siteName,
         primaryFont:
-          siteInfo.fontSettings?.primaryFont ||
-          siteSettings.primaryFont ||
-          DEFAULT_AUTH.primaryFont,
+          authSettings.authUseSiteTypography === false
+            ? authSettings.authBodyFont || DEFAULT_AUTH.authBodyFont
+            : siteInfo.fontSettings?.bodyFont ||
+              siteInfo.fontSettings?.primaryFont ||
+              siteSettings.bodyFont ||
+              siteSettings.primaryFont ||
+              DEFAULT_AUTH.primaryFont,
         headingFont:
-          siteInfo.fontSettings?.headingFont ||
-          siteSettings.headingFont ||
-          DEFAULT_AUTH.headingFont,
+          authSettings.authUseSiteTypography === false
+            ? authSettings.authHeadingFont || DEFAULT_AUTH.authHeadingFont
+            : siteInfo.fontSettings?.headingFont ||
+              siteSettings.headingFont ||
+              DEFAULT_AUTH.headingFont,
       };
 
       const logoId =
@@ -236,12 +324,18 @@ const Login = () => {
       const decodedUser = decodeURIComponent(encodedUser);
       JSON.parse(decodedUser);
 
-      localStorage.setItem("token", token);
-      localStorage.setItem("user", decodedUser);
+      const parsedUser = JSON.parse(decodedUser);
+      saveAuthenticatedUser(parsedUser, token);
+
+      const target =
+        localStorage.getItem("redirectAfterLogin") ||
+        redirectTarget ||
+        "/";
+
       localStorage.removeItem("redirectAfterLogin");
 
       toast.success("Login successful");
-      navigate(redirectTarget, { replace: true });
+      window.location.assign(target);
     } catch (error) {
       console.error("Social login callback error:", error);
       toast.error("Unable to complete social login.");
@@ -286,27 +380,33 @@ const Login = () => {
 
       const data = await response.json().catch(() => ({}));
 
-      if (!response.ok || !data.success) {
+      if (!response.ok) {
         throw new Error(
-          data.message || "Login failed. Please check your credentials."
+          data.message ||
+            data.error ||
+            "Login failed. Please check your email and password."
         );
       }
 
-      const user = data.user || data;
+      const { user, token } = normalizeAuthResponse(data);
 
-      localStorage.setItem("token", data.token);
-      localStorage.setItem(
-        "user",
-        JSON.stringify({
-          id: user._id || user.id || data._id,
-          firstName: user.firstName || data.firstName,
-          lastName: user.lastName || data.lastName,
-          email: user.email || data.email,
-          phone: user.phone || data.phone || "",
-          role: user.role || data.role || "user",
-          profileImage: user.profileImage || user.avatar || "",
-        })
-      );
+      if (!token) {
+        console.error("Login response did not include a token:", data);
+        throw new Error(
+          "Your login details were accepted, but the server did not return an authentication token."
+        );
+      }
+
+      if (!user) {
+        console.error("Login response did not include user data:", data);
+        throw new Error(
+          "Login succeeded, but your account information was missing from the server response."
+        );
+      }
+
+      const savedUser = saveAuthenticatedUser(user, token, {
+        email: email.trim().toLowerCase(),
+      });
 
       if (rememberMe) {
         localStorage.setItem("remembered_email", email.trim());
@@ -314,12 +414,20 @@ const Login = () => {
         localStorage.removeItem("remembered_email");
       }
 
+      const target =
+        localStorage.getItem("redirectAfterLogin") ||
+        redirectTarget ||
+        "/";
+
       localStorage.removeItem("redirectAfterLogin");
 
       toast.success(
-        `Welcome back${user.firstName ? `, ${user.firstName}` : ""}!`
+        `Welcome back${savedUser?.firstName ? `, ${savedUser.firstName}` : ""}!`
       );
-      navigate(redirectTarget, { replace: true });
+
+      // A full navigation is intentional here:
+      // it guarantees AuthContext/Header/Profile re-read token + user immediately.
+      window.location.assign(target);
     } catch (error) {
       console.error("Login error:", error);
       toast.error(error.message || "Server error. Please try again later.");
@@ -337,37 +445,38 @@ const Login = () => {
   return (
     <main
       className="relative min-h-screen overflow-hidden bg-[#eee6dc]"
-      style={{ fontFamily: auth.primaryFont }}
+      style={{ fontFamily: auth.primaryFont, color: auth.authInputTextColor }}
     >
-      {/* Background Image - Full Cover */}
       <div
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat transition-all duration-700"
+        className="absolute inset-0 bg-cover bg-no-repeat transition-all duration-700"
         style={{
           backgroundImage: assets.background
             ? `url("${assets.background}")`
             : "linear-gradient(135deg,#f8efe2 0%,#e9d8c1 50%,#d5b789 100%)",
           backgroundPosition: auth.authImagePosition || "center",
-          backgroundSize: "cover",
         }}
       />
 
-      {/* Subtle overlay gradient */}
-      <div className="absolute inset-0 bg-gradient-to-br from-white/[0.02] via-transparent to-black/[0.03]" />
+      <div className="absolute inset-0 bg-gradient-to-r from-white/[0.01] via-transparent to-black/[0.02]" />
 
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-3 py-4 sm:px-6 sm:py-6 lg:px-8 xl:px-12">
-        {/* Left Side - Branding / Promo (Hidden on mobile) */}
-        <div className="hidden lg:block lg:w-1/2">
-          <div className="max-w-lg">
+      <div className="relative z-10 mx-auto flex min-h-screen max-w-[1720px] items-center justify-end px-3 py-4 sm:px-6 sm:py-6 lg:px-10 xl:px-16">
+        {!assets.background && (
+          <motion.div
+            initial={{ opacity: 0, x: -30 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.8 }}
+            className="absolute left-8 top-1/2 hidden max-w-xl -translate-y-1/2 lg:block xl:left-16"
+          >
             <div className="flex items-center gap-4">
               {assets.logo ? (
                 <img
                   src={assets.logo}
                   alt={auth.siteName}
-                  className="h-16 w-16 rounded-2xl bg-white/85 object-contain p-2 shadow-xl backdrop-blur-sm"
+                  className="h-16 w-16 rounded-2xl bg-white/85 object-contain p-2 shadow-xl"
                 />
               ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/80 shadow-xl backdrop-blur-sm">
-                  <FiShoppingBag size={30} className="text-[#2c231d]" />
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/80 shadow-xl">
+                  <FiShoppingBag size={30} />
                 </div>
               )}
 
@@ -385,24 +494,23 @@ const Login = () => {
             </div>
 
             <h1
-              className="mt-14 text-6xl font-black leading-[1.02] text-[#2d241e] drop-shadow-sm"
+              className="mt-14 max-w-lg text-6xl font-black leading-[1.02] text-[#2d241e]"
               style={{ fontFamily: auth.headingFont }}
             >
               {auth.loginPromoTitle}
             </h1>
 
-            <p className="mt-5 text-base leading-7 text-[#66594e]">
+            <p className="mt-5 max-w-md text-base leading-7 text-[#66594e]">
               {auth.loginPromoText}
             </p>
-          </div>
-        </div>
+          </motion.div>
+        )}
 
-        {/* Right Side - Login Form */}
         <motion.section
-          initial={{ opacity: 0, y: 20, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-          className="relative w-full max-w-[480px] border border-white/70 bg-white/[0.92] px-6 py-8 shadow-[0_30px_100px_rgba(62,45,28,.18)] backdrop-blur-2xl sm:px-8 sm:py-10 lg:px-10"
+          initial={{ opacity: 0, x: 45, scale: 0.97 }}
+          animate={{ opacity: 1, x: 0, scale: 1 }}
+          transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
+          className="relative w-full max-w-[580px] overflow-hidden border border-white/70 bg-white/[0.95] px-5 py-7 shadow-[0_30px_100px_rgba(62,45,28,.18)] backdrop-blur-2xl sm:px-8 sm:py-9 lg:px-10 xl:px-12"
           style={{
             borderRadius: `${Number(auth.authBorderRadius || 28)}px`,
             backdropFilter: `blur(${Number(auth.authBackgroundBlur || 18)}px)`,
@@ -415,15 +523,15 @@ const Login = () => {
 
           <div className="relative z-10">
             <div className="mb-7 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 lg:hidden">
+              <div className="flex items-center gap-3">
                 {assets.logo && (
                   <img
                     src={assets.logo}
                     alt={auth.siteName}
-                    className="h-10 w-10 rounded-xl bg-white object-contain p-1 shadow"
+                    className="h-12 w-12 rounded-xl bg-white object-contain p-1 shadow"
                   />
                 )}
-                <div>
+                <div className="lg:hidden">
                   <p className="text-sm font-black text-[#2d241e]">
                     {auth.siteName}
                   </p>
@@ -436,12 +544,12 @@ const Login = () => {
                 </div>
               </div>
 
-              <p className="text-xs text-slate-500">
+              <p className="text-xs" style={{ color: auth.authMutedTextColor }}>
                 New customer?{" "}
                 <Link
                   to="/register"
                   className="font-black hover:underline"
-                  style={{ color: auth.authPrimaryColor }}
+                  style={{ color: auth.authLinkColor }}
                 >
                   Create account
                 </Link>
@@ -457,20 +565,23 @@ const Login = () => {
               </p>
 
               <h2
-                className="mt-3 text-4xl font-black tracking-tight text-[#211b17] sm:text-5xl"
-                style={{ fontFamily: auth.headingFont }}
+                className="mt-3 text-4xl font-black tracking-tight sm:text-5xl"
+                style={{ fontFamily: auth.headingFont, color: auth.authTitleColor }}
               >
                 {auth.loginTitle}
               </h2>
 
-              <p className="mt-3 max-w-lg text-sm leading-6 text-slate-500">
+              <p
+                className="mt-3 max-w-lg text-sm leading-6"
+                style={{ color: auth.authSubtitleColor }}
+              >
                 {auth.loginSubtitle}
               </p>
             </div>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-5" noValidate>
               <div>
-                <label className="mb-2 block text-sm font-bold text-[#322b25]">
+                <label className="mb-2 block text-sm font-bold" style={{ color: auth.authLabelColor }}>
                   Email address
                 </label>
 
@@ -493,7 +604,8 @@ const Login = () => {
                         email: "",
                       }));
                     }}
-                    className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-4 outline-none sm:py-4"
+                    className="w-full rounded-2xl bg-transparent py-4 pl-12 pr-4 outline-none placeholder:text-[var(--auth-placeholder)]"
+                    style={{ color: auth.authInputTextColor, "--auth-placeholder": auth.authPlaceholderColor }}
                     placeholder="you@example.com"
                     autoComplete="email"
                   />
@@ -508,7 +620,7 @@ const Login = () => {
 
               <div>
                 <div className="mb-2 flex items-center justify-between">
-                  <label className="text-sm font-bold text-[#322b25]">
+                  <label className="text-sm font-bold" style={{ color: auth.authLabelColor }}>
                     Password
                   </label>
 
@@ -516,7 +628,7 @@ const Login = () => {
                     <Link
                       to="/forgot-password"
                       className="text-xs font-bold hover:underline"
-                      style={{ color: auth.authPrimaryColor }}
+                      style={{ color: auth.authLinkColor }}
                     >
                       {auth.forgotPasswordText}
                     </Link>
@@ -542,7 +654,8 @@ const Login = () => {
                         password: "",
                       }));
                     }}
-                    className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-12 outline-none sm:py-4"
+                    className="w-full rounded-2xl bg-transparent py-4 pl-12 pr-12 outline-none placeholder:text-[var(--auth-placeholder)]"
+                    style={{ color: auth.authInputTextColor, "--auth-placeholder": auth.authPlaceholderColor }}
                     placeholder="Enter your password"
                     autoComplete="current-password"
                   />
@@ -581,9 +694,10 @@ const Login = () => {
                 whileTap={{ scale: 0.985 }}
                 type="submit"
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-3 rounded-2xl px-5 py-3.5 text-base font-black text-white shadow-[0_18px_35px_rgba(0,0,0,.14)] transition hover:shadow-[0_20px_40px_rgba(0,0,0,.2)] disabled:cursor-not-allowed disabled:opacity-60 sm:py-4"
+                className="flex w-full items-center justify-center gap-3 rounded-2xl px-5 py-4 text-base font-black shadow-[0_18px_35px_rgba(0,0,0,.14)] disabled:cursor-not-allowed disabled:opacity-60"
                 style={{
                   background: `linear-gradient(90deg, ${auth.authPrimaryColor}, ${auth.authPrimaryColor}dd)`,
+                  color: auth.authButtonTextColor,
                 }}
               >
                 {loading ? (
@@ -622,7 +736,7 @@ const Login = () => {
                       type="button"
                       onClick={() => socialLogin("google")}
                       disabled={Boolean(socialLoading)}
-                      className="flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-[#10264c] transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-60"
+                      className="flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-bold text-[#10264c] transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-60"
                     >
                       <GoogleIcon />
                       Google
@@ -634,7 +748,7 @@ const Login = () => {
                       type="button"
                       onClick={() => socialLogin("facebook")}
                       disabled={Boolean(socialLoading)}
-                      className="flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-[#10264c] transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-60"
+                      className="flex items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-bold text-[#10264c] transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-60"
                     >
                       <FacebookIcon />
                       Facebook
@@ -645,7 +759,7 @@ const Login = () => {
             )}
 
             {auth.showAuthTrustBadges && (
-              <div className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-100 bg-amber-50/70 p-3.5 text-sm text-[#5e5043]">
+              <div className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-100 bg-amber-50/70 p-4 text-sm text-[#5e5043]">
                 <FiShield
                   className="mt-0.5 shrink-0"
                   style={{ color: auth.authPrimaryColor }}

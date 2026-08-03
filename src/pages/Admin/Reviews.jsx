@@ -28,7 +28,216 @@ const Reviews = () => {
         averageRating: 0, totalRatings: 0
     });
 
-    const getToken = () => localStorage.getItem('token');
+    const getToken = () =>
+        localStorage.getItem('adminToken') ||
+        localStorage.getItem('admin_token');
+
+    const resolveImageValue = (value) => {
+        if (!value) return null;
+
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+
+            if (
+                trimmed.startsWith('data:image') ||
+                trimmed.startsWith('http://') ||
+                trimmed.startsWith('https://') ||
+                trimmed.startsWith('blob:') ||
+                trimmed.startsWith('/')
+            ) {
+                return trimmed;
+            }
+
+            return null;
+        }
+
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                const resolved = resolveImageValue(item);
+                if (resolved) return resolved;
+            }
+
+            return null;
+        }
+
+        if (typeof value === 'object') {
+            return (
+                resolveImageValue(value.url) ||
+                resolveImageValue(value.src) ||
+                resolveImageValue(value.data) ||
+                resolveImageValue(value.image) ||
+                resolveImageValue(value.thumbnail) ||
+                resolveImageValue(value.preview) ||
+                null
+            );
+        }
+
+        return null;
+    };
+
+    const getProductImage = (product = {}) => {
+        return (
+            resolveImageValue(product.image) ||
+            resolveImageValue(product.thumbnail) ||
+            resolveImageValue(product.mainImage) ||
+            resolveImageValue(product.coverImage) ||
+            resolveImageValue(product.featuredImage) ||
+            resolveImageValue(product.images) ||
+            resolveImageValue(product.gallery) ||
+            resolveImageValue(product.media) ||
+            resolveImageValue(product.variants?.[0]?.image) ||
+            resolveImageValue(product.variants?.[0]?.images) ||
+            null
+        );
+    };
+
+    const getStoredProducts = () => {
+        const keys = [
+            'shop_products',
+            'products',
+            'admin_products',
+            'all_products',
+            'zamed_products',
+            'product_data'
+        ];
+
+        const combined = [];
+
+        keys.forEach((key) => {
+            try {
+                const raw = JSON.parse(localStorage.getItem(key) || 'null');
+
+                if (Array.isArray(raw)) {
+                    combined.push(...raw);
+                } else if (Array.isArray(raw?.products)) {
+                    combined.push(...raw.products);
+                }
+            } catch (error) {
+                console.warn(`Unable to read ${key}:`, error);
+            }
+        });
+
+        const seen = new Set();
+
+        return combined.filter((product, index) => {
+            const id = String(
+                product?._id ||
+                product?.id ||
+                product?.productId ||
+                product?.slug ||
+                `${product?.name || product?.title || 'product'}-${index}`
+            );
+
+            if (seen.has(id)) return false;
+            seen.add(id);
+            return true;
+        });
+    };
+
+    const findProductForReview = (review, products) => {
+        const reviewProductId = String(
+            review.productId ||
+            review.product?._id ||
+            review.product?.id ||
+            review.product ||
+            ''
+        );
+
+        const reviewProductName = String(
+            review.productName ||
+            review.product?.name ||
+            review.product?.title ||
+            ''
+        ).trim().toLowerCase();
+
+        return products.find((product) => {
+            const productId = String(
+                product?._id ||
+                product?.id ||
+                product?.productId ||
+                product?.slug ||
+                ''
+            );
+
+            const productName = String(
+                product?.name ||
+                product?.title ||
+                product?.productName ||
+                ''
+            ).trim().toLowerCase();
+
+            if (reviewProductId && productId && reviewProductId === productId) {
+                return true;
+            }
+
+            return (
+                reviewProductName &&
+                productName &&
+                reviewProductName === productName
+            );
+        });
+    };
+
+    const enrichReviewsWithProductImages = (reviewsList = []) => {
+        const products = getStoredProducts();
+
+        return reviewsList.map((review) => {
+            const matchingProduct = findProductForReview(review, products);
+
+            const resolvedImage =
+                resolveImageValue(review.productImage) ||
+                resolveImageValue(review.image) ||
+                resolveImageValue(review.product?.image) ||
+                resolveImageValue(review.product?.images) ||
+                getProductImage(matchingProduct || {});
+
+            return {
+                ...review,
+                productId:
+                    review.productId ||
+                    matchingProduct?._id ||
+                    matchingProduct?.id ||
+                    matchingProduct?.productId ||
+                    null,
+                productName:
+                    review.productName ||
+                    review.product?.name ||
+                    matchingProduct?.name ||
+                    matchingProduct?.title ||
+                    'Product',
+                productImage: resolvedImage || null
+            };
+        });
+    };
+
+    const ProductImage = ({
+        src,
+        alt,
+        className = 'w-10 h-10'
+    }) => {
+        const [failed, setFailed] = useState(false);
+        const resolvedSrc = resolveImageValue(src);
+
+        if (!resolvedSrc || failed) {
+            return (
+                <div
+                    className={`${className} flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-gradient-to-br from-gray-50 to-gray-100 dark:border-gray-600 dark:from-gray-700 dark:to-gray-800`}
+                >
+                    <FiStar className="text-gray-300 dark:text-gray-500" />
+                </div>
+            );
+        }
+
+        return (
+            <img
+                src={resolvedSrc}
+                alt={alt || 'Product'}
+                className={`${className} shrink-0 rounded-xl border border-gray-100 bg-white object-cover dark:border-gray-700`}
+                loading="lazy"
+                onError={() => setFailed(true)}
+            />
+        );
+    };
 
     useEffect(() => {
         const checkDarkMode = () => {
@@ -64,8 +273,11 @@ const Reviews = () => {
             if (response.ok) {
                 const data = await response.json();
                 if (data.success && data.reviews && data.reviews.length > 0) {
-                    setReviews(data.reviews);
-                    calculateStats(data.reviews);
+                    const enrichedReviews =
+                        enrichReviewsWithProductImages(data.reviews);
+
+                    setReviews(enrichedReviews);
+                    calculateStats(enrichedReviews);
                     setLoading(false);
                     return;
                 }
@@ -77,40 +289,73 @@ const Reviews = () => {
     };
     
     const loadLocalReviews = () => {
-        const products = JSON.parse(localStorage.getItem('shop_products') || '[]');
+        const products = getStoredProducts();
         let allReviews = [];
-        
-        products.forEach(product => {
-            if (product.reviews && Array.isArray(product.reviews)) {
-                product.reviews.forEach(review => {
+
+        products.forEach((product) => {
+            if (Array.isArray(product.reviews)) {
+                product.reviews.forEach((review) => {
                     allReviews.push({
                         ...review,
-                        productId: product.id,
-                        productName: product.name,
-                        productImage: product.image
+                        productId:
+                            review.productId ||
+                            product._id ||
+                            product.id ||
+                            product.productId,
+                        productName:
+                            review.productName ||
+                            product.name ||
+                            product.title ||
+                            'Product',
+                        productImage:
+                            resolveImageValue(review.productImage) ||
+                            getProductImage(product)
                     });
                 });
             }
         });
-        
-        const storedReviews = JSON.parse(localStorage.getItem('product_reviews') || '[]');
-        allReviews = [...allReviews, ...storedReviews];
-        
-        // Remove duplicates
+
+        const storedReviews = JSON.parse(
+            localStorage.getItem('product_reviews') || '[]'
+        );
+
+        if (Array.isArray(storedReviews)) {
+            allReviews = [...allReviews, ...storedReviews];
+        }
+
+        allReviews = enrichReviewsWithProductImages(allReviews);
+
+        // Remove duplicates while preserving reviews without an explicit id.
         const uniqueReviews = [];
         const ids = new Set();
-        allReviews.forEach(review => {
-            if (review.id && !ids.has(review.id)) {
-                ids.add(review.id);
-                uniqueReviews.push(review);
-            }
+
+        allReviews.forEach((review, index) => {
+            const id = String(
+                review.id ||
+                review._id ||
+                `${review.productId || review.productName}-${review.userEmail || review.userName || 'user'}-${review.date || index}`
+            );
+
+            if (ids.has(id)) return;
+
+            ids.add(id);
+            uniqueReviews.push({
+                ...review,
+                id: review.id || review._id || id
+            });
         });
-        
-        uniqueReviews.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        uniqueReviews.sort((a, b) => {
+            const aDate = new Date(a.date || a.createdAt || 0).getTime();
+            const bDate = new Date(b.date || b.createdAt || 0).getTime();
+
+            return bDate - aDate;
+        });
+
         setReviews(uniqueReviews);
         calculateStats(uniqueReviews);
     };
-    
+
     const calculateStats = (reviewsList) => {
         const pending = reviewsList.filter(r => r.status === 'pending').length;
         const approved = reviewsList.filter(r => r.status === 'approved').length;
@@ -295,7 +540,10 @@ const Reviews = () => {
     };
 
     const viewReviewDetails = (review) => {
-        setSelectedReview(review);
+        const [enrichedReview] =
+            enrichReviewsWithProductImages([review]);
+
+        setSelectedReview(enrichedReview || review);
         setReplyText(review.reply || "");
         setShowModal(true);
     };
@@ -440,7 +688,11 @@ const Reviews = () => {
                                     <tr key={review.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-2">
-                                                <img src={review.productImage?.startsWith('data:') ? review.productImage : 'https://via.placeholder.com/40'} alt={review.productName} className="w-10 h-10 object-cover rounded" />
+                                                <ProductImage
+                                                    src={review.productImage}
+                                                    alt={review.productName}
+                                                    className="h-12 w-12"
+                                                />
                                                 <span className="text-sm font-medium dark:text-white">{review.productName}</span>
                                             </div>
                                         </td>
@@ -487,7 +739,11 @@ const Reviews = () => {
                             </div>
                             <div className="space-y-4">
                                 <div className="flex items-center gap-4 pb-4 border-b dark:border-gray-700">
-                                    <img src={selectedReview.productImage?.startsWith('data:') ? selectedReview.productImage : 'https://via.placeholder.com/60'} alt={selectedReview.productName} className="w-16 h-16 object-cover rounded" />
+                                    <ProductImage
+                                        src={selectedReview.productImage}
+                                        alt={selectedReview.productName}
+                                        className="h-20 w-20"
+                                    />
                                     <div><h3 className="font-semibold dark:text-white">{selectedReview.productName}</h3><p className="text-sm text-gray-500">Product ID: {selectedReview.productId}</p></div>
                                 </div>
                                 <div><p className="text-sm text-gray-500">Customer</p><p className="font-medium dark:text-white">{selectedReview.userName || 'Anonymous'}</p>{selectedReview.userEmail && <p className="text-sm text-gray-500">{selectedReview.userEmail}</p>}</div>

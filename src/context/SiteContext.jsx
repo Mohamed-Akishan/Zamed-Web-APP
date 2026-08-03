@@ -15,22 +15,41 @@ const ImageStorage = {
 
         this.initPromise = new Promise((resolve, reject) => {
             try {
-                const request = indexedDB.open(this.dbName, 1);
+                const request = indexedDB.open(this.dbName);
                 
                 request.onupgradeneeded = (event) => {
                     const db = event.target.result;
+
                     if (!db.objectStoreNames.contains(this.storeName)) {
-                        const store = db.createObjectStore(this.storeName, { keyPath: 'id' });
-                        store.createIndex('type', 'type', { unique: false });
-                        store.createIndex('timestamp', 'timestamp', { unique: false });
+                        const store = db.createObjectStore(
+                            this.storeName,
+                            { keyPath: 'id' }
+                        );
+
+                        store.createIndex(
+                            'type',
+                            'type',
+                            { unique: false }
+                        );
+
+                        store.createIndex(
+                            'timestamp',
+                            'timestamp',
+                            { unique: false }
+                        );
                     }
-                    this.initialized = true;
-                    this.db = db;
                 };
                 
                 request.onsuccess = (event) => {
                     this.db = event.target.result;
                     this.initialized = true;
+                    this.db.onversionchange = () => {
+                        this.db?.close();
+                        this.initialized = false;
+                        this.db = null;
+                        this.initPromise = null;
+                    };
+
                     this.db.onclose = () => {
                         this.initialized = false;
                         this.db = null;

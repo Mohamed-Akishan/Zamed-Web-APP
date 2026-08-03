@@ -19,7 +19,7 @@ const ImageStorage = {
 
         this.initPromise = new Promise((resolve, reject) => {
             try {
-                const request = indexedDB.open(this.dbName, 3);
+                const request = indexedDB.open(this.dbName);
                 
                 request.onupgradeneeded = (event) => {
                     const db = event.target.result;
@@ -191,6 +191,11 @@ const Hero = () => {
                     imageData = slide.image;
                 }
                 
+                // Last-resort compatibility with old low-quality cache.
+                if (!imageData && slideCache && slideCache[index]) {
+                    imageData = slideCache[index];
+                }
+
                 // Validate image data
                 if (imageData && typeof imageData === 'string') {
                     // If it's a base64 image, make sure it's valid
@@ -261,12 +266,14 @@ const Hero = () => {
         window.addEventListener('storage', handleUpdate);
         window.addEventListener('siteInfoUpdated', handleUpdate);
         window.addEventListener('settingsSaved', handleUpdate);
+        window.addEventListener('siteImagesUpdated', handleUpdate);
         window.addEventListener('heroSlidesUpdated', handleUpdate);
         
         return () => {
             window.removeEventListener('storage', handleUpdate);
             window.removeEventListener('siteInfoUpdated', handleUpdate);
             window.removeEventListener('settingsSaved', handleUpdate);
+            window.removeEventListener('siteImagesUpdated', handleUpdate);
             window.removeEventListener('heroSlidesUpdated', handleUpdate);
         };
     }, [siteInfo]);
@@ -434,9 +441,13 @@ const Hero = () => {
                                                 width: '100%',
                                                 height: '100%',
                                                 objectFit: 'cover',
-                                                objectPosition: 'center center',
+                                                objectPosition: slide.imagePosition || slide.objectPosition || 'center center',
+                                                imageRendering: 'auto',
                                                 display: 'block',
                                             }}
+                                            decoding="async"
+                                            fetchpriority={index === 0 ? "high" : "auto"}
+                                            loading={index === 0 ? "eager" : "lazy"}
                                             onLoad={() => handleImageLoad(index)}
                                             onError={(e) => {
                                                 console.warn('Image failed to load, using fallback:', index);

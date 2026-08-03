@@ -12,8 +12,8 @@ import {
     FiStar, FiTrendingUp, FiAward, FiGift, FiHelpCircle,
     FiMessageSquare, FiShare2, FiDownload, FiPrinter,
     FiFilter, FiSearch, FiPlus, FiMinus, FiTrash2, FiTag,
-    FiArrowLeft, FiArrowRight, FiEdit, FiMoreVertical, FiCamera,
-    FiCopy
+    FiArrowLeft, FiArrowRight, FiEdit, FiMoreVertical, FiCopy, FiEye,
+    FiDollarSign as FiDollar
 } from "react-icons/fi";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -22,6 +22,248 @@ import orderService from "../services/orderService";
 import productService from "../services/productService";
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+const RETURNS_DB_NAME = "zamed_returns_db";
+const RETURNS_DB_VERSION = 1;
+const RETURNS_STORE = "returns";
+
+const openReturnsDatabase = () =>
+    new Promise((resolve, reject) => {
+        if (typeof indexedDB === "undefined") {
+            reject(new Error("IndexedDB is not available"));
+            return;
+        }
+
+        const request = indexedDB.open(
+            RETURNS_DB_NAME,
+            RETURNS_DB_VERSION
+        );
+
+        request.onupgradeneeded = () => {
+            const db = request.result;
+
+            if (!db.objectStoreNames.contains(RETURNS_STORE)) {
+                db.createObjectStore(
+                    RETURNS_STORE,
+                    {
+                        keyPath: "id"
+                    }
+                );
+            }
+        };
+
+        request.onsuccess = () =>
+            resolve(request.result);
+
+        request.onerror = () =>
+            reject(request.error);
+    });
+
+const getAllReturnRecords = async () => {
+    try {
+        const db =
+            await openReturnsDatabase();
+
+        return await new Promise(
+            (resolve, reject) => {
+                const tx =
+                    db.transaction(
+                        RETURNS_STORE,
+                        "readonly"
+                    );
+
+                const request =
+                    tx.objectStore(
+                        RETURNS_STORE
+                    ).getAll();
+
+                request.onsuccess = () =>
+                    resolve(
+                        Array.isArray(
+                            request.result
+                        )
+                            ? request.result
+                            : []
+                    );
+
+                request.onerror = () =>
+                    reject(request.error);
+            }
+        );
+    } catch (error) {
+        console.warn(
+            "Unable to load returns from IndexedDB:",
+            error
+        );
+
+        return [];
+    }
+};
+
+const putReturnRecord = async (record) => {
+    if (!record) return false;
+
+    const id =
+        record.id ||
+        record._id ||
+        `${record.orderId}-${record.productId}`;
+
+    if (!id) return false;
+
+    try {
+        const db =
+            await openReturnsDatabase();
+
+        return await new Promise(
+            (resolve, reject) => {
+                const tx =
+                    db.transaction(
+                        RETURNS_STORE,
+                        "readwrite"
+                    );
+
+                tx.objectStore(
+                    RETURNS_STORE
+                ).put({
+                    ...record,
+                    id: String(id)
+                });
+
+                tx.oncomplete = () =>
+                    resolve(true);
+
+                tx.onerror = () =>
+                    reject(tx.error);
+
+                tx.onabort = () =>
+                    reject(tx.error);
+            }
+        );
+    } catch (error) {
+        console.warn(
+            "Unable to save return to IndexedDB:",
+            error
+        );
+
+        return false;
+    }
+};
+
+const putAllReturnRecords = async (records = []) => {
+    const list =
+        Array.isArray(records)
+            ? records
+            : [];
+
+    const results =
+        await Promise.all(
+            list.map(record =>
+                putReturnRecord(record)
+            )
+        );
+
+    return results.some(Boolean);
+};
+
+const compactReturnForLocalStorage = (record = {}) => {
+    const refundMethod =
+        typeof record.refundMethod === "object" &&
+        record.refundMethod !== null
+            ? {
+                ...record.refundMethod
+            }
+            : record.refundMethod;
+
+    return {
+        ...record,
+
+        // Base64 product images are the main source of localStorage quota errors.
+        productImage:
+            typeof record.productImage === "string" &&
+            record.productImage.startsWith("data:")
+                ? ""
+                : record.productImage || "",
+
+        refundMethod,
+
+        // Keep useful history, but prevent uncontrolled growth.
+        trackingHistory:
+            Array.isArray(record.trackingHistory)
+                ? record.trackingHistory.slice(-20)
+                : []
+    };
+};
+
+const saveCompactReturnsToLocalStorage = (
+    records = []
+) => {
+    try {
+        const compact =
+            records.map(
+                compactReturnForLocalStorage
+            );
+
+        localStorage.setItem(
+            "return_requests",
+            JSON.stringify(compact)
+        );
+
+        return true;
+    } catch (error) {
+        if (
+            error?.name ===
+            "QuotaExceededError"
+        ) {
+            try {
+                // Last-resort tiny cache.
+                const tiny =
+                    records.map(record => ({
+                        id:
+                            record.id ||
+                            record._id,
+                        orderId:
+                            record.orderId,
+                        productId:
+                            record.productId,
+                        productName:
+                            record.productName,
+                        userEmail:
+                            record.userEmail,
+                        refundAmount:
+                            record.refundAmount,
+                        refundMethod:
+                            record.refundMethod,
+                        status:
+                            record.status,
+                        date:
+                            record.date,
+                        updatedAt:
+                            record.updatedAt
+                    }));
+
+                localStorage.setItem(
+                    "return_requests",
+                    JSON.stringify(tiny)
+                );
+
+                return true;
+            } catch (fallbackError) {
+                console.warn(
+                    "Return local cache skipped because browser storage is full:",
+                    fallbackError
+                );
+            }
+        } else {
+            console.warn(
+                "Unable to save return local cache:",
+                error
+            );
+        }
+
+        return false;
+    }
+};
+
 
 const COUPON_IMAGE_DB = "zamed_coupon_assets";
 const COUPON_IMAGE_STORE = "coupon_images";
@@ -87,6 +329,26 @@ const Profile = () => {
     const [wishlistView, setWishlistView] = useState("grid");
     const [userCoupons, setUserCoupons] = useState([]);
     const [token, setToken] = useState(null);
+    const [trackingOrder, setTrackingOrder] = useState(null);
+    const [notificationFilter, setNotificationFilter] = useState("all");
+    const [securityPrefs, setSecurityPrefs] = useState({ twoFactorEnabled: false, loginAlerts: true, securityEmails: true });
+    const [accountPrefs, setAccountPrefs] = useState({ emailNotifications: true, smsAlerts: false, orderUpdates: true, promotionalOffers: true, wishlistAlerts: true });
+    const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+    const [showPasswords, setShowPasswords] = useState(false);
+    const [changingPassword, setChangingPassword] = useState(false);
+    const [securityActionLoading, setSecurityActionLoading] = useState(false);
+    const [deletingAccount, setDeletingAccount] = useState(false);
+
+    const [hiddenOrderIds, setHiddenOrderIds] = useState([]);
+
+    // Return method states
+    const [returnMethod, setReturnMethod] = useState("bank_transfer");
+    const [bankName, setBankName] = useState("");
+    const [accountNumber, setAccountNumber] = useState("");
+    const [accountHolderName, setAccountHolderName] = useState("");
+    const [bankBranch, setBankBranch] = useState("");
+    const [shopPickupDate, setShopPickupDate] = useState("");
+    const [shopPickupTime, setShopPickupTime] = useState("");
 
     const navigate = useNavigate();
     const location = useLocation();
@@ -94,12 +356,306 @@ const Profile = () => {
 
     const getToken = () => localStorage.getItem('token');
 
+    const safeParse = (value, fallback) => {
+        try { return JSON.parse(value) ?? fallback; } catch { return fallback; }
+    };
+
+    const getNotificationId = (n = {}) => String(
+        n.id || n._id || n.notificationId || `${n.type || "notification"}-${n.date || n.createdAt || Date.now()}`
+    );
+
+    const saveNotificationsLocally = (items, email = user?.email) => {
+        if (!email) return;
+        try { localStorage.setItem(`notifications_${email}`, JSON.stringify(items)); }
+        catch (e) { console.warn("Unable to save notifications locally", e); }
+    };
+
+    const tryApiEndpoints = async (endpoints, options) => {
+        let lastResponse = null;
+        for (const endpoint of endpoints) {
+            try {
+                const response = await fetch(`${API_URL}${endpoint}`, options);
+                lastResponse = response;
+                const data = await response.json().catch(() => ({}));
+                if (response.ok) return { ok: true, response, data };
+                if (![404,405].includes(response.status)) return { ok:false, response, data };
+            } catch {}
+        }
+        return { ok:false, response:lastResponse, data:{} };
+    };
+
+
+    // Helper to normalize order status from every order field used by the shop/admin.
+    const normalizeOrderStatus = (value = "") => {
+        const rawStatus =
+            typeof value === "object" && value !== null
+                ? (
+                    value.deliveryStatus ||
+                    value.status ||
+                    value.orderStatus ||
+                    value.fulfillmentStatus ||
+                    value.shippingStatus ||
+                    ""
+                )
+                : value;
+
+        const normalized = String(rawStatus || "")
+            .trim()
+            .toLowerCase()
+            .replace(/[\s-]+/g, "_");
+
+        const aliases = {
+            completed: "delivered",
+            complete: "delivered",
+            received: "delivered",
+            fulfilled: "delivered",
+            order_delivered: "delivered",
+            order_completed: "delivered",
+            delivery_completed: "delivered",
+            delivered_successfully: "delivered",
+            successfully_delivered: "delivered"
+        };
+
+        if (aliases[normalized]) return aliases[normalized];
+
+        if (
+            normalized.includes("delivered") ||
+            normalized.includes("completed")
+        ) {
+            return "delivered";
+        }
+
+        return normalized;
+    };
+
+    // One source of truth for delivered orders.
+    // Different parts of the project/admin have used different status fields,
+    // so return/review eligibility must check all of them.
+    const isOrderDelivered = (order = {}) => {
+        if (!order || typeof order !== "object") return false;
+
+        const statusCandidates = [
+            order.deliveryStatus,
+            order.status,
+            order.orderStatus,
+            order.fulfillmentStatus,
+            order.shippingStatus,
+            order.trackingStatus,
+            order.delivery?.status,
+            order.shipping?.status,
+            order.fulfillment?.status,
+            order.tracking?.status
+        ];
+
+        const hasDeliveredStatus = statusCandidates.some(
+            value =>
+                value &&
+                normalizeOrderStatus(value) === "delivered"
+        );
+
+        if (hasDeliveredStatus) return true;
+
+        // Some saved orders only keep a delivered/completed boolean.
+        if (
+            order.delivered === true ||
+            order.isDelivered === true ||
+            order.completed === true ||
+            order.isCompleted === true
+        ) {
+            return true;
+        }
+
+        // A delivery timestamp is also strong evidence that delivery completed.
+        if (
+            order.deliveredAt ||
+            order.deliveryDate ||
+            order.deliveredDate ||
+            order.actualDeliveryDate ||
+            order.completedAt
+        ) {
+            return true;
+        }
+
+        // Support tracking history used by order/admin services.
+        const histories = [
+            order.trackingHistory,
+            order.statusHistory,
+            order.orderHistory,
+            order.deliveryHistory,
+            order.timeline
+        ].filter(Array.isArray);
+
+        const historyShowsDelivered = histories.some(history =>
+            history.some(entry => {
+                const stage =
+                    entry?.stage ||
+                    entry?.status ||
+                    entry?.orderStatus ||
+                    entry?.deliveryStatus ||
+                    entry?.title ||
+                    entry?.label ||
+                    "";
+
+                return normalizeOrderStatus(stage) === "delivered";
+            })
+        );
+
+        if (historyShowsDelivered) return true;
+
+        // If tracking steps exist and Delivered is marked completed, accept it.
+        if (Array.isArray(order.trackingSteps)) {
+            const deliveredStep =
+                order.trackingSteps.find(step =>
+                    normalizeOrderStatus(
+                        step?.id ||
+                        step?.status ||
+                        step?.label ||
+                        ""
+                    ) === "delivered"
+                );
+
+            if (
+                deliveredStep &&
+                (
+                    deliveredStep.completed === true ||
+                    deliveredStep.isCompleted === true ||
+                    deliveredStep.active === true
+                )
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    // Get order tracking steps
+    const getOrderTrackingSteps = (order = {}) => {
+        const status = isOrderDelivered(order)
+            ? "delivered"
+            : normalizeOrderStatus(
+                order.deliveryStatus ||
+                order.status ||
+                order.orderStatus ||
+                order.fulfillmentStatus ||
+                order.shippingStatus ||
+                order.trackingStatus ||
+                order.delivery?.status ||
+                order.shipping?.status ||
+                "pending"
+            );
+
+        const steps = [
+            {
+                id: "pending",
+                label: "Order Placed",
+                description: "Your order has been received.",
+                icon: FiCheckCircle
+            },
+            {
+                id: "processing",
+                label: "Processing",
+                description: "Your items are being prepared.",
+                icon: FiPackage
+            },
+            {
+                id: "shipped",
+                label: "Shipped",
+                description: "Your order is on the way.",
+                icon: FiTruck
+            },
+            {
+                id: "out_for_delivery",
+                label: "Out for Delivery",
+                description: "Your parcel is with the delivery driver.",
+                icon: FiDeliveryTruck
+            },
+            {
+                id: "delivered",
+                label: "Delivered",
+                description: "Your order has been delivered.",
+                icon: FiCheckCircle
+            }
+        ];
+
+        const aliases = {
+            scheduled: "pending",
+            placed: "pending",
+            confirmed: "processing",
+            packed: "processing",
+            dispatch: "shipped",
+            dispatched: "shipped",
+            in_transit: "shipped",
+            out_for_delivery: "out_for_delivery",
+            delivered: "delivered"
+        };
+
+        const normalized = aliases[status] || status;
+        const currentIndex = Math.max(
+            0,
+            steps.findIndex(step => step.id === normalized)
+        );
+
+        return steps.map((step, index) => ({
+            ...step,
+            completed: index <= currentIndex,
+            active: index === currentIndex
+        }));
+    };
+
+    // Check if order can be reviewed
+    const canReviewOrder = (order = {}) =>
+        isOrderDelivered(order);
+
+    // Check if order can be returned
+    const canReturnOrder = (order = {}) =>
+        isOrderDelivered(order);
+
+    // Check if item already has a return request
+    const hasReturnRequestForItem = (orderId, productId) =>
+        returnRequests.some(request =>
+            String(request.orderId) === String(orderId) &&
+            String(request.productId) === String(productId) &&
+            !["rejected", "refunded"].includes(
+                String(request.status || "").toLowerCase()
+            )
+        );
+
+    // Get existing review for an item
+    const getExistingReview = (productId, orderId) => {
+        try {
+            const storedReviews = JSON.parse(
+                localStorage.getItem("product_reviews") || "[]"
+            );
+
+            return storedReviews.find(review =>
+                String(review.productId) === String(productId) &&
+                String(review.orderId || "") === String(orderId || "") &&
+                String(review.userEmail || "").toLowerCase() ===
+                    String(user?.email || "").toLowerCase()
+            );
+        } catch {
+            return null;
+        }
+    };
+
+    // Navigate to product page with review section
+    const navigateToProductReview = (productId, productName, orderId) => {
+        sessionStorage.setItem('focus_review_section', 'true');
+        sessionStorage.setItem('auto_open_review_form', 'true');
+        sessionStorage.setItem('review_product_id', String(productId));
+        sessionStorage.setItem('review_order_id', String(orderId));
+        if (productName) sessionStorage.setItem('review_product_name', String(productName));
+        if (user?.email) sessionStorage.setItem('review_user_email', user.email);
+        navigate(`/product/${productId}`);
+    };
 
     const getOrderForNotification = (notification) => {
         const orderId = notification?.orderId || notification?.referenceId || notification?.entityId;
         return orders.find((order) =>
             String(order?.id) === String(orderId) ||
-            String(order?._id) === String(orderId)
+            String(order?._id) === String(orderId) ||
+            String(order?.orderId) === String(orderId)
         );
     };
 
@@ -107,7 +663,7 @@ const Profile = () => {
         if (notification?.image || notification?.productImage || notification?.orderImage) {
             return notification.image || notification.productImage || notification.orderImage;
         }
-        if (notification?.type === "order") {
+        if (notification?.type === "order" || notification?.type === "order_status") {
             const order = getOrderForNotification(notification);
             return order?.itemsList?.[0]?.image || order?.items?.[0]?.image || "";
         }
@@ -115,32 +671,35 @@ const Profile = () => {
     };
 
     const viewNotificationDetails = async (notification) => {
-        await markNotificationAsRead(notification.id);
+        if (!notification) return;
+        await markNotificationAsRead(getNotificationId(notification));
 
-        if (notification.type === "coupon") {
-            setActiveTab("coupons");
-            navigate("/profile?tab=coupons", { replace: false });
+        const type = String(notification.type || notification.category || "").toLowerCase();
+        const orderId = notification.orderId || notification.referenceId || notification.entityId || notification.meta?.orderId;
+        const productId = notification.productId || notification.meta?.productId;
+        const returnId = notification.returnId || notification.returnRequestId || notification.meta?.returnId;
+        const target = notification.link || notification.url || notification.path || notification.route;
+
+        if (["coupon","offer","promotion"].includes(type)) { setActiveTab("coupons"); navigate("/profile?tab=coupons"); return; }
+        if (["order","order_status","delivery","shipping"].includes(type)) { setActiveTab("orders"); navigate("/profile?tab=orders", {state:{focusOrderId:orderId}}); return; }
+        if (["return","return_status","refund","refund_status"].includes(type)) { setActiveTab("returns"); navigate("/profile?tab=returns", {state:{focusReturnId:returnId}}); return; }
+        if (["security","login","account","password"].includes(type)) { setActiveTab("security"); navigate("/profile?tab=security"); return; }
+        if (type === "address") { setActiveTab("addresses"); navigate("/profile?tab=addresses"); return; }
+        if (type === "wishlist") { setActiveTab("wishlist"); navigate("/profile?tab=wishlist"); return; }
+        if (type === "product" || type === "review") {
+            if (productId) {
+                if (type === "review") navigateToProductReview(productId, notification.productName, orderId);
+                else navigate(`/product/${productId}`);
+                return;
+            }
+            navigate("/collections/all"); return;
+        }
+        if (["message","support","contact"].includes(type)) {
+            navigate("/");
+            setTimeout(() => (document.getElementById("contact-footer") || document.querySelector("footer"))?.scrollIntoView({behavior:"smooth",block:"start"}), 300);
             return;
         }
-
-        if (notification.type === "order") {
-            const orderId = notification.orderId || notification.referenceId || notification.entityId;
-            if (orderId) sessionStorage.setItem("profile_focus_order", String(orderId));
-            setActiveTab("orders");
-            navigate("/profile?tab=orders", { state: { focusOrderId: orderId } });
-            return;
-        }
-
-        if (notification.type === "product" && notification.productId) {
-            navigate(`/product/${notification.productId}`);
-            return;
-        }
-
-        if (notification.link || notification.url || notification.path) {
-            navigate(notification.link || notification.url || notification.path);
-            return;
-        }
-
+        if (target) { navigate(target, {state:{notification}}); return; }
         navigate("/");
     };
 
@@ -159,23 +718,21 @@ const Profile = () => {
         'pickup_scheduled': { label: 'Pickup Scheduled', icon: FiCalendar, color: 'text-blue-600', bg: 'bg-blue-50', progress: 33, description: 'Driver has been scheduled to collect your item.' },
         'picked_up': { label: 'Item Collected', icon: FiPickupPackage, color: 'text-purple-600', bg: 'bg-purple-50', progress: 50, description: 'Driver has collected your item. Item is on the way to warehouse.' },
         'verified': { label: 'Item Verified', icon: FiCheckCircle, color: 'text-green-600', bg: 'bg-green-50', progress: 66, description: 'Item has been verified at warehouse.' },
-        'refund_processing': { label: 'Refund Processing', icon: FiRefreshCw, color: 'text-orange-600', bg: 'bg-orange-50', progress: 83, description: 'Refund is being processed.' },
-        'refunded': { label: 'Refund Completed', icon: FiCreditCard, color: 'text-green-600', bg: 'bg-green-50', progress: 100, description: 'Refund has been sent to your payment method.' },
+        'refund_processing': { label: 'Refund Processing', icon: FiRefreshCw, color: 'text-orange-600', bg: 'bg-orange-50', progress: 83, description: 'Refund is being processed. This may take up to 7 business days.' },
+        'refunded': { label: 'Refund Completed', icon: FiCreditCard, color: 'text-green-600', bg: 'bg-green-50', progress: 100, description: 'Refund has been sent to your chosen payment method.' },
         'rejected': { label: 'Return Rejected', icon: FiX, color: 'text-red-600', bg: 'bg-red-50', progress: 0, description: 'Return request was rejected.' }
     };
 
-    // Load favorites from localStorage - store IDs only
+    // Load favorites from localStorage
     const loadFavorites = (email) => {
         if (!email) return;
         const favoriteIds = JSON.parse(localStorage.getItem(`favorites_${email}`) || '[]');
-        
-        // Get full product details from productService
         const allProducts = productService.getAllProducts();
         const favoriteProducts = allProducts.filter(p => favoriteIds.includes(p.id));
         setFavorites(favoriteProducts);
     };
 
-    // Load user coupons and remove coupons deleted from Admin
+    // Load user coupons
     const loadUserCoupons = async (email) => {
         if (!email) {
             setUserCoupons([]);
@@ -186,7 +743,6 @@ const Profile = () => {
             const adminCoupons = JSON.parse(localStorage.getItem('admin_coupons') || '[]');
             const shopCoupons = JSON.parse(localStorage.getItem('shop_coupons') || '[]');
 
-            // De-duplicate the latest Admin source by ID/code.
             const adminMap = new Map();
             [...shopCoupons, ...adminCoupons].forEach((coupon) => {
                 const key = String(coupon?.id || coupon?.code || '').toUpperCase();
@@ -205,7 +761,6 @@ const Profile = () => {
             const userKey = `user_coupons_${email}`;
             const assignedCoupons = JSON.parse(localStorage.getItem(userKey) || '[]');
 
-            // A customer coupon is valid only while its Admin source still exists.
             const syncedCoupons = assignedCoupons.flatMap((assigned) => {
                 const latest =
                     (assigned?.id != null && activeById.get(String(assigned.id))) ||
@@ -238,7 +793,6 @@ const Profile = () => {
 
             localStorage.setItem(userKey, JSON.stringify(finalCoupons));
 
-            // Remove notifications belonging to coupons that no longer exist.
             const notificationKey = `notifications_${email}`;
             const storedNotifications = JSON.parse(localStorage.getItem(notificationKey) || '[]');
             const cleanedNotifications = storedNotifications.filter((notification) => {
@@ -272,7 +826,6 @@ const Profile = () => {
         }
     };
 
-    // Helper function to check if coupon is expired
     const isExpired = (coupon) => {
         if (!coupon?.endDate) return false;
         return new Date(coupon.endDate) < new Date();
@@ -298,93 +851,84 @@ const Profile = () => {
                 return;
             }
             setSelectedOfferNotification({ notification, coupon });
+        } else if (notification.type === 'order' || notification.type === 'order_status') {
+            const orderId = notification.orderId || notification.referenceId || notification.entityId;
+            if (orderId) {
+                setActiveTab('orders');
+                navigate("/profile?tab=orders", { state: { focusOrderId: orderId } });
+            }
         }
     };
 
-    // Mark notification as read
+    // Notification read state is local-first, so backend failures never break the UI.
     const markNotificationAsRead = async (notifId) => {
-        try {
-            const token = getToken();
-            if (token) {
-                const response = await fetch(`${API_URL}/notifications/${notifId}/read`, {
-                    method: 'PUT',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    setNotifications(notifications.map(n => 
-                        n.id === notifId ? { ...n, read: true } : n
-                    ));
-                    return;
-                }
-            }
-        } catch (error) {
-            // Fallback to localStorage
-            const updatedNotifs = notifications.map(n => 
-                n.id === notifId ? { ...n, read: true } : n
-            );
-            setNotifications(updatedNotifs);
-            if (user?.email) {
-                localStorage.setItem(`notifications_${user.email}`, JSON.stringify(updatedNotifs));
-            }
-        }
+        const id=String(notifId);
+        setNotifications(current => {
+            const updated=current.map(n=>getNotificationId(n)===id?{...n,id,read:true,readAt:n.readAt||new Date().toISOString()}:n);
+            saveNotificationsLocally(updated); return updated;
+        });
+        try { const token=getToken(); if(token) await fetch(`${API_URL}/notifications/${encodeURIComponent(id)}/read`,{method:'PUT',headers:{Authorization:`Bearer ${token}`}}); } catch {}
+    };
+
+    const markNotificationAsUnread = async (notifId) => {
+        const id=String(notifId);
+        setNotifications(current => {
+            const updated=current.map(n=>getNotificationId(n)===id?{...n,id,read:false,readAt:null}:n);
+            saveNotificationsLocally(updated); return updated;
+        });
+        try { const token=getToken(); if(token) await fetch(`${API_URL}/notifications/${encodeURIComponent(id)}/unread`,{method:'PUT',headers:{Authorization:`Bearer ${token}`}}); } catch {}
     };
 
     const markAllNotificationsAsRead = async () => {
-        try {
-            const token = getToken();
-            if (token) {
-                const response = await fetch(`${API_URL}/notifications/read-all`, {
-                    method: 'PUT',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    setNotifications(notifications.map(n => ({ ...n, read: true })));
-                    return;
-                }
-            }
-        } catch (error) {
-            const updatedNotifs = notifications.map(n => ({ ...n, read: true }));
-            setNotifications(updatedNotifs);
-            if (user?.email) {
-                localStorage.setItem(`notifications_${user.email}`, JSON.stringify(updatedNotifs));
-            }
-        }
+        setNotifications(current => { const updated=current.map(n=>({...n,id:getNotificationId(n),read:true,readAt:n.readAt||new Date().toISOString()})); saveNotificationsLocally(updated); return updated; });
+        try { const token=getToken(); if(token) await fetch(`${API_URL}/notifications/read-all`,{method:'PUT',headers:{Authorization:`Bearer ${token}`}}); } catch {}
+        toast.success("All notifications marked as read");
     };
 
-    // Load notifications
+    const clearReadNotifications = () => {
+        setNotifications(current=>{ const updated=current.filter(n=>!n.read); saveNotificationsLocally(updated); return updated; });
+        toast.success("Read notifications cleared");
+    };
+
     const loadNotifications = async (email) => {
         if (!email) return;
-        
-        // First try backend
+        const local=safeParse(localStorage.getItem(`notifications_${email}`),[]);
+        const localList=Array.isArray(local)?local.map(n=>({...n,id:getNotificationId(n)})):[];
+        setNotifications(localList);
         try {
-            const token = getToken();
-            if (token) {
-                const response = await fetch(`${API_URL}/notifications/user`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.success && data.notifications) {
-                        setNotifications(data.notifications);
-                        localStorage.setItem(`notifications_${email}`, JSON.stringify(data.notifications));
-                        return;
-                    }
-                }
-            }
-        } catch (error) {
-            console.log("Backend not available for notifications");
-        }
-        
-        // Fallback to localStorage
-        const storedNotifs = JSON.parse(localStorage.getItem(`notifications_${email}`) || '[]');
-        setNotifications(storedNotifs);
+            const token=getToken(); if(!token) return;
+            const response=await fetch(`${API_URL}/notifications/user`,{headers:{Authorization:`Bearer ${token}`}});
+            if(!response.ok) return;
+            const data=await response.json();
+            const server=data.notifications||data.data?.notifications||data.data||[];
+            if(!Array.isArray(server)) return;
+            const localMap=new Map(localList.map(n=>[getNotificationId(n),n]));
+            const mergedMap=new Map();
+            server.forEach(item=>{ const id=getNotificationId(item), l=localMap.get(id); mergedMap.set(id,{...item,id,read:l?Boolean(l.read):Boolean(item.read),readAt:l?.readAt||item.readAt||null}); });
+            localList.forEach(item=>{ const id=getNotificationId(item); if(!mergedMap.has(id)) mergedMap.set(id,item); });
+            const merged=[...mergedMap.values()].sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0));
+            setNotifications(merged); saveNotificationsLocally(merged,email);
+        } catch {}
     };
 
-    // Load addresses
+    // Load addresses - with proper error handling
     const loadAddresses = async (email) => {
-        if (!email) return;
+        if (!email) {
+            setAddresses([]);
+            return;
+        }
         
-        // First try backend
+        // ALWAYS load from localStorage first (fastest and always available)
+        try {
+            const savedAddresses = JSON.parse(localStorage.getItem(`addresses_${email}`) || '[]');
+            setAddresses(savedAddresses);
+            console.log('📦 Addresses loaded from localStorage:', savedAddresses.length);
+        } catch (error) {
+            console.warn('Error loading addresses from localStorage:', error);
+            setAddresses([]);
+        }
+        
+        // Then try backend (optional, only if available)
         try {
             const token = getToken();
             if (token) {
@@ -396,30 +940,222 @@ const Profile = () => {
                     if (data.success && data.addresses) {
                         setAddresses(data.addresses);
                         localStorage.setItem(`addresses_${email}`, JSON.stringify(data.addresses));
+                        console.log('✅ Addresses synced from backend:', data.addresses.length);
                         return;
                     }
                 }
             }
         } catch (error) {
-            console.log("Backend not available for addresses");
+            // Silently fail - localStorage data is already set
+            console.log('ℹ️ Addresses API not available, using local data only');
         }
-        
-        // Fallback to localStorage
-        const savedAddresses = JSON.parse(localStorage.getItem(`addresses_${email}`) || '[]');
-        setAddresses(savedAddresses);
     };
 
     // Load user data (orders and returns)
+    // Load user data (orders and returns)
     const loadUserData = async (email) => {
         if (!email) return;
+
         try {
-            const userOrders = await orderService.getUserOrders(email);
-            setOrders(userOrders);
-            
-            const userReturns = await orderService.getUserReturnRequests(email);
-            setReturnRequests(userReturns);
+            const userOrders =
+                await orderService.getUserOrders(
+                    email
+                );
+
+            const normalizedOrders =
+                (Array.isArray(userOrders)
+                    ? userOrders
+                    : []
+                ).map(order => ({
+                    ...order,
+                    id:
+                        order.id ||
+                        order._id ||
+                        order.orderId,
+                    status:
+                        isOrderDelivered(order)
+                            ? "delivered"
+                            : (
+                                order.status ||
+                                order.orderStatus ||
+                                order.deliveryStatus ||
+                                order.fulfillmentStatus ||
+                                order.shippingStatus ||
+                                order.trackingStatus ||
+                                "pending"
+                            ),
+                    orderStatus:
+                        isOrderDelivered(order)
+                            ? "delivered"
+                            : (
+                                order.orderStatus ||
+                                order.status ||
+                                order.deliveryStatus ||
+                                order.fulfillmentStatus ||
+                                order.shippingStatus ||
+                                order.trackingStatus ||
+                                "pending"
+                            ),
+                    deliveryStatus:
+                        isOrderDelivered(order)
+                            ? "delivered"
+                            : (
+                                order.deliveryStatus ||
+                                order.status ||
+                                order.orderStatus ||
+                                order.fulfillmentStatus ||
+                                order.shippingStatus ||
+                                order.trackingStatus ||
+                                "pending"
+                            )
+                }));
+
+            const hiddenIds =
+                JSON.parse(
+                    localStorage.getItem(
+                        `hidden_orders_${email}`
+                    ) || "[]"
+                );
+
+            const hiddenSet =
+                new Set(
+                    Array.isArray(hiddenIds)
+                        ? hiddenIds.map(String)
+                        : []
+                );
+
+            setOrders(
+                normalizedOrders.filter(
+                    order =>
+                        !hiddenSet.has(
+                            String(
+                                order.id ||
+                                order._id ||
+                                order.orderId
+                            )
+                        )
+                )
+            );
+
+            let serviceReturns = [];
+
+            try {
+                serviceReturns =
+                    await orderService.getUserReturnRequests(
+                        email
+                    );
+            } catch (error) {
+                console.warn(
+                    "Unable to load returns from orderService:",
+                    error
+                );
+            }
+
+            let localReturns = [];
+
+            try {
+                const allLocal =
+                    JSON.parse(
+                        localStorage.getItem(
+                            "return_requests"
+                        ) || "[]"
+                    );
+
+                localReturns =
+                    (
+                        Array.isArray(allLocal)
+                            ? allLocal
+                            : []
+                    ).filter(
+                        request =>
+                            String(
+                                request.userEmail ||
+                                ""
+                            ).toLowerCase() ===
+                            String(
+                                email
+                            ).toLowerCase()
+                    );
+            } catch {
+                localReturns = [];
+            }
+
+            const indexedReturns =
+                (
+                    await getAllReturnRecords()
+                ).filter(
+                    request =>
+                        String(
+                            request.userEmail ||
+                            ""
+                        ).toLowerCase() ===
+                        String(
+                            email
+                        ).toLowerCase()
+                );
+
+            const returnMap =
+                new Map();
+
+            [
+                ...(Array.isArray(serviceReturns)
+                    ? serviceReturns
+                    : []),
+                ...localReturns,
+                ...indexedReturns
+            ].forEach(request => {
+                const key =
+                    String(
+                        request.id ||
+                        request._id ||
+                        `${request.orderId}-${request.productId}`
+                    );
+
+                returnMap.set(
+                    key,
+                    {
+                        ...(returnMap.get(key) || {}),
+                        ...request
+                    }
+                );
+            });
+
+            const mergedReturns =
+                [...returnMap.values()].sort(
+                    (a, b) =>
+                        new Date(
+                            b.updatedAt ||
+                            b.date ||
+                            b.createdAt ||
+                            0
+                        ) -
+                        new Date(
+                            a.updatedAt ||
+                            a.date ||
+                            a.createdAt ||
+                            0
+                        )
+                );
+
+            setReturnRequests(
+                mergedReturns
+            );
+
+            await putAllReturnRecords(
+                mergedReturns
+            );
+
+            saveCompactReturnsToLocalStorage(
+                mergedReturns
+            );
         } catch (error) {
-            console.error("Error loading user data:", error);
+            console.error(
+                "Error loading user data:",
+                error
+            );
+
+            setOrders([]);
+            setReturnRequests([]);
         }
     };
 
@@ -451,8 +1187,27 @@ const Profile = () => {
             setEditedUser(parsedUser);
             
             const email = parsedUser.email;
+
+            const savedHiddenOrders =
+                JSON.parse(
+                    localStorage.getItem(
+                        `hidden_orders_${email}`
+                    ) || "[]"
+                );
+
+            setHiddenOrderIds(
+                Array.isArray(
+                    savedHiddenOrders
+                )
+                    ? savedHiddenOrders.map(
+                        String
+                    )
+                    : []
+            );
+
+            setSecurityPrefs(prev => ({ ...prev, ...safeParse(localStorage.getItem(`security_prefs_${email}`), {}) }));
+            setAccountPrefs(prev => ({ ...prev, ...safeParse(localStorage.getItem(`account_prefs_${email}`), {}) }));
             
-            // Load all data
             refreshUserData(email);
             
             const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
@@ -463,7 +1218,6 @@ const Profile = () => {
             const savedTheme = localStorage.getItem('theme');
             if (savedTheme === 'dark') setDarkMode(true);
             
-            // Check for tab parameter in URL
             const params = new URLSearchParams(location.search);
             const tabParam = params.get('tab');
             if (tabParam && ['overview', 'orders', 'wishlist', 'coupons', 'notifications', 'returns', 'addresses', 'security', 'settings'].includes(tabParam)) {
@@ -495,7 +1249,6 @@ const Profile = () => {
         };
         
         const handleProductUpdate = () => {
-            // Add notification about new product
             const newNotification = {
                 id: Date.now(),
                 title: "New Products Available!",
@@ -519,14 +1272,12 @@ const Profile = () => {
                 loadNotifications(email);
                 toast.success(`New coupon received: ${event.detail.couponCode}`);
             } else if (event.detail && event.detail.allUsers) {
-                // Coupon sent to all users
                 loadUserCoupons(email);
                 loadNotifications(email);
                 toast.success(`New coupon available: ${event.detail.couponCode}`);
             }
         };
         
-        // Remove a deleted coupon and its related notifications immediately.
         const handleCouponDeleted = (event) => {
             const deletedId = event.detail?.couponId != null ? String(event.detail.couponId) : null;
             const deletedCode = String(event.detail?.couponCode || '').toUpperCase();
@@ -564,6 +1315,121 @@ const Profile = () => {
             loadNotifications(email);
         };
 
+        // Handle order status updates from admin
+        const handleOrderStatusUpdated = (event) => {
+            const orderId = event.detail?.orderId || event.detail?.id;
+            const newStatus = event.detail?.status || event.detail?.orderStatus;
+            
+            if (orderId && newStatus) {
+                setOrders(prev => prev.map(order => {
+                    if (String(order.id) === String(orderId) || String(order.orderId) === String(orderId)) {
+                        const normalizedNewStatus =
+                            normalizeOrderStatus(
+                                newStatus
+                            );
+
+                        const updatedOrder = {
+                            ...order,
+                            status:
+                                normalizedNewStatus,
+                            orderStatus:
+                                normalizedNewStatus,
+                            deliveryStatus:
+                                normalizedNewStatus,
+                            trackingStatus:
+                                normalizedNewStatus,
+                            delivered:
+                                normalizedNewStatus ===
+                                "delivered"
+                                    ? true
+                                    : order.delivered,
+                            deliveredAt:
+                                normalizedNewStatus ===
+                                "delivered"
+                                    ? (
+                                        order.deliveredAt ||
+                                        new Date().toISOString()
+                                    )
+                                    : order.deliveredAt,
+                            updatedAt:
+                                new Date().toISOString()
+                        };
+                        return updatedOrder;
+                    }
+                    return order;
+                }));
+                
+                loadNotifications(email);
+                
+                const statusMessages = {
+                    'pending': 'Your order is pending review.',
+                    'processing': 'Your order is being processed!',
+                    'shipped': 'Your order has been shipped! 🚚',
+                    'delivered': 'Your order has been delivered! 📦',
+                    'cancelled': 'Your order has been cancelled.'
+                };
+                
+                const message = statusMessages[newStatus] || `Order status updated to ${newStatus}`;
+                toast.info(message);
+                
+                if (newStatus === 'delivered') {
+                    setTimeout(() => {
+                        toast.info('You can now review your items! Click "Write a Review" in the Orders section.', {
+                            duration: 5000,
+                            action: {
+                                label: 'Go to Orders',
+                                onClick: () => {
+                                    setActiveTab('orders');
+                                    navigate("/profile?tab=orders");
+                                }
+                            }
+                        });
+                    }, 1000);
+                }
+            }
+        };
+
+        const handleOrdersUpdated = () => {
+            loadUserData(email);
+            loadNotifications(email);
+        };
+
+        const handleReturnsUpdated = (event) => {
+            const updatedReturn =
+                event?.detail?.returnRequest;
+
+            if (
+                updatedReturn &&
+                String(
+                    updatedReturn.userEmail ||
+                    ""
+                ).toLowerCase() ===
+                String(email).toLowerCase()
+            ) {
+                setReturnRequests(prev => {
+                    const filtered =
+                        prev.filter(
+                            request =>
+                                String(
+                                    request.id ||
+                                    request._id
+                                ) !==
+                                String(
+                                    updatedReturn.id ||
+                                    updatedReturn._id
+                                )
+                        );
+
+                    return [
+                        updatedReturn,
+                        ...filtered
+                    ];
+                });
+            }
+
+            loadUserData(email);
+        };
+
         const handleStorageChange = (e) => {
             if (e.key === `favorites_${email}`) {
                 loadFavorites(email);
@@ -575,16 +1441,124 @@ const Profile = () => {
                 loadUserCoupons(email);
             }
             if (e.key === 'admin_coupons' || e.key === 'shop_coupons') {
-                // Admin coupons changed, reload user coupons
                 loadUserCoupons(email);
+            }
+            if (
+                e.key === 'orders' ||
+                e.key === 'admin_orders' ||
+                e.key === `orders_${email}`
+            ) {
+                loadUserData(email);
+                loadNotifications(email);
+            }
+
+            if (
+                e.key === 'return_requests' ||
+                e.key === `return_requests_${email}`
+            ) {
+                loadUserData(email);
             }
         };
         
+
+        const handleOrderRefunded = (event) => {
+            const orderId =
+                event?.detail?.orderId;
+
+            if (!orderId) return;
+
+            setOrders(current =>
+                current.map(order => {
+                    const id =
+                        getOrderIdentifier(
+                            order
+                        );
+
+                    if (
+                        String(id) !==
+                        String(orderId)
+                    ) {
+                        return order;
+                    }
+
+                    return {
+                        ...order,
+                        status:
+                            "refunded",
+                        orderStatus:
+                            "refunded",
+                        refundStatus:
+                            "refunded",
+                        refunded:
+                            true,
+                        refundedAt:
+                            new Date().toISOString()
+                    };
+                })
+            );
+        };
+
+        const handleCustomerNotificationUpdated = (event) => {
+            if (
+                event?.detail?.email &&
+                String(
+                    event.detail.email
+                ).toLowerCase() !==
+                String(email).toLowerCase()
+            ) {
+                return;
+            }
+
+            const notification =
+                event?.detail?.notification;
+
+            if (notification) {
+                setNotifications(current => {
+                    const updated = [
+                        notification,
+                        ...current.filter(
+                            item =>
+                                String(
+                                    getNotificationId(
+                                        item
+                                    )
+                                ) !==
+                                String(
+                                    getNotificationId(
+                                        notification
+                                    )
+                                )
+                        )
+                    ];
+
+                    saveNotificationsLocally(
+                        updated,
+                        email
+                    );
+
+                    return updated;
+                });
+
+                toast.info(
+                    notification.title ||
+                    "Return status updated"
+                );
+            } else {
+                loadNotifications(email);
+            }
+        };
+
         window.addEventListener('favoritesUpdated', handleFavoritesUpdate);
         window.addEventListener('productsUpdated', handleProductUpdate);
         window.addEventListener('couponReceived', handleCouponReceived);
         window.addEventListener('couponDeleted', handleCouponDeleted);
         window.addEventListener('couponsUpdated', handleCouponsUpdated);
+        window.addEventListener('ordersUpdated', handleOrdersUpdated);
+        window.addEventListener('returnsUpdated', handleReturnsUpdated);
+        window.addEventListener('orderRefunded', handleOrderRefunded);
+        window.addEventListener('customerNotificationUpdated', handleCustomerNotificationUpdated);
+        window.addEventListener('orderStatusUpdated', handleOrderStatusUpdated);
+        window.addEventListener('orderStatusChanged', handleOrderStatusUpdated);
         window.addEventListener('storage', handleStorageChange);
         
         return () => {
@@ -593,6 +1567,12 @@ const Profile = () => {
             window.removeEventListener('couponReceived', handleCouponReceived);
             window.removeEventListener('couponDeleted', handleCouponDeleted);
             window.removeEventListener('couponsUpdated', handleCouponsUpdated);
+            window.removeEventListener('ordersUpdated', handleOrdersUpdated);
+            window.removeEventListener('returnsUpdated', handleReturnsUpdated);
+            window.removeEventListener('orderRefunded', handleOrderRefunded);
+            window.removeEventListener('customerNotificationUpdated', handleCustomerNotificationUpdated);
+            window.removeEventListener('orderStatusUpdated', handleOrderStatusUpdated);
+            window.removeEventListener('orderStatusChanged', handleOrderStatusUpdated);
             window.removeEventListener('storage', handleStorageChange);
         };
     }, [user]);
@@ -610,10 +1590,13 @@ const Profile = () => {
             if (activeTab === 'notifications') {
                 loadNotifications(email);
             }
+            if (activeTab === 'addresses') {
+                loadAddresses(email);
+            }
         }
     }, [activeTab, user]);
 
-    // Keep the edit form in sync and reset validation whenever it opens
+    // Keep the edit form in sync
     useEffect(() => {
         if (isEditingProfile && user) {
             setEditedUser({
@@ -636,7 +1619,6 @@ const Profile = () => {
                 favouriteCategory: user.favouriteCategory || "",
                 newsletter: user.newsletter ?? true,
                 smsUpdates: user.smsUpdates ?? false,
-                profileImage: user.profileImage || user.avatar || ""
             });
             setProfileErrors({});
         }
@@ -647,26 +1629,6 @@ const Profile = () => {
         if (profileErrors[field]) {
             setProfileErrors(prev => ({ ...prev, [field]: "" }));
         }
-    };
-
-    const handleProfileImageChange = (event) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-
-        if (!file.type.startsWith("image/")) {
-            toast.error("Please choose a valid image file.");
-            return;
-        }
-
-        if (file.size > 3 * 1024 * 1024) {
-            toast.error("Profile image must be smaller than 3MB.");
-            return;
-        }
-
-        const reader = new FileReader();
-        reader.onload = () => setProfileField("profileImage", reader.result);
-        reader.onerror = () => toast.error("Unable to read the selected image.");
-        reader.readAsDataURL(file);
     };
 
     const validateProfile = () => {
@@ -712,8 +1674,6 @@ const Profile = () => {
             email: editedUser.email?.trim(),
             phone: editedUser.phone?.trim(),
             phoneNumber: editedUser.phone?.trim(),
-            profileImage: editedUser.profileImage || "",
-            avatar: editedUser.profileImage || user.avatar || "",
             address: [
                 editedUser.street,
                 editedUser.city,
@@ -741,6 +1701,11 @@ const Profile = () => {
                     localStorage.setItem("user", JSON.stringify(savedUser));
                     setUser(savedUser);
                     setEditedUser(savedUser);
+                    window.dispatchEvent(
+                        new CustomEvent("profileUpdated", {
+                            detail: savedUser
+                        })
+                    );
                     toast.success("Your profile has been updated.");
                     setIsEditingProfile(false);
                     return;
@@ -750,6 +1715,11 @@ const Profile = () => {
             localStorage.setItem("user", JSON.stringify(normalizedUser));
             setUser(normalizedUser);
             setEditedUser(normalizedUser);
+            window.dispatchEvent(
+                new CustomEvent("profileUpdated", {
+                    detail: normalizedUser
+                })
+            );
             toast.success("Your profile has been updated.");
             setIsEditingProfile(false);
         } catch (error) {
@@ -757,11 +1727,75 @@ const Profile = () => {
             localStorage.setItem("user", JSON.stringify(normalizedUser));
             setUser(normalizedUser);
             setEditedUser(normalizedUser);
+            window.dispatchEvent(
+                new CustomEvent("profileUpdated", {
+                    detail: normalizedUser
+                })
+            );
             toast.success("Profile saved locally.");
             setIsEditingProfile(false);
         } finally {
             setIsSavingProfile(false);
         }
+    };
+
+    const persistSecurityPrefs = (next) => {
+        setSecurityPrefs(next);
+        if (user?.email) localStorage.setItem(`security_prefs_${user.email}`, JSON.stringify(next));
+    };
+
+    const persistAccountPrefs = (next) => {
+        setAccountPrefs(next);
+        if (user?.email) localStorage.setItem(`account_prefs_${user.email}`, JSON.stringify(next));
+        window.dispatchEvent(new CustomEvent("customerPreferencesUpdated",{detail:{email:user?.email,preferences:next}}));
+    };
+
+    const handleChangePassword = async (e) => {
+        e?.preventDefault();
+        const {currentPassword,newPassword,confirmPassword}=passwordForm;
+        if(!currentPassword||!newPassword||!confirmPassword){toast.error("Complete all password fields.");return;}
+        if(newPassword.length<8||!/[A-Z]/.test(newPassword)||!/[a-z]/.test(newPassword)||!/[0-9]/.test(newPassword)){toast.error("Use at least 8 characters with uppercase, lowercase and a number.");return;}
+        if(newPassword!==confirmPassword){toast.error("New passwords do not match.");return;}
+        const token=getToken(); if(!token){toast.error("Please sign in again.");return;}
+        setChangingPassword(true);
+        try{
+            const result=await tryApiEndpoints(["/auth/change-password","/users/change-password","/users/password"],{method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({currentPassword,oldPassword:currentPassword,newPassword,password:newPassword})});
+            if(!result.ok) throw new Error(result.data?.message||result.data?.error||"Password change API is not available.");
+            localStorage.setItem(`password_changed_at_${user.email}`,new Date().toISOString());
+            setPasswordForm({currentPassword:"",newPassword:"",confirmPassword:""});
+            toast.success("Password changed successfully.");
+        }catch(err){toast.error(err.message||"Unable to change password.");}finally{setChangingPassword(false);}
+    };
+
+    const toggleTwoFactor = async () => {
+        const token=getToken(); if(!token){toast.error("Please sign in again.");return;}
+        setSecurityActionLoading(true);
+        try{
+            const enabled=!securityPrefs.twoFactorEnabled;
+            const result=await tryApiEndpoints(["/auth/2fa/toggle","/users/2fa"],{method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({enabled})});
+            if(!result.ok) throw new Error(result.data?.message||"2FA API is not configured yet.");
+            persistSecurityPrefs({...securityPrefs,twoFactorEnabled:enabled}); toast.success(enabled?"2FA enabled.":"2FA disabled.");
+        }catch(err){toast.error(err.message);}finally{setSecurityActionLoading(false);}
+    };
+
+    const logoutOtherSessions = async () => {
+        const token=getToken(); if(!token){toast.error("Please sign in again.");return;}
+        setSecurityActionLoading(true);
+        try{ const result=await tryApiEndpoints(["/auth/logout-all","/auth/sessions/revoke-all"],{method:"POST",headers:{Authorization:`Bearer ${token}`}}); if(!result.ok) throw new Error(result.data?.message||"Session API is not available."); toast.success("Other sessions signed out."); }
+        catch(err){toast.error(err.message);}finally{setSecurityActionLoading(false);}
+    };
+
+    const downloadAccountData = () => {
+        const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),profile:user,orders,addresses,returns:returnRequests,preferences:accountPrefs},null,2)],{type:"application/json"});
+        const url=URL.createObjectURL(blob), a=document.createElement("a"); a.href=url; a.download=`zamed-account-data-${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); toast.success("Account data downloaded.");
+    };
+
+    const handleDeleteAccount = async () => {
+        if(window.prompt('Type DELETE to permanently delete your account.')!=="DELETE") return;
+        const token=getToken(); if(!token){toast.error("Please sign in again.");return;}
+        setDeletingAccount(true);
+        try{ const result=await tryApiEndpoints(["/users/account","/auth/account","/users/me"],{method:"DELETE",headers:{Authorization:`Bearer ${token}`}}); if(!result.ok) throw new Error(result.data?.message||result.data?.error||"Account deletion API is not available."); const email=user?.email; ["user","token","authToken"].forEach(k=>localStorage.removeItem(k)); if(email)[`notifications_${email}`,`favorites_${email}`,`user_coupons_${email}`,`addresses_${email}`,`security_prefs_${email}`,`account_prefs_${email}`].forEach(k=>localStorage.removeItem(k)); toast.success("Account deleted."); navigate("/register",{replace:true}); }
+        catch(err){toast.error(err.message||"Unable to delete account.");}finally{setDeletingAccount(false);}
     };
 
     const addNewAddress = async () => {
@@ -782,6 +1816,7 @@ const Profile = () => {
         }
         updatedAddresses.push(address);
         
+        // Try backend first
         try {
             const token = getToken();
             if (token) {
@@ -809,6 +1844,7 @@ const Profile = () => {
             console.log("Backend not available, saving locally");
         }
         
+        // Fallback to localStorage
         setAddresses(updatedAddresses);
         localStorage.setItem(`addresses_${user.email}`, JSON.stringify(updatedAddresses));
         setShowAddAddress(false);
@@ -906,6 +1942,210 @@ const Profile = () => {
         toast.success(`${product.name} added to cart!`);
     };
 
+    const getHiddenOrdersKey = (email = user?.email) =>
+        email
+            ? `hidden_orders_${email}`
+            : "";
+
+    const persistHiddenOrders = (
+        ids,
+        email = user?.email
+    ) => {
+        const unique =
+            [...new Set(
+                ids.map(String)
+            )];
+
+        setHiddenOrderIds(unique);
+
+        if (email) {
+            localStorage.setItem(
+                getHiddenOrdersKey(email),
+                JSON.stringify(unique)
+            );
+        }
+    };
+
+    const deleteOrderFromHistory = async (order) => {
+        const orderId =
+            getOrderIdentifier(order);
+
+        if (!orderId) {
+            toast.error(
+                "Unable to identify this order."
+            );
+            return;
+        }
+
+        if (
+            !window.confirm(
+                `Remove order #${orderId} from your order history?`
+            )
+        ) {
+            return;
+        }
+
+        let serviceDeleted = false;
+
+        try {
+            if (
+                typeof orderService.deleteOrder ===
+                "function"
+            ) {
+                await orderService.deleteOrder(
+                    orderId
+                );
+
+                serviceDeleted = true;
+            }
+        } catch (error) {
+            console.warn(
+                "Permanent order deletion is not available; hiding from customer history instead:",
+                error
+            );
+        }
+
+        persistHiddenOrders([
+            ...hiddenOrderIds,
+            String(orderId)
+        ]);
+
+        setOrders(current =>
+            current.filter(
+                item =>
+                    String(
+                        getOrderIdentifier(
+                            item
+                        )
+                    ) !==
+                    String(orderId)
+            )
+        );
+
+        toast.success(
+            serviceDeleted
+                ? "Order deleted."
+                : "Order removed from your order history."
+        );
+    };
+
+    const clearOrderHistory = async () => {
+        const visibleIds =
+            orders
+                .map(order =>
+                    getOrderIdentifier(order)
+                )
+                .filter(Boolean)
+                .map(String)
+                .filter(
+                    id =>
+                        !hiddenOrderIds.includes(
+                            id
+                        )
+                );
+
+        if (
+            visibleIds.length === 0
+        ) {
+            toast.info(
+                "Your order history is already clear."
+            );
+            return;
+        }
+
+        if (
+            !window.confirm(
+                "Clear all orders from your order history? This will remove them from your Profile view."
+            )
+        ) {
+            return;
+        }
+
+        persistHiddenOrders([
+            ...hiddenOrderIds,
+            ...visibleIds
+        ]);
+
+        setOrders([]);
+
+        toast.success(
+            "Order history cleared."
+        );
+    };
+
+    const getReturnForOrder = (order) => {
+        const orderId =
+            String(
+                getOrderIdentifier(
+                    order
+                )
+            );
+
+        return returnRequests
+            .filter(
+                request =>
+                    String(
+                        request.orderId
+                    ) ===
+                    orderId
+            )
+            .sort(
+                (a, b) =>
+                    new Date(
+                        b.updatedAt ||
+                        b.refundCompletedAt ||
+                        b.date ||
+                        0
+                    ) -
+                    new Date(
+                        a.updatedAt ||
+                        a.refundCompletedAt ||
+                        a.date ||
+                        0
+                    )
+            )[0] || null;
+    };
+
+    const getEffectiveOrderStatus = (order) => {
+        const returnRequest =
+            getReturnForOrder(order);
+
+        if (
+            returnRequest?.status ===
+            "refunded"
+        ) {
+            return "refunded";
+        }
+
+        if (
+            returnRequest?.status ===
+            "refund_processing"
+        ) {
+            return "refund_processing";
+        }
+
+        if (
+            [
+                "picked_up",
+                "verified",
+                "pickup_scheduled",
+                "pending_pickup"
+            ].includes(
+                returnRequest?.status
+            )
+        ) {
+            return "return_in_progress";
+        }
+
+        return (
+            order.refundStatus ||
+            order.status ||
+            order.orderStatus ||
+            order.deliveryStatus ||
+            "pending"
+        );
+    };
+
     const cancelOrder = async (orderId) => {
         if (window.confirm("Are you sure you want to cancel this order?")) {
             setCancellingOrderId(orderId);
@@ -926,86 +2166,608 @@ const Profile = () => {
         }
     };
 
-    const submitReturnRequest = async () => {
-        if (!returnReason) {
-            toast.error("Please select a reason for return");
+    const getOrderIdentifier = (order = {}) =>
+        order.id || order._id || order.orderId || "";
+
+    const getItemIdentifier = (item = {}) =>
+        item.id || item._id || item.productId || "";
+
+    const getOrderItems = (order = {}) =>
+        Array.isArray(order.itemsList)
+            ? order.itemsList
+            : Array.isArray(order.items)
+                ? order.items
+                : [];
+
+    const getOrderPaymentMethod = (order = {}) =>
+        String(
+            order.paymentMethod ||
+            order.payment?.method ||
+            order.paymentType ||
+            ""
+        );
+
+    const isCashOrder = (order = {}) => {
+        const method = getOrderPaymentMethod(order).toLowerCase();
+
+        return (
+            method.includes("cash") ||
+            method.includes("cod")
+        );
+    };
+
+    const resetReturnForm = () => {
+        setSelectedItemForReturn(null);
+        setReturnReason("");
+        setReturnComment("");
+        setReturnMethod("bank_transfer");
+        setBankName("");
+        setAccountNumber("");
+        setAccountHolderName("");
+        setBankBranch("");
+        setShopPickupDate("");
+        setShopPickupTime("");
+    };
+
+    const openReturnForItem = (order, item) => {
+        const orderId = getOrderIdentifier(order);
+        const productId = getItemIdentifier(item);
+
+        if (!orderId || !productId) {
+            toast.error(
+                "Unable to identify this order item. Please refresh and try again."
+            );
             return;
         }
-        
-        setIsSubmittingReturn(true);
-        
+
+        if (hasReturnRequestForItem(orderId, productId)) {
+            toast.info(
+                "A return request already exists for this item."
+            );
+            setActiveTab("returns");
+            navigate("/profile?tab=returns");
+            return;
+        }
+
+        if (!canReturnOrder(order)) {
+            console.warn(
+                "Return blocked because delivered state was not detected:",
+                {
+                    id:
+                        order.id ||
+                        order._id ||
+                        order.orderId,
+                    status:
+                        order.status,
+                    orderStatus:
+                        order.orderStatus,
+                    deliveryStatus:
+                        order.deliveryStatus,
+                    fulfillmentStatus:
+                        order.fulfillmentStatus,
+                    shippingStatus:
+                        order.shippingStatus,
+                    trackingStatus:
+                        order.trackingStatus,
+                    delivered:
+                        order.delivered,
+                    deliveredAt:
+                        order.deliveredAt
+                }
+            );
+
+            toast.error(
+                "This order is not marked as delivered in the saved order data yet. Refresh your orders and try again."
+            );
+            return;
+        }
+
+        const cashOrder = isCashOrder(order);
+
+        setSelectedItemForReturn({
+            orderId,
+            productId,
+            productName: item.name || item.productName || "Product",
+            productImage: item.image || "",
+            order,
+            paymentMethod:
+                getOrderPaymentMethod(order) ||
+                (cashOrder
+                    ? "Cash on Delivery"
+                    : "Online Payment"),
+            isCashOrder: cashOrder
+        });
+
+        setReturnReason("");
+        setReturnComment("");
+
+        // COD customers can choose bank transfer or shop collection.
+        // Online payments use the original payment method automatically.
+        setReturnMethod(
+            cashOrder
+                ? "bank_transfer"
+                : "original_payment"
+        );
+
+        setBankName("");
+        setAccountNumber("");
+        setAccountHolderName("");
+        setBankBranch("");
+        setShopPickupDate("");
+        setShopPickupTime("");
+    };
+
+    const persistReturnForAdmin = async (
+        returnRequest
+    ) => {
+        const indexedSaved =
+            await putReturnRecord(
+                returnRequest
+            );
+
+        let current = [];
+
         try {
-            const order = orders.find(o => o.id === selectedItemForReturn.orderId);
-            const product = order?.itemsList?.find(p => p.id === selectedItemForReturn.productId);
-            
+            const existing =
+                JSON.parse(
+                    localStorage.getItem(
+                        "return_requests"
+                    ) || "[]"
+                );
+
+            current =
+                Array.isArray(existing)
+                    ? existing
+                    : [];
+        } catch {
+            current = [];
+        }
+
+        const filtered =
+            current.filter(
+                request =>
+                    String(
+                        request.id ||
+                        request._id
+                    ) !==
+                    String(
+                        returnRequest.id
+                    )
+            );
+
+        const updated = [
+            returnRequest,
+            ...filtered
+        ];
+
+        const localSaved =
+            saveCompactReturnsToLocalStorage(
+                updated
+            );
+
+        return (
+            indexedSaved ||
+            localSaved
+        );
+    };
+
+    const submitReturnRequest = async () => {
+        if (!selectedItemForReturn) {
+            toast.error(
+                "Please select a product to return."
+            );
+            return;
+        }
+
+        if (!returnReason) {
+            toast.error(
+                "Please select a reason for return."
+            );
+            return;
+        }
+
+        if (
+            returnMethod === "bank_transfer" &&
+            (
+                !bankName.trim() ||
+                !accountNumber.trim() ||
+                !accountHolderName.trim()
+            )
+        ) {
+            toast.error(
+                "Please fill in the account holder, bank name and account number."
+            );
+            return;
+        }
+
+        if (
+            returnMethod === "shop_pickup" &&
+            (
+                !shopPickupDate ||
+                !shopPickupTime
+            )
+        ) {
+            toast.error(
+                "Please choose your shop collection date and time."
+            );
+            return;
+        }
+
+        setIsSubmittingReturn(true);
+
+        try {
+            const order = orders.find(currentOrder => {
+                const currentId =
+                    getOrderIdentifier(currentOrder);
+
+                return (
+                    String(currentId) ===
+                    String(
+                        selectedItemForReturn.orderId
+                    )
+                );
+            });
+
+            if (!order) {
+                throw new Error(
+                    "The original order could not be found."
+                );
+            }
+
+            const product = getOrderItems(order).find(
+                currentItem =>
+                    String(
+                        getItemIdentifier(
+                            currentItem
+                        )
+                    ) ===
+                    String(
+                        selectedItemForReturn.productId
+                    )
+            );
+
             if (!product) {
-                toast.error("Product not found in order");
-                setIsSubmittingReturn(false);
-                return;
+                throw new Error(
+                    "The selected product could not be found in this order."
+                );
             }
-            
-            const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
-            const taxRate = parseFloat(siteSettings.taxRate) || 10;
-            
-            const productPrice = parseFloat(product.price) || 0;
-            const productQuantity = parseInt(product.quantity) || 1;
-            const subtotal = productPrice * productQuantity;
-            const taxAmount = subtotal * (taxRate / 100);
-            const refundAmount = subtotal + taxAmount;
-            
-            const returnRequest = {
-                id: Date.now(),
-                orderId: selectedItemForReturn.orderId,
-                productId: selectedItemForReturn.productId,
-                productName: selectedItemForReturn.productName,
-                productImage: product.image || '',
-                productPrice: productPrice,
-                productQuantity: productQuantity,
-                subtotal: subtotal,
-                taxAmount: taxAmount,
-                taxRate: taxRate,
-                refundAmount: refundAmount,
-                reason: returnReason,
-                comment: returnComment,
-                status: "pending_pickup",
-                date: new Date().toISOString(),
-                userEmail: user.email,
-                pickupAddress: user.address || order.shippingAddress,
-                trackingHistory: [{
-                    stage: "pending_pickup",
-                    timestamp: new Date().toISOString(),
-                    message: "Return request submitted. Awaiting driver assignment."
-                }]
-            };
-            
-            const saved = await orderService.saveReturnRequest(returnRequest);
-            
-            if (saved) {
-                setReturnRequests(prev => [returnRequest, ...prev]);
-                toast.success(`Return request submitted! Refund: ${currencySymbol}${refundAmount.toFixed(2)}`);
-                setSelectedItemForReturn(null);
-                setReturnReason("");
-                setReturnComment("");
+
+            if (!canReturnOrder(order)) {
+                throw new Error(
+                    "This order has not been delivered yet."
+                );
+            }
+
+            if (
+                hasReturnRequestForItem(
+                    selectedItemForReturn.orderId,
+                    selectedItemForReturn.productId
+                )
+            ) {
+                throw new Error(
+                    "A return request already exists for this product."
+                );
+            }
+
+            const siteSettings = JSON.parse(
+                localStorage.getItem(
+                    "site_settings"
+                ) || "{}"
+            );
+
+            const taxRate =
+                Number.parseFloat(
+                    product.taxRate ??
+                    siteSettings.taxRate
+                ) || 0;
+
+            const productPrice =
+                Number.parseFloat(
+                    product.price
+                ) || 0;
+
+            const productQuantity =
+                Number.parseInt(
+                    product.quantity,
+                    10
+                ) || 1;
+
+            const subtotal =
+                productPrice *
+                productQuantity;
+
+            const taxAmount =
+                subtotal *
+                (taxRate / 100);
+
+            // Refund the returned product + its recorded tax.
+            // Shipping is not added here unless you later explicitly support
+            // refundable per-item shipping.
+            const refundAmount =
+                subtotal +
+                taxAmount;
+
+            let refundMethodDetails;
+
+            if (
+                returnMethod ===
+                "bank_transfer"
+            ) {
+                refundMethodDetails = {
+                    method: "Bank Transfer",
+                    type: "bank_transfer",
+                    bankName: bankName.trim(),
+                    accountNumber:
+                        accountNumber.trim(),
+                    accountHolderName:
+                        accountHolderName.trim(),
+                    bankBranch:
+                        bankBranch.trim() ||
+                        "N/A",
+                    processingTime:
+                        "Up to 7 days"
+                };
+            } else if (
+                returnMethod ===
+                "shop_pickup"
+            ) {
+                refundMethodDetails = {
+                    method:
+                        "Collect Refund From Shop",
+                    type:
+                        "shop_pickup",
+                    pickupDate:
+                        shopPickupDate,
+                    pickupTime:
+                        shopPickupTime,
+                    processingTime:
+                        "After return approval"
+                };
             } else {
-                throw new Error("Failed to save return request");
+                refundMethodDetails = {
+                    method:
+                        "Original Payment Method",
+                    type:
+                        "original_payment",
+                    originalPaymentMethod:
+                        getOrderPaymentMethod(
+                            order
+                        ) ||
+                        "Online Payment",
+                    processingTime:
+                        "Up to 7 days"
+                };
             }
+
+            const now =
+                new Date().toISOString();
+
+            const expectedRefundDate =
+                new Date();
+
+            expectedRefundDate.setDate(
+                expectedRefundDate.getDate() +
+                7
+            );
+
+            const returnRequest = {
+                id: `RET-${Date.now()}`,
+                orderId:
+                    selectedItemForReturn.orderId,
+                productId:
+                    selectedItemForReturn.productId,
+                productName:
+                    selectedItemForReturn.productName,
+                productImage:
+                    product.image ||
+                    selectedItemForReturn.productImage ||
+                    "",
+                productPrice,
+                productQuantity,
+                subtotal,
+                taxAmount,
+                taxRate,
+                refundAmount,
+                reason:
+                    returnReason,
+                comment:
+                    returnComment.trim(),
+                status:
+                    "pending_pickup",
+                date:
+                    now,
+                createdAt:
+                    now,
+                updatedAt:
+                    now,
+                userEmail:
+                    user.email,
+                userName:
+                    [
+                        user.firstName,
+                        user.lastName
+                    ]
+                        .filter(Boolean)
+                        .join(" ") ||
+                    user.name ||
+                    "Customer",
+                customerPhone:
+                    user.phone ||
+                    user.phoneNumber ||
+                    "",
+                pickupAddress:
+                    user.address ||
+                    order.shippingAddress ||
+                    "",
+                originalPaymentMethod:
+                    getOrderPaymentMethod(order) ||
+                    "N/A",
+                refundMethod:
+                    refundMethodDetails,
+                refundProcessingDays:
+                    7,
+                refundExpectedBy:
+                    expectedRefundDate.toISOString(),
+                trackingHistory: [
+                    {
+                        stage:
+                            "pending_pickup",
+                        timestamp:
+                            now,
+                        message:
+                            "Return request submitted and waiting for admin review."
+                    }
+                ]
+            };
+
+            let serviceSaved = false;
+
+            try {
+                serviceSaved =
+                    Boolean(
+                        await orderService.saveReturnRequest(
+                            returnRequest
+                        )
+                    );
+            } catch (serviceError) {
+                console.warn(
+                    "orderService return save failed; using shared local fallback:",
+                    serviceError
+                );
+            }
+
+            const localSaved =
+                await persistReturnForAdmin(
+                    returnRequest
+                );
+
+            if (
+                !serviceSaved &&
+                !localSaved
+            ) {
+                throw new Error(
+                    "The return request could not be saved."
+                );
+            }
+
+            setReturnRequests(prev => {
+                const withoutDuplicate =
+                    prev.filter(
+                        request =>
+                            String(
+                                request.id ||
+                                request._id
+                            ) !==
+                            String(
+                                returnRequest.id
+                            )
+                    );
+
+                return [
+                    returnRequest,
+                    ...withoutDuplicate
+                ];
+            });
+
+            window.dispatchEvent(
+                new CustomEvent(
+                    "returnsUpdated",
+                    {
+                        detail: {
+                            email:
+                                user.email,
+                            returnRequest
+                        }
+                    }
+                )
+            );
+
+            window.dispatchEvent(
+                new Event("storage")
+            );
+
+            toast.success(
+                `Return request submitted successfully. Refund: ${currencySymbol}${refundAmount.toFixed(
+                    2
+                )}. Processing may take up to 7 days after approval.`
+            );
+
+            resetReturnForm();
+            setActiveTab("returns");
+
+            navigate(
+                "/profile?tab=returns"
+            );
         } catch (error) {
-            console.error("Error submitting return:", error);
-            toast.error("Failed to submit return request. Please try again.");
+            console.error(
+                "Error submitting return:",
+                error
+            );
+
+            toast.error(
+                error?.message ||
+                "Failed to submit return request. Please try again."
+            );
         } finally {
             setIsSubmittingReturn(false);
         }
     };
 
     const getOrderStatusBadge = (status) => {
+        const normalized =
+            String(status || "")
+                .toLowerCase()
+                .replace(/\s+/g, "_");
+
         const badges = {
-            'pending': 'bg-yellow-100 text-yellow-800',
-            'processing': 'bg-blue-100 text-blue-800',
-            'shipped': 'bg-purple-100 text-purple-800',
-            'delivered': 'bg-green-100 text-green-800',
-            'cancelled': 'bg-red-100 text-red-800'
+            pending: "bg-yellow-100 text-yellow-800",
+            processing: "bg-blue-100 text-blue-800",
+            shipped: "bg-purple-100 text-purple-800",
+            delivered: "bg-green-100 text-green-800",
+            cancelled: "bg-red-100 text-red-800",
+            return_in_progress:
+                "bg-orange-100 text-orange-800",
+            refund_processing:
+                "bg-amber-100 text-amber-800",
+            refunded:
+                "bg-emerald-100 text-emerald-800"
         };
-        return badges[status] || 'bg-gray-100 text-gray-800';
+
+        return (
+            badges[normalized] ||
+            "bg-gray-100 text-gray-800"
+        );
+    };
+
+    const getOrderStatusLabel = (status) => {
+        const normalized =
+            String(status || "")
+                .toLowerCase()
+                .replace(/\s+/g, "_");
+
+        const labels = {
+            pending:
+                "Pending",
+            processing:
+                "Processing",
+            shipped:
+                "Shipped",
+            delivered:
+                "Delivered",
+            cancelled:
+                "Cancelled",
+            return_in_progress:
+                "Return In Progress",
+            refund_processing:
+                "Refund Processing",
+            refunded:
+                "Refunded"
+        };
+
+        return (
+            labels[normalized] ||
+            String(status || "Pending")
+        );
     };
 
     const getReturnStatusBadge = (status) => {
@@ -1036,7 +2798,7 @@ const Profile = () => {
     const formatDateTime = (dateString) => new Date(dateString).toLocaleString();
 
     const filteredOrders = orders.filter(order => {
-        if (orderFilter !== "all" && order.status !== orderFilter) return false;
+        if (orderFilter !== "all" && (order.status || order.orderStatus) !== orderFilter) return false;
         if (searchOrder && !order.id?.toLowerCase().includes(searchOrder.toLowerCase())) return false;
         return true;
     }).sort((a, b) => {
@@ -1046,16 +2808,22 @@ const Profile = () => {
         return 0;
     });
 
+    const filteredNotifications = notificationFilter === "unread"
+        ? notifications.filter(n => !n.read)
+        : notificationFilter === "read"
+            ? notifications.filter(n => n.read)
+            : notifications;
+
     const stats = {
         totalSpent: orders.reduce((sum, o) => sum + (o.total || 0), 0),
         totalOrders: orders.length,
-        deliveredOrders: orders.filter(o => o.status === 'delivered').length,
+        deliveredOrders: orders.filter(o => (o.status || o.orderStatus) === 'delivered').length,
         pendingReturns: returnRequests.filter(r => r.status !== 'refunded' && r.status !== 'rejected').length,
         memberSince: user?.dateJoined || new Date().toLocaleDateString(),
         savedItems: favorites.length
     };
 
-    // Sidebar navigation with dynamic badges
+    // Sidebar navigation with responsive design
     const sidebarNav = [
         { id: "overview", label: "My Profile", icon: FiUser, color: "text-blue-500", badge: 0 },
         { id: "orders", label: "Orders", icon: FiShoppingBag, color: "text-purple-500", badge: orders.length },
@@ -1068,12 +2836,23 @@ const Profile = () => {
         { id: "settings", label: "Settings", icon: FiSettings, color: "text-gray-500", badge: 0 }
     ];
 
+    // Site menu options
+    const siteMenuItems = [
+        { label: "Home", path: "/", icon: FiHome },
+        { label: "Shop", path: "/collections/all", icon: FiShoppingBag },
+        { label: "Men", path: "/collections/men", icon: FiUser },
+        { label: "Women", path: "/collections/women", icon: FiUser },
+        { label: "Kids", path: "/collections/kids", icon: FiUser },
+        { label: "About", path: "/about", icon: FiInfo },
+        { label: "Contact", path: "/contact", icon: FiMail }
+    ];
+
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+            <div className="min-h-screen flex items-center justify-center bg-gray-50" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                 <div className="text-center">
                     <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
-                    <p className="mt-4 text-gray-600">Loading your profile...</p>
+                    <p className="mt-4 text-gray-600" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Loading your profile...</p>
                 </div>
             </div>
         );
@@ -1081,7 +2860,6 @@ const Profile = () => {
 
     if (!user) return null;
 
-    // Helper function for coupon card accent colors
     const cardAccent = (type) => {
         if (type === "free_shipping") return "from-emerald-950 to-emerald-700";
         if (type === "fixed") return "from-[#7a4b14] to-[#d3a24f]";
@@ -1089,7 +2867,6 @@ const Profile = () => {
         return "from-[#17130e] to-[#3a2a14]";
     };
 
-    // Helper function for discount label
     const getDiscountLabel = (coupon) => {
         if (coupon.discountType === "free_shipping") return "FREE SHIPPING";
         if (coupon.discountType === "buy_x_get_y") return "BUY 2 GET 1";
@@ -1097,7 +2874,6 @@ const Profile = () => {
         return `${currencySymbol}${coupon.discountValue} OFF`;
     };
 
-    // Helper function for coupon background style
     const getCouponBackgroundStyle = (coupon) => {
         if (!coupon?.backgroundImage) return undefined;
         const isValidImage = typeof coupon.backgroundImage === 'string' && 
@@ -1115,13 +2891,13 @@ const Profile = () => {
     };
 
     return (
-        <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900 text-white' : 'bg-[#fbfaf8] text-gray-950'}`}>
+        <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900 text-white' : 'bg-[#fbfaf8] text-gray-950'}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
             <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8">
                 <div className="flex flex-col gap-8 lg:flex-row">
-                    {/* Luxury account sidebar */}
+                    {/* Desktop Sidebar */}
                     <aside className="hidden w-72 shrink-0 lg:block">
                         <div className="sticky top-36 overflow-hidden rounded-md border border-[#e8e1d6] bg-white shadow-[0_8px_30px_rgba(28,24,18,0.05)] dark:border-gray-700 dark:bg-gray-800">
-                            <div className="border-b border-[#ece5db] px-6 py-5 text-sm font-semibold tracking-wide text-[#a86f25]">MY ACCOUNT</div>
+                            <div className="border-b border-[#ece5db] px-6 py-5 text-sm font-semibold tracking-wide text-[#a86f25]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>MY ACCOUNT</div>
                             <nav className="p-3">
                                 {sidebarNav.map((item) => {
                                     const Icon = item.icon;
@@ -1130,27 +2906,41 @@ const Profile = () => {
                                             key={item.id}
                                             onClick={() => setActiveTab(item.id)}
                                             className={`mb-1 flex w-full items-center justify-between rounded-md px-4 py-3 text-left transition-all ${activeTab === item.id ? 'bg-[#f5ecdd] text-[#a86f25]' : 'text-gray-700 hover:bg-[#faf7f2] dark:text-gray-200 dark:hover:bg-gray-700'}`}
+                                            style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                         >
                                             <span className="flex items-center gap-3">
                                                 <Icon size={19} className={activeTab === item.id ? 'text-[#b98237]' : 'text-gray-500'} />
-                                                <span className="text-sm font-medium">{item.label}</span>
+                                                <span className="text-sm font-medium" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.label}</span>
                                             </span>
-                                            {item.badge > 0 && <span className="rounded-full bg-[#efe1ca] px-2 py-0.5 text-[11px] font-semibold text-[#9a641f]">{item.badge}</span>}
+                                            {item.badge > 0 && <span className="rounded-full bg-[#efe1ca] px-2 py-0.5 text-[11px] font-semibold text-[#9a641f]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.badge}</span>}
                                         </button>
                                     );
                                 })}
+                                
+                                {/* Site Menu Section */}
+                                <div className="mt-4 pt-4 border-t border-[#ece5db]">
+                                    <p className="px-4 py-2 text-xs font-semibold tracking-wide text-[#a86f25]">SITE MENU</p>
+                                    {siteMenuItems.map((item) => {
+                                        const Icon = item.icon;
+                                        return (
+                                            <Link
+                                                key={item.path}
+                                                to={item.path}
+                                                className="flex items-center gap-3 rounded-md px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-[#faf7f2] dark:text-gray-200 dark:hover:bg-gray-700 transition-all"
+                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                            >
+                                                <Icon size={19} className="text-gray-500" />
+                                                <span>{item.label}</span>
+                                            </Link>
+                                        );
+                                    })}
+                                </div>
+                                
                                 <div className="my-3 border-t border-[#ece5db]" />
-                                <button onClick={handleLogout} className="flex w-full items-center gap-3 rounded-md px-4 py-3 text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-600 dark:text-gray-200">
+                                <button onClick={handleLogout} className="flex w-full items-center gap-3 rounded-md px-4 py-3 text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-600 dark:text-gray-200" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                     <FiLogOut size={19} /> Logout
                                 </button>
                             </nav>
-
-                            <div className="m-5 rounded-md border border-[#eadfce] bg-gradient-to-b from-[#fffdf9] to-[#f8f1e6] p-5 text-center dark:from-gray-800 dark:to-gray-700">
-                                <FiAward className="mx-auto mb-3 text-3xl text-[#b98237]" />
-                                <h3 className="font-semibold text-gray-950 dark:text-white">Join Zamed Premium Club</h3>
-                                <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-300">Unlock exclusive rewards, early access and special member offers.</p>
-                                <button className="mt-4 w-full bg-black py-2.5 text-xs font-semibold tracking-wide text-white hover:bg-[#b98237]">JOIN NOW</button>
-                            </div>
                         </div>
                     </aside>
 
@@ -1174,41 +2964,66 @@ const Profile = () => {
                                 className="fixed inset-y-0 right-0 w-80 bg-white dark:bg-gray-800 shadow-2xl z-50 lg:hidden overflow-y-auto"
                             >
                                 <div className="p-6 border-b dark:border-gray-700 flex justify-between items-center">
-                                    <h2 className="text-xl font-bold">Menu</h2>
+                                    <h2 className="text-xl font-bold" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Menu</h2>
                                     <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
                                         <FiX size={24} />
                                     </button>
                                 </div>
                                 <nav className="p-4">
-                                    {sidebarNav.map((item) => {
-                                        const Icon = item.icon;
-                                        return (
-                                            <button
-                                                key={item.id}
-                                                onClick={() => {
-                                                    setActiveTab(item.id);
-                                                    setIsMobileMenuOpen(false);
-                                                }}
-                                                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl mb-1 transition-all ${
-                                                    activeTab === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' : 'text-gray-700 dark:text-gray-300'
-                                                }`}
-                                            >
-                                                <div className="flex items-center gap-3">
-                                                    <Icon size={20} />
-                                                    <span className="font-medium">{item.label}</span>
-                                                </div>
-                                                {item.badge > 0 && (
-                                                    <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-600 rounded-full text-xs">
-                                                        {item.badge}
-                                                    </span>
-                                                )}
-                                            </button>
-                                        );
-                                    })}
+                                    <div className="mb-4">
+                                        <p className="text-xs font-semibold tracking-wide text-[#a86f25] mb-2">MY ACCOUNT</p>
+                                        {sidebarNav.map((item) => {
+                                            const Icon = item.icon;
+                                            return (
+                                                <button
+                                                    key={item.id}
+                                                    onClick={() => {
+                                                        setActiveTab(item.id);
+                                                        setIsMobileMenuOpen(false);
+                                                    }}
+                                                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl mb-1 transition-all ${
+                                                        activeTab === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' : 'text-gray-700 dark:text-gray-300'
+                                                    }`}
+                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <Icon size={20} />
+                                                        <span className="font-medium" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.label}</span>
+                                                    </div>
+                                                    {item.badge > 0 && (
+                                                        <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-600 rounded-full text-xs">
+                                                            {item.badge}
+                                                        </span>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    
+                                    <div className="border-t dark:border-gray-700 pt-4">
+                                        <p className="text-xs font-semibold tracking-wide text-[#a86f25] mb-2">SITE MENU</p>
+                                        {siteMenuItems.map((item) => {
+                                            const Icon = item.icon;
+                                            return (
+                                                <Link
+                                                    key={item.path}
+                                                    to={item.path}
+                                                    onClick={() => setIsMobileMenuOpen(false)}
+                                                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all"
+                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                >
+                                                    <Icon size={20} className="text-gray-500" />
+                                                    <span>{item.label}</span>
+                                                </Link>
+                                            );
+                                        })}
+                                    </div>
+                                    
                                     <div className="border-t dark:border-gray-700 my-4 pt-4">
                                         <button
                                             onClick={handleLogout}
                                             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 mt-2"
+                                            style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                         >
                                             <FiLogOut size={20} />
                                             <span>Logout</span>
@@ -1220,67 +3035,65 @@ const Profile = () => {
                     </AnimatePresence>
 
                     {/* Main Content */}
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                         {/* Overview Tab */}
                         {activeTab === "overview" && (
                             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
                                 <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
                                     <div>
-                                        <h1 className="font-serif text-4xl text-gray-950 dark:text-white">My Profile</h1>
-                                        <p className="mt-1 text-sm text-gray-500">Manage your personal information and account details</p>
+                                        <h1 className="font-serif text-2xl sm:text-3xl lg:text-4xl text-gray-950 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>My Profile</h1>
+                                        <p className="mt-1 text-xs sm:text-sm text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Manage your personal information and account details</p>
                                     </div>
-                                    <button onClick={() => setIsEditingProfile(true)} className="inline-flex items-center justify-center gap-2 bg-black px-6 py-3 text-xs font-semibold tracking-wide text-white hover:bg-[#b98237]">
+                                    <button onClick={() => setIsEditingProfile(true)} className="inline-flex items-center justify-center gap-2 bg-black px-4 sm:px-6 py-2 sm:py-3 text-xs font-semibold tracking-wide text-white hover:bg-[#b98237] rounded-xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                         <FiEdit2 size={16} /> EDIT PROFILE
                                     </button>
                                 </div>
 
-                                <section className="rounded-md border border-[#e8e1d6] bg-white p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
-                                    <div className="grid gap-7 xl:grid-cols-[1.35fr_1fr] xl:items-center">
-                                        <div className="flex flex-col items-center gap-5 sm:flex-row">
+                                <section className="rounded-md border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr] xl:items-center">
+                                        <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-5">
                                             <div className="relative shrink-0">
                                                 {user.profileImage || user.avatar ? (
-                                                    <img src={user.profileImage || user.avatar} alt={`${user.firstName} ${user.lastName}`} className="h-32 w-32 rounded-full object-cover" />
+                                                    <img src={user.profileImage || user.avatar} alt={`${user.firstName} ${user.lastName}`} className="h-24 w-24 sm:h-28 sm:w-28 lg:h-32 lg:w-32 rounded-full object-cover" />
                                                 ) : (
-                                                    <div className="flex h-32 w-32 items-center justify-center rounded-full bg-[#171717] font-serif text-4xl text-white">
+                                                    <div className="flex h-24 w-24 sm:h-28 sm:w-28 lg:h-32 lg:w-32 items-center justify-center rounded-full bg-[#171717] font-serif text-3xl sm:text-4xl text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                         {user.firstName?.charAt(0)}{user.lastName?.charAt(0)}
                                                     </div>
                                                 )}
-                                                <button onClick={() => setIsEditingProfile(true)} className="absolute bottom-1 right-1 rounded-full border border-[#ddd3c4] bg-white p-2 shadow"><FiEdit2 size={14} /></button>
                                             </div>
                                             <div className="text-center sm:text-left">
-                                                <h2 className="font-serif text-3xl text-gray-950 dark:text-white">{user.firstName} {user.lastName}</h2>
-                                                <span className="mt-2 inline-block rounded bg-[#f5ecdd] px-3 py-1 text-[11px] font-semibold tracking-wide text-[#a86f25]">ZAMED PREMIUM MEMBER</span>
-                                                <p className="mt-4 flex items-center justify-center gap-2 text-sm text-gray-600 sm:justify-start dark:text-gray-300"><FiMail className="text-[#b98237]" /> {user.email}</p>
-                                                <p className="mt-2 flex items-center justify-center gap-2 text-sm text-gray-600 sm:justify-start dark:text-gray-300"><FiPhone className="text-[#b98237]" /> {user.phone || user.phoneNumber || 'Add phone number'}</p>
+                                                <h2 className="font-serif text-2xl sm:text-3xl text-gray-950 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{user.firstName} {user.lastName}</h2>
+                                                <p className="mt-3 sm:mt-4 flex items-center justify-center sm:justify-start gap-2 text-xs sm:text-sm text-gray-600 dark:text-gray-300" style={{ fontFamily: "'Times New Roman', Times, serif" }}><FiMail className="text-[#b98237]" /> {user.email}</p>
+                                                <p className="mt-1 sm:mt-2 flex items-center justify-center sm:justify-start gap-2 text-xs sm:text-sm text-gray-600 dark:text-gray-300" style={{ fontFamily: "'Times New Roman', Times, serif" }}><FiPhone className="text-[#b98237]" /> {user.phone || user.phoneNumber || 'Add phone number'}</p>
                                             </div>
                                         </div>
 
                                         <div className="grid grid-cols-3 divide-x divide-[#e8e1d6] border-t border-[#e8e1d6] pt-6 xl:border-l xl:border-t-0 xl:pl-7 xl:pt-0">
-                                            <button onClick={() => setActiveTab('orders')} className="px-3 text-center">
-                                                <FiShoppingBag className="mx-auto text-2xl text-[#b98237]" />
-                                                <p className="mt-2 font-serif text-3xl">{stats.totalOrders}</p>
-                                                <p className="text-xs text-gray-500">Orders</p>
+                                            <button onClick={() => setActiveTab('orders')} className="px-2 sm:px-3 text-center">
+                                                <FiShoppingBag className="mx-auto text-xl sm:text-2xl text-[#b98237]" />
+                                                <p className="mt-2 font-serif text-2xl sm:text-3xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{stats.totalOrders}</p>
+                                                <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Orders</p>
                                             </button>
-                                            <button onClick={() => setActiveTab('wishlist')} className="px-3 text-center">
-                                                <FiHeart className="mx-auto text-2xl text-[#b98237]" />
-                                                <p className="mt-2 font-serif text-3xl">{stats.savedItems}</p>
-                                                <p className="text-xs text-gray-500">Wishlist</p>
+                                            <button onClick={() => setActiveTab('wishlist')} className="px-2 sm:px-3 text-center">
+                                                <FiHeart className="mx-auto text-xl sm:text-2xl text-[#b98237]" />
+                                                <p className="mt-2 font-serif text-2xl sm:text-3xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{stats.savedItems}</p>
+                                                <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Wishlist</p>
                                             </button>
-                                            <div className="px-3 text-center">
-                                                <FiStar className="mx-auto text-2xl text-[#b98237]" />
-                                                <p className="mt-2 font-serif text-3xl">{user.reviewCount || user.reviews?.length || 0}</p>
-                                                <p className="text-xs text-gray-500">Reviews</p>
+                                            <div className="px-2 sm:px-3 text-center">
+                                                <FiStar className="mx-auto text-xl sm:text-2xl text-[#b98237]" />
+                                                <p className="mt-2 font-serif text-2xl sm:text-3xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{user.reviewCount || user.reviews?.length || 0}</p>
+                                                <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Reviews</p>
                                             </div>
                                         </div>
                                     </div>
                                 </section>
 
-                                <section className="rounded-md border border-[#e8e1d6] bg-white p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
-                                    <div className="mb-5 flex items-center justify-between">
-                                        <h2 className="font-serif text-2xl">Personal Information</h2>
-                                        <button onClick={() => setIsEditingProfile(true)} className="text-xs font-semibold text-[#a86f25] hover:underline">EDIT</button>
+                                <section className="rounded-md border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="mb-4 sm:mb-5 flex items-center justify-between">
+                                        <h2 className="font-serif text-xl sm:text-2xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Personal Information</h2>
+                                        <button onClick={() => setIsEditingProfile(true)} className="text-xs font-semibold text-[#a86f25] hover:underline" style={{ fontFamily: "'Times New Roman', Times, serif" }}>EDIT</button>
                                     </div>
-                                    <div className="grid gap-x-8 gap-y-5 md:grid-cols-3">
+                                    <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 md:grid-cols-3">
                                         {[
                                             ['Full Name', `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Not provided'],
                                             ['Phone Number', user.phone || user.phoneNumber || 'Not provided'],
@@ -1289,55 +3102,55 @@ const Profile = () => {
                                             ['Date of Birth', user.dateOfBirth ? formatDate(user.dateOfBirth) : 'Not provided'],
                                             ['Member Since', stats.memberSince ? formatDate(stats.memberSince) : 'Not available']
                                         ].map(([label, value]) => (
-                                            <div key={label} className="border-b border-[#eee8df] pb-4">
-                                                <p className="text-xs font-medium text-gray-500">{label}</p>
-                                                <p className="mt-2 text-sm text-gray-900 dark:text-gray-100">{value}</p>
+                                            <div key={label} className="border-b border-[#eee8df] pb-3">
+                                                <p className="text-xs font-medium text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{label}</p>
+                                                <p className="mt-1 sm:mt-2 text-sm text-gray-900 dark:text-gray-100 break-words" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{value}</p>
                                             </div>
                                         ))}
                                     </div>
                                 </section>
 
-                                <section className="rounded-md border border-[#e8e1d6] bg-white p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
-                                    <div className="mb-5 flex items-center justify-between">
+                                <section className="rounded-md border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="mb-4 sm:mb-5 flex items-center justify-between">
                                         <div className="flex items-center gap-3">
-                                            <h2 className="font-serif text-2xl">Default Address</h2>
-                                            <span className="rounded-full bg-[#f5ecdd] px-3 py-1 text-[11px] text-[#a86f25]">Default</span>
+                                            <h2 className="font-serif text-xl sm:text-2xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Default Address</h2>
+                                            <span className="rounded-full bg-[#f5ecdd] px-2 sm:px-3 py-1 text-[10px] sm:text-[11px] text-[#a86f25]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Default</span>
                                         </div>
-                                        <button onClick={() => setActiveTab('addresses')} className="inline-flex items-center gap-2 border border-[#ddd3c4] px-4 py-2 text-xs font-semibold hover:border-[#b98237] hover:text-[#a86f25]"><FiEdit2 /> EDIT</button>
+                                        <button onClick={() => setActiveTab('addresses')} className="inline-flex items-center gap-1 sm:gap-2 border border-[#ddd3c4] px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold hover:border-[#b98237] hover:text-[#a86f25] rounded-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}><FiEdit2 size={14} /> EDIT</button>
                                     </div>
                                     {addresses.find(address => address.isDefault) || addresses[0] ? (() => {
                                         const address = addresses.find(address => address.isDefault) || addresses[0];
-                                        return <div className="flex gap-4">
-                                            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-[#fbf6ee] text-[#b98237]"><FiMapPin size={24} /></div>
-                                            <div className="text-sm leading-6 text-gray-700 dark:text-gray-300">
-                                                <p className="font-semibold text-gray-950 dark:text-white">{address.label || 'Home'}</p>
-                                                <p>{address.street}</p>
-                                                <p>{[address.city, address.state, address.zipCode].filter(Boolean).join(', ')}</p>
-                                                <p>{address.country}</p>
-                                                {address.phone && <p>{address.phone}</p>}
+                                        return <div className="flex gap-3 sm:gap-4">
+                                            <div className="flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-md bg-[#fbf6ee] text-[#b98237]"><FiMapPin size={20} /></div>
+                                            <div className="text-xs sm:text-sm leading-5 sm:leading-6 text-gray-700 dark:text-gray-300">
+                                                <p className="font-semibold text-gray-950 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.label || 'Home'}</p>
+                                                <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.street}</p>
+                                                <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>{[address.city, address.state, address.zipCode].filter(Boolean).join(', ')}</p>
+                                                <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.country}</p>
+                                                {address.phone && <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.phone}</p>}
                                             </div>
                                         </div>;
                                     })() : (
                                         <div className="flex flex-col items-start gap-3 text-sm text-gray-500">
-                                            <p>No address has been added yet.</p>
-                                            <button onClick={() => setActiveTab('addresses')} className="bg-black px-5 py-2.5 text-xs font-semibold text-white hover:bg-[#b98237]">ADD ADDRESS</button>
+                                            <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>No address has been added yet.</p>
+                                            <button onClick={() => setActiveTab('addresses')} className="bg-black px-4 sm:px-5 py-2 sm:py-2.5 text-xs font-semibold text-white hover:bg-[#b98237] rounded-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>ADD ADDRESS</button>
                                         </div>
                                     )}
                                 </section>
 
-                                <section className="rounded-md border border-[#e8e1d6] bg-white p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
+                                <section className="rounded-md border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
                                     <div className="flex items-center justify-between">
-                                        <h2 className="font-serif text-2xl">Recent Orders</h2>
-                                        <button onClick={() => setActiveTab('orders')} className="inline-flex items-center gap-2 border border-[#ddd3c4] px-4 py-2 text-xs font-semibold hover:border-[#b98237] hover:text-[#a86f25]">VIEW ALL ORDERS <FiArrowRight /></button>
+                                        <h2 className="font-serif text-xl sm:text-2xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Recent Orders</h2>
+                                        <button onClick={() => setActiveTab('orders')} className="inline-flex items-center gap-1 sm:gap-2 border border-[#ddd3c4] px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold hover:border-[#b98237] hover:text-[#a86f25] rounded-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>VIEW ALL ORDERS <FiArrowRight size={14} /></button>
                                     </div>
                                     <div className="mt-4 divide-y divide-[#eee8df]">
                                         {orders.slice(0, 3).map(order => (
                                             <div key={order.id} className="flex flex-col justify-between gap-3 py-4 sm:flex-row sm:items-center">
-                                                <div><p className="text-sm font-semibold">Order #{order.id}</p><p className="mt-1 text-xs text-gray-500">{formatDate(order.date)}</p></div>
-                                                <div className="flex items-center gap-4"><span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${getOrderStatusBadge(order.status)}`}>{order.status?.toUpperCase()}</span><strong>{formatPrice(order.total)}</strong></div>
+                                                <div><p className="text-xs sm:text-sm font-semibold" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Order #{order.id}</p><p className="mt-1 text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatDate(order.date)}</p></div>
+                                                <div className="flex items-center gap-3 sm:gap-4"><span className={`rounded-full px-2 sm:px-3 py-1 text-[10px] sm:text-[11px] font-semibold ${getOrderStatusBadge(getEffectiveOrderStatus(order))}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>{getOrderStatusLabel(getEffectiveOrderStatus(order)).toUpperCase()}</span><strong className="text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(order.total)}</strong></div>
                                             </div>
                                         ))}
-                                        {orders.length === 0 && <div className="py-8 text-center text-sm text-gray-500">No orders yet. <Link to="/collections/all" className="font-semibold text-[#a86f25]">Start shopping</Link></div>}
+                                        {orders.length === 0 && <div className="py-8 text-center text-sm text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No orders yet. <Link to="/collections/all" className="font-semibold text-[#a86f25]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Start shopping</Link></div>}
                                     </div>
                                 </section>
                             </motion.div>
@@ -1348,14 +3161,15 @@ const Profile = () => {
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6"
+                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
+                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
                             >
-                                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+                                <h2 className="text-xl sm:text-2xl font-bold mb-6 flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                     <FiShoppingBag className="text-blue-600" /> My Orders ({orders.length})
                                 </h2>
                                 
-                                <div className="flex flex-wrap gap-4 mb-6 pb-4 border-b dark:border-gray-700">
-                                    <div className="flex-1 min-w-[200px]">
+                                <div className="flex flex-wrap gap-3 sm:gap-4 mb-6 pb-4 border-b dark:border-gray-700">
+                                    <div className="flex-1 min-w-[180px] sm:min-w-[200px]">
                                         <div className="relative">
                                             <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                                             <input
@@ -1363,14 +3177,16 @@ const Profile = () => {
                                                 placeholder="Search orders..."
                                                 value={searchOrder}
                                                 onChange={(e) => setSearchOrder(e.target.value)}
-                                                className="w-full pl-10 pr-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500"
+                                                className="w-full pl-9 sm:pl-10 pr-3 sm:pr-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 text-sm"
+                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                             />
                                         </div>
                                     </div>
                                     <select
                                         value={orderFilter}
                                         onChange={(e) => setOrderFilter(e.target.value)}
-                                        className="px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500"
+                                        className="px-3 sm:px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 text-sm"
+                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                     >
                                         <option value="all">All Orders</option>
                                         <option value="pending">Pending</option>
@@ -1382,7 +3198,8 @@ const Profile = () => {
                                     <select
                                         value={orderSort}
                                         onChange={(e) => setOrderSort(e.target.value)}
-                                        className="px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500"
+                                        className="px-3 sm:px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 text-sm"
+                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                     >
                                         <option value="newest">Newest First</option>
                                         <option value="oldest">Oldest First</option>
@@ -1391,56 +3208,364 @@ const Profile = () => {
                                 </div>
 
                                 {filteredOrders.length === 0 ? (
-                                    <div className="text-center py-16">
-                                        <FiShoppingBag className="w-20 h-20 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500 text-lg">No orders found</p>
-                                        <Link to="/collections/all" className="inline-block mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition-all">
+                                    <div className="text-center py-12 sm:py-16">
+                                        <FiShoppingBag className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
+                                        <p className="text-gray-500 text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No orders found</p>
+                                        <Link to="/collections/all" className="inline-block mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition-all text-sm" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                             Start Shopping →
                                         </Link>
                                     </div>
                                 ) : (
                                     <div className="space-y-4">
-                                        {filteredOrders.map((order) => (
-                                            <div key={order.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-xl p-5 hover:shadow-lg transition-all">
-                                                <div className="flex flex-wrap justify-between items-start mb-4">
-                                                    <div>
-                                                        <p className="font-bold text-lg">Order #{order.id}</p>
-                                                        <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                                                            <FiCalendar size={12} /> {formatDate(order.date)}
-                                                        </p>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getOrderStatusBadge(order.status)}`}>
-                                                            {order.status?.toUpperCase()}
-                                                        </span>
-                                                        <p className="text-xl font-bold text-blue-600 mt-1">{formatPrice(order.total)}</p>
-                                                    </div>
-                                                </div>
-                                                
-                                                <div className="space-y-2">
-                                                    {order.itemsList?.slice(0, 2).map((item, idx) => (
-                                                        <div key={idx} className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                                                            <img src={item.image} alt={item.name} className="w-12 h-12 object-cover rounded-lg" />
-                                                            <div className="flex-1">
-                                                                <p className="font-medium">{item.name}</p>
-                                                                <p className="text-xs text-gray-500">Qty: {item.quantity} | {formatPrice(item.price)}</p>
-                                                            </div>
+                                        {filteredOrders.map((order) => {
+                                            const orderStatus =
+                                                getEffectiveOrderStatus(
+                                                    order
+                                                );
+
+                                            const isRefunded =
+                                                orderStatus ===
+                                                "refunded";
+
+                                            const isReturnInProgress =
+                                                orderStatus ===
+                                                    "return_in_progress" ||
+                                                orderStatus ===
+                                                    "refund_processing";
+
+                                            const isDelivered =
+                                                !isRefunded &&
+                                                !isReturnInProgress &&
+                                                isOrderDelivered(
+                                                    order
+                                                );
+
+                                            const isCancelled =
+                                                normalizeOrderStatus(
+                                                    orderStatus
+                                                ) === "cancelled";
+                                            
+                                            return (
+                                                <div key={order.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-xl p-4 sm:p-5 hover:shadow-lg transition-all">
+                                                    <div className="flex flex-wrap justify-between items-start mb-4">
+                                                        <div>
+                                                            <p className="font-bold text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Order #{order.id}</p>
+                                                            <p className="text-xs sm:text-sm text-gray-500 flex items-center gap-1 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                <FiCalendar size={12} /> {formatDate(order.date)}
+                                                            </p>
                                                         </div>
-                                                    ))}
-                                                    {order.itemsList?.length > 2 && (
-                                                        <p className="text-xs text-gray-500 text-center">+{order.itemsList.length - 2} more items</p>
-                                                    )}
+                                                        <div className="text-right">
+                                                            <span className={`px-2 sm:px-3 py-1 rounded-full text-[10px] sm:text-xs font-semibold ${getOrderStatusBadge(orderStatus)}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                {orderStatus?.toUpperCase()}
+                                                            </span>
+                                                            <p className="text-lg sm:text-xl font-bold text-blue-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(order.total)}</p>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div className="space-y-2">
+                                                        {getOrderItems(order).slice(0, 2).map((item, idx) => (
+                                                            <div key={idx} className="flex items-center gap-2 sm:gap-3 p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                                                                <img src={item.image} alt={item.name} className="w-10 h-10 sm:w-12 sm:h-12 object-cover rounded-lg" />
+                                                                <div className="flex-1 min-w-0">
+                                                                    <p className="font-medium text-sm sm:text-base truncate" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.name}</p>
+                                                                    <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Qty: {item.quantity} | {formatPrice(item.price)}</p>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                        {order.itemsList?.length > 2 && (
+                                                            <p className="text-[10px] sm:text-xs text-gray-500 text-center" style={{ fontFamily: "'Times New Roman', Times, serif" }}>+{order.itemsList.length - 2} more items</p>
+                                                        )}
+                                                    </div>
+                                                    
+                                                    <div className="pt-4 border-t mt-4">
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {!isDelivered && !isCancelled && (
+                                                                <button
+                                                                    onClick={() => setTrackingOrder(order)}
+                                                                    className="inline-flex items-center gap-2 rounded-xl bg-black px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-[#b98237]"
+                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                >
+                                                                    <FiTruck />
+                                                                    Track Order
+                                                                </button>
+                                                            )}
+
+                                                            {isDelivered && (
+                                                                <button
+                                                                    onClick={() => setTrackingOrder(order)}
+                                                                    className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-green-700"
+                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                >
+                                                                    <FiCheckCircle />
+                                                                    Delivery Complete
+                                                                </button>
+                                                            )}
+
+                                                            <Link
+                                                                to={`/product/${order.itemsList?.[0]?.id}`}
+                                                                className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-gray-700 transition hover:border-black hover:text-black dark:text-gray-200"
+                                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                onClick={() => window.scrollTo(0, 0)}
+                                                            >
+                                                                <FiEye />
+                                                                View Details
+                                                            </Link>
+
+                                                            {isDelivered && !isRefunded && !isReturnInProgress && (
+                                                                <button
+                                                                    onClick={() => navigateToProductReview(order.itemsList?.[0]?.id, order.itemsList?.[0]?.name, order.id)}
+                                                                    className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-amber-700"
+                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                >
+                                                                    <FiStar />
+                                                                    Write a Review
+                                                                </button>
+                                                            )}
+
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => deleteOrderFromHistory(order)}
+                                                                className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-gray-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-gray-600 dark:text-gray-300"
+                                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                            >
+                                                                <FiTrash2 />
+                                                                Delete
+                                                            </button>
+
+                                                            {!isCancelled && !isDelivered && !isRefunded && !isReturnInProgress && (
+                                                                <button
+                                                                    onClick={() => cancelOrder(order.id)}
+                                                                    disabled={cancellingOrderId === order.id}
+                                                                    className="inline-flex items-center gap-2 rounded-xl border border-red-300 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                >
+                                                                    <FiX />
+                                                                    {cancellingOrderId === order.id
+                                                                        ? "Cancelling..."
+                                                                        : "Cancel Order"}
+                                                                </button>
+                                                            )}
+                                                        </div>
+
+                                                        {isRefunded && (
+                                                            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 sm:p-4 dark:border-emerald-900/30 dark:bg-emerald-900/10">
+                                                                <div className="flex items-start gap-3">
+                                                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
+                                                                        <FiCreditCard />
+                                                                    </div>
+
+                                                                    <div>
+                                                                        <p className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
+                                                                            Order Refunded
+                                                                        </p>
+
+                                                                        <p className="mt-1 text-xs leading-5 text-emerald-700 dark:text-emerald-400">
+                                                                            The return has been completed and the refund has been processed. Open Returns & Refunds for the complete refund timeline.
+                                                                        </p>
+
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                setActiveTab("returns");
+                                                                                navigate("/profile?tab=returns");
+                                                                            }}
+                                                                            className="mt-3 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white"
+                                                                        >
+                                                                            View Refund Details
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        {isReturnInProgress && (
+                                                            <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-3 sm:p-4 dark:border-orange-900/30 dark:bg-orange-900/10">
+                                                                <div className="flex items-start gap-3">
+                                                                    <FiRefreshCw className="mt-0.5 shrink-0 text-orange-600" />
+
+                                                                    <div>
+                                                                        <p className="text-sm font-bold text-orange-800 dark:text-orange-300">
+                                                                            {orderStatus === "refund_processing"
+                                                                                ? "Refund Processing"
+                                                                                : "Return In Progress"}
+                                                                        </p>
+
+                                                                        <p className="mt-1 text-xs leading-5 text-orange-700 dark:text-orange-400">
+                                                                            This order has an active return. Open Returns & Refunds to see pickup, verification and refund updates.
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        {isDelivered && (
+                                                            <div className="mt-4 rounded-2xl bg-green-50 p-3 sm:p-4 dark:bg-green-900/10">
+                                                                <div className="mb-3 flex items-center gap-3">
+                                                                    <div className="flex h-8 w-8 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-full bg-green-600 text-white">
+                                                                        <FiCheckCircle />
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="text-xs sm:text-sm font-bold text-green-800 dark:text-green-300" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                            Order Delivered!
+                                                                        </p>
+                                                                        <p className="text-[10px] sm:text-xs text-green-700 dark:text-green-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                            You can now request a return for eligible items.
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+
+                                                                <div className="space-y-3">
+                                                                    {getOrderItems(order).map((item, itemIndex) => {
+                                                                        const alreadyReturned =
+                                                                            hasReturnRequestForItem(
+                                                                                getOrderIdentifier(order),
+                                                                                getItemIdentifier(item)
+                                                                            );
+
+                                                                        return (
+                                                                            <div
+                                                                                key={`${getOrderIdentifier(order)}-${getItemIdentifier(item)}-${itemIndex}`}
+                                                                                className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between dark:border-gray-600 dark:bg-gray-800"
+                                                                            >
+                                                                                <div className="flex min-w-0 items-center gap-3">
+                                                                                    {item.image ? (
+                                                                                        <img
+                                                                                            src={item.image}
+                                                                                            alt={item.name}
+                                                                                            className="h-12 w-12 sm:h-14 sm:w-14 shrink-0 rounded-lg object-cover"
+                                                                                        />
+                                                                                    ) : (
+                                                                                        <div className="flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
+                                                                                            <FiPackage className="text-gray-400" />
+                                                                                        </div>
+                                                                                    )}
+
+                                                                                    <div className="min-w-0">
+                                                                                        <p className="truncate text-xs sm:text-sm font-semibold" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                                            {item.name}
+                                                                                        </p>
+                                                                                        <p className="mt-1 text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                                            Qty {item.quantity || 1}
+                                                                                            {item.size ? ` · ${item.size}` : ""}
+                                                                                            {item.color ? ` · ${item.color}` : ""}
+                                                                                        </p>
+                                                                                    </div>
+                                                                                </div>
+
+                                                                                <div className="flex flex-wrap gap-2">
+                                                                                    <button
+                                                                                        onClick={() =>
+                                                                                            openReturnForItem(
+                                                                                                order,
+                                                                                                item
+                                                                                            )
+                                                                                        }
+                                                                                        disabled={alreadyReturned}
+                                                                                        className="inline-flex items-center gap-1.5 rounded-lg border border-orange-300 px-2 sm:px-3 py-1.5 sm:py-2 text-[10px] sm:text-xs font-bold text-orange-700 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                                    >
+                                                                                        <FiCornerDownLeft />
+                                                                                        {alreadyReturned
+                                                                                            ? "Return Requested"
+                                                                                            : "Return Item"}
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </motion.div>
+                        )}
+
+                        {/* Returns Tab */}
+                        {activeTab === "returns" && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
+                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                            >
+                                <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+                                    <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                        <FiShield className="text-orange-600" /> Returns & Refunds ({returnRequests.length})
+                                    </h2>
+                                    <span className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                        Refunds take up to 7 business days
+                                    </span>
+                                </div>
+                                
+                                {returnRequests.length === 0 ? (
+                                    <div className="text-center py-12 sm:py-16">
+                                        <FiShield className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
+                                        <p className="text-gray-500 text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No return requests yet</p>
+                                        <p className="text-xs sm:text-sm text-gray-400 mt-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>When you request a return, it will appear here with full tracking</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4 sm:space-y-6">
+                                        {returnRequests.map((returnReq) => (
+                                            <div 
+                                                key={returnReq.id} 
+                                                className="border-2 rounded-xl p-4 sm:p-5 cursor-pointer hover:shadow-lg transition-all"
+                                                onClick={() => setSelectedReturnRequest(returnReq)}
+                                            >
+                                                <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
+                                                    <div className="flex gap-3 min-w-0">
+                                                        {returnReq.productImage && (
+                                                            <img src={returnReq.productImage} alt={returnReq.productName} className="w-14 h-14 sm:w-16 sm:h-16 object-cover rounded-lg shrink-0" />
+                                                        )}
+                                                        <div className="min-w-0">
+                                                            <p className="font-medium text-sm sm:text-base truncate" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{returnReq.productName}</p>
+                                                            <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Return ID: #{returnReq.id}</p>
+                                                            {returnReq.refundMethod && (
+                                                                <p className="text-[10px] sm:text-xs text-green-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                    Refund: {returnReq.refundMethod.method}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <div className="flex items-center gap-1 justify-end">
+                                                            {getReturnStatusIcon(returnReq.status)}
+                                                            <span className={`px-2 py-1 rounded-full text-[10px] sm:text-xs font-semibold ${getReturnStatusBadge(returnReq.status)}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                {getReturnStatusText(returnReq.status)}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-base sm:text-lg font-bold text-green-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(returnReq.refundAmount)}</p>
+                                                        {returnReq.status === 'refund_processing' && (
+                                                            <p className="text-[10px] sm:text-xs text-orange-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                ⏳ Processing (7 business days)
+                                                            </p>
+                                                        )}
+                                                    </div>
                                                 </div>
                                                 
-                                                <div className="flex flex-wrap gap-3 pt-4 border-t mt-3">
-                                                    <Link to={`/product/${order.itemsList?.[0]?.id}`} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-all">
-                                                        View Details
-                                                    </Link>
-                                                    {order.status !== 'cancelled' && order.status !== 'delivered' && (
-                                                        <button onClick={() => cancelOrder(order.id)} disabled={cancellingOrderId === order.id} className="px-4 py-2 border border-red-600 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-all">
-                                                            Cancel Order
-                                                        </button>
-                                                    )}
+                                                <div className="mt-4">
+                                                    <div className="flex justify-between text-[10px] sm:text-xs text-gray-500 mb-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                        <span>Requested</span>
+                                                        <span>Pickup</span>
+                                                        <span>Collected</span>
+                                                        <span>Verified</span>
+                                                        <span>Refunded</span>
+                                                    </div>
+                                                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                                        <div 
+                                                            className="h-full bg-gradient-to-r from-yellow-500 via-blue-500 to-green-500 rounded-full transition-all duration-500"
+                                                            style={{ width: `${returnStages[returnReq.status]?.progress || 0}%` }}
+                                                        ></div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="mt-3 text-[10px] sm:text-xs text-gray-500 flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                    <FiInfo size={12} />
+                                                    <span>Click to view full tracking history and refund details</span>
                                                 </div>
                                             </div>
                                         ))}
@@ -1454,10 +3579,11 @@ const Profile = () => {
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6"
+                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
+                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
                             >
                                 <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-2xl font-bold flex items-center gap-2">
+                                    <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                         <FiHeart className="text-red-500" /> My Wishlist ({favorites.length})
                                     </h2>
                                     <div className="flex gap-2">
@@ -1469,23 +3595,21 @@ const Profile = () => {
                                         </button>
                                     </div>
                                 </div>
-                                
                                 {favorites.length === 0 ? (
-                                    <div className="text-center py-16">
-                                        <FiHeart className="w-20 h-20 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500 text-lg">Your wishlist is empty</p>
-                                        <p className="text-sm text-gray-400 mt-2">Click the heart icon on any product to add it to your wishlist</p>
-                                        <Link to="/collections/all" className="inline-block mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition-all">
+                                    <div className="text-center py-12 sm:py-16">
+                                        <FiHeart className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
+                                        <p className="text-gray-500 text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Your wishlist is empty</p>
+                                        <Link to="/collections/all" className="inline-block mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition-all" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                             Explore Products →
                                         </Link>
                                     </div>
                                 ) : wishlistView === "grid" ? (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                                         {favorites.map((product) => (
                                             <div key={product.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-2xl p-4 hover:shadow-xl transition-all group">
                                                 <div className="relative">
                                                     <img 
-                                                        src={product.image && (product.image.startsWith('data:') || product.image.startsWith('http')) ? product.image : 'https://via.placeholder.com/300x300?text=No+Image'} 
+                                                        src={product.image || 'https://via.placeholder.com/300x300?text=No+Image'} 
                                                         alt={product.name} 
                                                         className="w-full h-48 object-cover rounded-xl mb-3 group-hover:scale-105 transition-transform duration-300"
                                                         onError={(e) => { e.target.src = 'https://via.placeholder.com/300x300?text=No+Image'; }}
@@ -1494,16 +3618,17 @@ const Profile = () => {
                                                         <FiTrash2 size={16} className="text-red-500" />
                                                     </button>
                                                 </div>
-                                                <h3 className="font-semibold text-gray-800 dark:text-white text-lg">{product.name}</h3>
-                                                <p className="text-gray-500 text-sm mt-1">{product.brand || "Zamed"}</p>
-                                                <p className="text-blue-600 font-bold text-xl mt-2">{formatPrice(product.price)}</p>
+                                                <h3 className="font-semibold text-gray-800 dark:text-white text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.name}</h3>
+                                                <p className="text-gray-500 text-xs sm:text-sm mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.brand || "Zamed"}</p>
+                                                <p className="text-blue-600 font-bold text-base sm:text-xl mt-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(product.price)}</p>
                                                 <div className="flex gap-3 mt-4">
-                                                    <button onClick={() => addToCartFromFavorites(product)} className="flex-1 bg-gray-900 text-white py-2.5 rounded-xl text-sm font-medium hover:bg-gray-800 transition-all">
+                                                    <button onClick={() => addToCartFromFavorites(product)} className="flex-1 bg-gray-900 text-white py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-medium hover:bg-gray-800 transition-all" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                         Add to Cart
                                                     </button>
                                                     <Link 
                                                         to={`/product/${product.id}`} 
-                                                        className="px-5 py-2.5 border-2 border-gray-300 text-gray-700 rounded-xl text-sm font-medium hover:border-blue-600 hover:text-blue-600 transition-all"
+                                                        className="px-3 sm:px-5 py-2 sm:py-2.5 border-2 border-gray-300 text-gray-700 rounded-xl text-xs sm:text-sm font-medium hover:border-blue-600 hover:text-blue-600 transition-all"
+                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                         onClick={() => window.scrollTo(0, 0)}
                                                     >
                                                         View
@@ -1517,24 +3642,25 @@ const Profile = () => {
                                         {favorites.map((product) => (
                                             <div key={product.id} className="flex items-center gap-4 p-4 border rounded-xl hover:shadow-md transition-all">
                                                 <img 
-                                                    src={product.image && (product.image.startsWith('data:') || product.image.startsWith('http')) ? product.image : 'https://via.placeholder.com/80x80?text=No+Image'} 
+                                                    src={product.image || 'https://via.placeholder.com/80x80?text=No+Image'} 
                                                     alt={product.name} 
-                                                    className="w-20 h-20 object-cover rounded-lg"
+                                                    className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-lg"
                                                     onError={(e) => { e.target.src = 'https://via.placeholder.com/80x80?text=No+Image'; }}
                                                 />
                                                 <div className="flex-1">
-                                                    <h3 className="font-semibold">{product.name}</h3>
-                                                    <p className="text-sm text-gray-500">{product.brand || "Zamed"}</p>
-                                                    <p className="text-blue-600 font-bold">{formatPrice(product.price)}</p>
+                                                    <h3 className="font-semibold text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.name}</h3>
+                                                    <p className="text-xs sm:text-sm text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.brand || "Zamed"}</p>
+                                                    <p className="text-blue-600 font-bold text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(product.price)}</p>
                                                 </div>
                                                 <div className="flex gap-2">
-                                                    <button onClick={() => addToCartFromFavorites(product)} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-800">
+                                                    <button onClick={() => addToCartFromFavorites(product)} className="px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-900 text-white rounded-lg text-xs sm:text-sm hover:bg-gray-800" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                         Add to Cart
                                                     </button>
                                                     <Link 
                                                         to={`/product/${product.id}`}
                                                         onClick={() => window.scrollTo(0, 0)}
-                                                        className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:text-blue-600 transition-all"
+                                                        className="px-3 sm:px-4 py-1.5 sm:py-2 border border-gray-300 text-gray-700 rounded-lg text-xs sm:text-sm hover:border-blue-600 hover:text-blue-600 transition-all"
+                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                     >
                                                         View
                                                     </Link>
@@ -1549,29 +3675,29 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* Coupons Tab - With deletion sync */}
+                        {/* Coupons Tab */}
                         {activeTab === "coupons" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6"
+                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
+                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
                             >
                                 <div className="flex items-center justify-between mb-6">
-                                    <h2 className="text-2xl font-bold flex items-center gap-2">
+                                    <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                         <FiTag className="text-green-600" /> My Coupons ({userCoupons.length})
                                     </h2>
                                     {userCoupons.length > 0 && (
-                                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                                        <span className="text-xs sm:text-sm text-gray-500 dark:text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                             {userCoupons.filter(c => !c.used && (!c.endDate || new Date(c.endDate) > new Date())).length} active
                                         </span>
                                     )}
                                 </div>
-
                                 {userCoupons.length === 0 ? (
-                                    <div className="text-center py-16">
-                                        <FiTag className="w-20 h-20 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500 text-lg">No coupons available</p>
-                                        <p className="text-sm text-gray-400 mt-2">Coupons will appear here when you receive special offers</p>
+                                    <div className="text-center py-12 sm:py-16">
+                                        <FiTag className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
+                                        <p className="text-gray-500 text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No coupons available</p>
+                                        <p className="text-xs sm:text-sm text-gray-400 mt-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Coupons will appear here when you receive special offers</p>
                                     </div>
                                 ) : (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1598,22 +3724,22 @@ const Profile = () => {
                                                         <div className="relative z-[1]">
                                                             <div className="flex items-start justify-between gap-4">
                                                                 <div>
-                                                                    <p className="text-[10px] font-semibold tracking-[0.2em] text-[#e6bd70]">
+                                                                    <p className="text-[10px] font-semibold tracking-[0.2em] text-[#e6bd70]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                                         {isActive ? "ACTIVE OFFER" : isExpired ? "EXPIRED" : "USED"}
                                                                     </p>
-                                                                    <h3 className="mt-2 font-serif text-2xl sm:text-3xl">{getDiscountLabel(coupon)}</h3>
-                                                                    <p className="mt-1 text-sm text-white/65 line-clamp-1">{coupon.title || coupon.description}</p>
+                                                                    <h3 className="mt-2 font-serif text-xl sm:text-2xl lg:text-3xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{getDiscountLabel(coupon)}</h3>
+                                                                    <p className="mt-1 text-sm text-white/65 line-clamp-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{coupon.title || coupon.description}</p>
                                                                 </div>
                                                                 <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase ${
                                                                     isActive ? "bg-emerald-400/20 text-emerald-300" :
                                                                     isExpired ? "bg-red-400/20 text-red-300" :
                                                                     "bg-white/10 text-white/60"
-                                                                }`}>
+                                                                }`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                                     {isActive ? "Active" : isExpired ? "Expired" : "Used"}
                                                                 </span>
                                                             </div>
                                                             <div className="mt-4 flex items-center justify-between rounded-xl border border-white/15 bg-black/20 px-4 py-2.5">
-                                                                <span className="font-mono text-base font-bold tracking-[0.12em] sm:text-lg">{coupon.code}</span>
+                                                                <span className="font-mono text-sm sm:text-base font-bold tracking-[0.12em]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{coupon.code}</span>
                                                                 <button
                                                                     onClick={() => {
                                                                         navigator.clipboard.writeText(coupon.code);
@@ -1628,19 +3754,19 @@ const Profile = () => {
                                                     </div>
 
                                                     <div className="p-5">
-                                                        <p className="text-sm leading-6 text-gray-500 dark:text-gray-400 line-clamp-2">
+                                                        <p className="text-sm leading-6 text-gray-500 dark:text-gray-400 line-clamp-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                             {coupon.description || "Premium discount for ZAMED customers."}
                                                         </p>
                                                         <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
                                                             <div className="rounded-xl bg-[#faf7f1] p-2.5 dark:bg-gray-700/50">
-                                                                <span className="text-gray-400">Minimum order</span>
-                                                                <p className="mt-0.5 font-semibold text-gray-900 dark:text-white">
+                                                                <span className="text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Minimum order</span>
+                                                                <p className="mt-0.5 font-semibold text-gray-900 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                                     {coupon.minPurchase > 0 ? `${currencySymbol}${coupon.minPurchase}` : "No minimum"}
                                                                 </p>
                                                             </div>
                                                             <div className="rounded-xl bg-[#faf7f1] p-2.5 dark:bg-gray-700/50">
-                                                                <span className="text-gray-400">Valid until</span>
-                                                                <p className="mt-0.5 font-semibold text-gray-900 dark:text-white">
+                                                                <span className="text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Valid until</span>
+                                                                <p className="mt-0.5 font-semibold text-gray-900 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                                     {coupon.endDate ? new Date(coupon.endDate).toLocaleDateString() : "No expiry"}
                                                                 </p>
                                                             </div>
@@ -1652,14 +3778,16 @@ const Profile = () => {
                                                                     navigator.clipboard.writeText(coupon.code);
                                                                     toast.success(`Coupon code ${coupon.code} copied!`);
                                                                 }}
-                                                                className="flex-1 rounded-xl bg-[#171511] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#b47a29] flex items-center justify-center gap-2"
+                                                                className="flex-1 rounded-xl bg-[#171511] px-4 py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-[#b47a29] flex items-center justify-center gap-2"
+                                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                             >
                                                                 <FiCopy size={14} /> Copy Code
                                                             </button>
                                                             {isActive && (
                                                                 <Link
                                                                     to="/collections/all"
-                                                                    className="flex-1 rounded-xl border border-[#ded4c5] px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:border-[#b47a29] hover:text-[#a36d23] flex items-center justify-center gap-2 dark:border-gray-600 dark:text-gray-300"
+                                                                    className="flex-1 rounded-xl border border-[#ded4c5] px-4 py-2.5 text-xs sm:text-sm font-semibold text-gray-700 transition hover:border-[#b47a29] hover:text-[#a36d23] flex items-center justify-center gap-2 dark:border-gray-600 dark:text-gray-300"
+                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                                 >
                                                                     Shop Now <FiArrowRight size={14} />
                                                                 </Link>
@@ -1674,182 +3802,15 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* Notifications Tab - liquid glass centre */}
+                        {/* Notifications Tab */}
                         {activeTab === "notifications" && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 30, scale: 0.985 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                className="relative overflow-hidden rounded-[34px] border border-white/60 bg-white/55 p-1 shadow-[0_30px_100px_rgba(30,22,12,.14)] backdrop-blur-3xl dark:border-white/10 dark:bg-gray-900/55"
-                            >
-                                <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-amber-300/25 blur-3xl" />
-                                <div className="pointer-events-none absolute -bottom-24 -right-20 h-80 w-80 rounded-full bg-blue-300/20 blur-3xl" />
-
-                                <div className="relative rounded-[30px] border border-white/50 bg-gradient-to-br from-white/75 via-white/45 to-white/20 p-5 backdrop-blur-2xl sm:p-8 dark:border-white/10 dark:from-gray-800/80 dark:via-gray-900/65 dark:to-gray-900/35">
-                                    <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-                                        <div>
-                                            <p className="text-[11px] font-bold tracking-[.28em] text-[#b47a29]">LIQUID ACTIVITY CENTRE</p>
-                                            <h2 className="mt-2 font-serif text-4xl">Notifications</h2>
-                                            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Orders, offers and store updates in one place.</p>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            <span className="rounded-full border border-white/70 bg-white/50 px-4 py-2 text-xs shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-white/5">
-                                                {notifications.filter(n => !n.read).length} unread
-                                            </span>
-                                            {notifications.some(n => !n.read) && (
-                                                <button onClick={markAllNotificationsAsRead} className="rounded-full bg-black px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-[#b47a29]">
-                                                    Mark all read
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {notifications.length === 0 ? (
-                                        <div className="py-20 text-center">
-                                            <motion.div
-                                                animate={{ y: [0, -8, 0], rotate: [-3, 3, -3] }}
-                                                transition={{ duration: 3.5, repeat: Infinity }}
-                                                className="mx-auto flex h-24 w-24 items-center justify-center rounded-[30px] border border-white/70 bg-white/50 text-4xl text-[#b47a29] shadow-xl backdrop-blur-2xl dark:border-white/10 dark:bg-white/5"
-                                            >
-                                                <FiBell />
-                                            </motion.div>
-                                            <p className="mt-6 font-serif text-2xl">You are all caught up</p>
-                                        </div>
-                                    ) : (
-                                        <motion.div layout className="grid gap-4">
-                                            <AnimatePresence mode="popLayout">
-                                                {notifications.map((notif, index) => {
-                                                    const image = getNotificationImage(notif);
-                                                    const isOrder = notif.type === "order";
-                                                    const isCoupon = notif.type === "coupon";
-                                                    return (
-                                                        <motion.article
-                                                            layout
-                                                            key={notif.id}
-                                                            initial={{ opacity: 0, y: 22, filter: "blur(8px)" }}
-                                                            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                                                            exit={{ opacity: 0, x: -30, scale: .96 }}
-                                                            transition={{ delay: Math.min(index * .04, .3), type: "spring", stiffness: 240, damping: 24 }}
-                                                            whileHover={{ y: -5, scale: 1.006 }}
-                                                            className={`group relative overflow-hidden rounded-[26px] border p-3 shadow-[0_14px_45px_rgba(30,22,12,.08)] backdrop-blur-2xl sm:p-4 ${!notif.read ? "border-amber-300/70 bg-amber-50/65 dark:bg-amber-950/20" : "border-white/75 bg-white/55 dark:border-white/10 dark:bg-white/5"}`}
-                                                        >
-                                                            <div className="absolute inset-0 bg-gradient-to-br from-white/35 via-transparent to-white/5" />
-                                                            {!notif.read && (
-                                                                <motion.span
-                                                                    animate={{ scale: [1, 1.8, 1], opacity: [1, .15, 1] }}
-                                                                    transition={{ duration: 2.2, repeat: Infinity }}
-                                                                    className="absolute right-5 top-5 h-2.5 w-2.5 rounded-full bg-amber-500"
-                                                                />
-                                                            )}
-
-                                                            <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center">
-                                                                <div className="h-24 w-full shrink-0 overflow-hidden rounded-[20px] border border-white/60 bg-white/40 shadow-inner sm:h-24 sm:w-24 dark:border-white/10 dark:bg-white/5">
-                                                                    {image ? (
-                                                                        <img src={image} alt={notif.title || "Notification"} className="h-full w-full object-cover transition duration-500 group-hover:scale-110" />
-                                                                    ) : (
-                                                                        <div className={`flex h-full w-full items-center justify-center text-3xl ${isOrder ? "text-blue-600" : isCoupon ? "text-amber-600" : "text-gray-500"}`}>
-                                                                            {isOrder ? <FiPackage /> : isCoupon ? <FiGift /> : <FiBell />}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-
-                                                                <div className="min-w-0 flex-1">
-                                                                    <div className="flex flex-wrap items-center gap-2">
-                                                                        <h3 className="font-semibold text-gray-950 dark:text-white">{notif.title}</h3>
-                                                                        <span className="rounded-full border border-white/70 bg-white/55 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-600 backdrop-blur-xl dark:border-white/10 dark:bg-white/5 dark:text-gray-300">
-                                                                            {isOrder ? "Order" : isCoupon ? "Offer" : notif.type || "Update"}
-                                                                        </span>
-                                                                    </div>
-                                                                    <p className="mt-1 line-clamp-2 text-sm leading-6 text-gray-500 dark:text-gray-400">{notif.message}</p>
-                                                                    <p className="mt-2 text-xs text-gray-400">{formatDateTime(notif.date)}</p>
-                                                                </div>
-
-                                                                <button
-                                                                    onClick={() => viewNotificationDetails(notif)}
-                                                                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl border border-white/80 bg-white/65 px-4 py-3 text-xs font-bold text-gray-900 shadow-sm backdrop-blur-xl transition hover:-translate-y-1 hover:bg-black hover:text-white dark:border-white/10 dark:bg-white/10 dark:text-white"
-                                                                >
-                                                                    View details <FiArrowRight className="transition group-hover:translate-x-1" />
-                                                                </button>
-                                                            </div>
-                                                        </motion.article>
-                                                    );
-                                                })}
-                                            </AnimatePresence>
-                                        </motion.div>
-                                    )}
+                            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                <div className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-end sm:justify-between dark:border-gray-700">
+                                    <div><h2 className="text-2xl font-bold">Notifications</h2><p className="mt-1 text-sm text-gray-500">Open any notification to view the related order, return, offer, product, security page or support section.</p></div>
+                                    <div className="flex flex-wrap gap-2">{[["all",`All (${notifications.length})`],["unread",`Unread (${notifications.filter(n=>!n.read).length})`],["read",`Read (${notifications.filter(n=>n.read).length})`]].map(([v,l])=><button key={v} onClick={()=>setNotificationFilter(v)} className={`rounded-full px-4 py-2 text-xs font-bold ${notificationFilter===v?"bg-black text-white":"bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"}`}>{l}</button>)}</div>
                                 </div>
-                            </motion.div>
-                        )}
-
-                        {/* Returns Tab */}
-                        {activeTab === "returns" && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6"
-                            >
-                                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-                                    <FiShield className="text-orange-600" /> Returns & Refunds
-                                </h2>
-                                
-                                {returnRequests.length === 0 ? (
-                                    <div className="text-center py-16">
-                                        <FiShield className="w-20 h-20 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500 text-lg">No return requests yet</p>
-                                        <p className="text-sm text-gray-400 mt-2">When you request a return, it will appear here with full tracking</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-6">
-                                        {returnRequests.map((returnReq) => (
-                                            <div 
-                                                key={returnReq.id} 
-                                                className="border-2 rounded-xl p-5 cursor-pointer hover:shadow-lg transition-all"
-                                                onClick={() => setSelectedReturnRequest(returnReq)}
-                                            >
-                                                <div className="flex flex-wrap justify-between items-start mb-4">
-                                                    <div className="flex gap-3">
-                                                        {returnReq.productImage && (
-                                                            <img src={returnReq.productImage} alt={returnReq.productName} className="w-16 h-16 object-cover rounded-lg" />
-                                                        )}
-                                                        <div>
-                                                            <p className="font-medium">{returnReq.productName}</p>
-                                                            <p className="text-xs text-gray-500">Return ID: #{returnReq.id}</p>
-                                                        </div>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <div className="flex items-center gap-1">
-                                                            {getReturnStatusIcon(returnReq.status)}
-                                                            <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getReturnStatusBadge(returnReq.status)}`}>
-                                                                {getReturnStatusText(returnReq.status)}
-                                                            </span>
-                                                        </div>
-                                                        <p className="text-lg font-bold text-green-600 mt-2">{formatPrice(returnReq.refundAmount)}</p>
-                                                    </div>
-                                                </div>
-                                                
-                                                <div className="mt-4">
-                                                    <div className="flex justify-between text-xs text-gray-500 mb-1">
-                                                        <span>Requested</span>
-                                                        <span>Pickup</span>
-                                                        <span>Collected</span>
-                                                        <span>Verified</span>
-                                                        <span>Refunded</span>
-                                                    </div>
-                                                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                                        <div 
-                                                            className="h-full bg-gradient-to-r from-yellow-500 via-blue-500 to-green-500 rounded-full transition-all duration-500"
-                                                            style={{ width: `${returnStages[returnReq.status]?.progress || 0}%` }}
-                                                        ></div>
-                                                    </div>
-                                                </div>
-                                                
-                                                <div className="mt-3 text-xs text-gray-500 flex items-center gap-2">
-                                                    <FiInfo size={12} />
-                                                    <span>Click to view full tracking history and refund details</span>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
+                                <div className="mt-4 flex justify-end gap-2">{notifications.some(n=>!n.read)&&<button onClick={markAllNotificationsAsRead} className="rounded-xl bg-black px-4 py-2 text-xs font-bold text-white">Mark all as read</button>}{notifications.some(n=>n.read)&&<button onClick={clearReadNotifications} className="rounded-xl border px-4 py-2 text-xs font-bold text-red-600">Clear read</button>}</div>
+                                <div className="mt-5 space-y-3">{filteredNotifications.length===0?<div className="py-14 text-center text-gray-500"><FiBell className="mx-auto mb-3 h-12 w-12 text-gray-300" />No {notificationFilter==="all"?"":notificationFilter} notifications</div>:filteredNotifications.map(notif=><div key={getNotificationId(notif)} className={`rounded-2xl border p-4 ${notif.read?"bg-gray-50 dark:bg-gray-700/30":"border-amber-300 bg-amber-50/70 dark:bg-amber-900/10"}`}><div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="font-bold">{notif.title}</p>{!notif.read&&<span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">UNREAD</span>}</div><p className="mt-1 text-sm text-gray-500">{notif.message}</p><p className="mt-2 text-xs text-gray-400">{formatDateTime(notif.date||notif.createdAt||new Date())}</p></div><div className="flex gap-2"><button onClick={()=>viewNotificationDetails(notif)} className="rounded-xl bg-black px-4 py-2.5 text-xs font-bold text-white">View details</button><button onClick={()=>notif.read?markNotificationAsUnread(getNotificationId(notif)):markNotificationAsRead(getNotificationId(notif))} className="rounded-xl border px-3 py-2.5 text-xs font-bold">{notif.read?"Mark unread":"Mark read"}</button></div></div></div>)}</div>
                             </motion.div>
                         )}
 
@@ -1858,14 +3819,15 @@ const Profile = () => {
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6"
+                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
+                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
                             >
                                 <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-2xl font-bold flex items-center gap-2">
+                                    <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                         <FiMapPin className="text-green-600" /> My Addresses
                                     </h2>
-                                    <button onClick={() => setShowAddAddress(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-all flex items-center gap-2">
-                                        <FiPlus size={16} /> Add New Address
+                                    <button onClick={() => setShowAddAddress(true)} className="px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white rounded-lg text-xs sm:text-sm font-medium hover:bg-blue-700 transition-all flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                        <FiPlus size={14} /> Add New
                                     </button>
                                 </div>
                                 
@@ -1875,12 +3837,12 @@ const Profile = () => {
                                             <div className="flex justify-between items-start mb-2">
                                                 <div className="flex items-center gap-2">
                                                     {address.isDefault && (
-                                                        <span className="px-2 py-0.5 bg-blue-600 text-white text-xs rounded-full">Default</span>
+                                                        <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] rounded-full" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Default</span>
                                                     )}
                                                 </div>
                                                 <div className="flex gap-2">
                                                     {!address.isDefault && (
-                                                        <button onClick={() => setDefaultAddress(address.id)} className="text-xs text-blue-600 hover:underline">
+                                                        <button onClick={() => setDefaultAddress(address.id)} className="text-[10px] sm:text-xs text-blue-600 hover:underline" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                             Set Default
                                                         </button>
                                                     )}
@@ -1889,10 +3851,10 @@ const Profile = () => {
                                                     </button>
                                                 </div>
                                             </div>
-                                            <p className="font-medium">{address.street}</p>
-                                            <p className="text-sm text-gray-600 dark:text-gray-400">{address.city}, {address.state}</p>
-                                            <p className="text-sm text-gray-600 dark:text-gray-400">{address.zipCode}, {address.country}</p>
-                                            {address.phone && <p className="text-sm text-gray-500 mt-1">📞 {address.phone}</p>}
+                                            <p className="font-medium text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.street}</p>
+                                            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.city}, {address.state}</p>
+                                            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.zipCode}, {address.country}</p>
+                                            {address.phone && <p className="text-xs sm:text-sm text-gray-500 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>📞 {address.phone}</p>}
                                         </div>
                                     ))}
                                 </div>
@@ -1900,7 +3862,7 @@ const Profile = () => {
                                 {addresses.length === 0 && (
                                     <div className="text-center py-12">
                                         <FiMapPin className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500">No addresses saved yet</p>
+                                        <p className="text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No addresses saved yet</p>
                                     </div>
                                 )}
                             </motion.div>
@@ -1908,836 +3870,473 @@ const Profile = () => {
 
                         {/* Security Tab */}
                         {activeTab === "security" && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6"
-                            >
-                                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-                                    <FiLock className="text-gray-600" /> Security Settings
-                                </h2>
-                                
-                                <div className="space-y-6">
-                                    <div className="border-b pb-4">
-                                        <h3 className="font-semibold mb-2">Password</h3>
-                                        <p className="text-sm text-gray-500 mb-3">Last changed: {new Date().toLocaleDateString()}</p>
-                                        <button className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-all">
-                                            Change Password
-                                        </button>
-                                    </div>
-                                    
-                                    <div className="border-b pb-4">
-                                        <h3 className="font-semibold mb-2">Two-Factor Authentication</h3>
-                                        <p className="text-sm text-gray-500 mb-3">Add an extra layer of security to your account</p>
-                                        <button className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-all">
-                                            Enable 2FA
-                                        </button>
-                                    </div>
-                                    
-                                    <div>
-                                        <h3 className="font-semibold mb-2">Active Sessions</h3>
-                                        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
-                                            <div className="flex justify-between items-center">
-                                                <div>
-                                                    <p className="font-medium">Current Session</p>
-                                                    <p className="text-xs text-gray-500">Browser • {new Date().toLocaleString()}</p>
-                                                </div>
-                                                <span className="text-xs text-green-600">Active now</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                            <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800" style={{fontFamily:"'Times New Roman', Times, serif"}}>
+                                <h2 className="text-2xl font-bold flex items-center gap-2"><FiLock /> Security</h2>
+                                <p className="mt-1 text-sm text-gray-500">Manage password, two-factor authentication, alerts and sessions.</p>
+                                <form onSubmit={handleChangePassword} className="mt-6 rounded-2xl border p-4 dark:border-gray-700"><div className="flex justify-between"><h3 className="font-bold">Change Password</h3><button type="button" onClick={()=>setShowPasswords(v=>!v)}><FiEye /></button></div><div className="mt-4 grid gap-3 lg:grid-cols-3">{[["currentPassword","Current password"],["newPassword","New password"],["confirmPassword","Confirm new password"]].map(([k,p])=><input key={k} type={showPasswords?"text":"password"} value={passwordForm[k]} onChange={e=>setPasswordForm(x=>({...x,[k]:e.target.value}))} placeholder={p} className="rounded-xl border px-4 py-3 text-sm dark:border-gray-600 dark:bg-gray-700" />)}</div><button disabled={changingPassword} className="mt-4 rounded-xl bg-black px-5 py-3 text-sm font-bold text-white">{changingPassword?"Updating...":"Update Password"}</button></form>
+                                <div className="mt-5 grid gap-4 md:grid-cols-2"><div className="rounded-2xl border p-4 dark:border-gray-700"><h3 className="font-bold">Two-Factor Authentication</h3><p className="mt-1 text-sm text-gray-500">Status: {securityPrefs.twoFactorEnabled?"Enabled":"Disabled"}</p><button onClick={toggleTwoFactor} disabled={securityActionLoading} className="mt-4 rounded-xl border px-4 py-2.5 text-sm font-bold">{securityPrefs.twoFactorEnabled?"Disable 2FA":"Enable 2FA"}</button></div><div className="rounded-2xl border p-4 dark:border-gray-700"><h3 className="font-bold">Security Alerts</h3>{[["loginAlerts","Login alerts"],["securityEmails","Security emails"]].map(([k,l])=><label key={k} className="mt-3 flex justify-between"><span>{l}</span><input type="checkbox" checked={securityPrefs[k]} onChange={e=>persistSecurityPrefs({...securityPrefs,[k]:e.target.checked})} /></label>)}</div></div>
+                                <div className="mt-5 rounded-2xl border p-4 dark:border-gray-700"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-bold">Current Session</h3><p className="text-sm text-gray-500">Browser • Active now</p></div><button onClick={logoutOtherSessions} disabled={securityActionLoading} className="rounded-xl border border-red-200 px-4 py-2.5 text-sm font-bold text-red-600">Sign out other sessions</button></div></div>
                             </motion.div>
                         )}
 
                         {/* Settings Tab */}
                         {activeTab === "settings" && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6"
-                            >
-                                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-                                    <FiSettings className="text-gray-600" /> Preferences
-                                </h2>
-                                
-                                <div className="space-y-4">
-                                    <div className="flex justify-between items-center py-3 border-b">
-                                        <div>
-                                            <p className="font-medium">Email Notifications</p>
-                                            <p className="text-sm text-gray-500">Receive order updates and promotions</p>
-                                        </div>
-                                        <label className="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" className="sr-only peer" defaultChecked />
-                                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                                        </label>
-                                    </div>
-                                    
-                                    <div className="flex justify-between items-center py-3 border-b">
-                                        <div>
-                                            <p className="font-medium">SMS Alerts</p>
-                                            <p className="text-sm text-gray-500">Get delivery updates via SMS</p>
-                                        </div>
-                                        <label className="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" className="sr-only peer" />
-                                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                                        </label>
-                                    </div>
-                                    
-                                    <div className="flex justify-between items-center py-3 border-b">
-                                        <div>
-                                            <p className="font-medium">Language</p>
-                                            <p className="text-sm text-gray-500">Choose your preferred language</p>
-                                        </div>
-                                        <select className="px-3 py-1 border rounded-lg">
-                                            <option>English</option>
-                                            <option>Spanish</option>
-                                            <option>French</option>
-                                        </select>
-                                    </div>
-                                    
-                                    <div className="flex justify-between items-center py-3">
-                                        <div>
-                                            <p className="font-medium">Currency</p>
-                                            <p className="text-sm text-gray-500">{currencyCode} - {currencySymbol}</p>
-                                        </div>
-                                        <select className="px-3 py-1 border rounded-lg" value={currencyCode}>
-                                            <option>USD</option>
-                                            <option>EUR</option>
-                                            <option>GBP</option>
-                                            <option>LKR</option>
-                                        </select>
-                                    </div>
-                                </div>
+                            <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} className="space-y-5" style={{fontFamily:"'Times New Roman', Times, serif"}}>
+                                <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800"><h2 className="text-2xl font-bold flex items-center gap-2"><FiSettings /> Settings</h2><p className="mt-1 text-sm text-gray-500">Manage communication and shopping preferences.</p><div className="mt-5">{[["emailNotifications","Email Notifications"],["smsAlerts","SMS Alerts"],["orderUpdates","Order Updates"],["promotionalOffers","Offers & Promotions"],["wishlistAlerts","Wishlist Alerts"]].map(([k,l])=><label key={k} className="flex items-center justify-between border-b py-4 last:border-0 dark:border-gray-700"><span className="font-bold">{l}</span><input type="checkbox" checked={accountPrefs[k]} onChange={e=>persistAccountPrefs({...accountPrefs,[k]:e.target.checked})} /></label>)}</div></section>
+                                <section className="grid gap-4 md:grid-cols-2"><div className="rounded-3xl border bg-white p-5 dark:border-gray-700 dark:bg-gray-800"><FiDownload className="text-2xl"/><h3 className="mt-3 font-bold">Download My Data</h3><button onClick={downloadAccountData} className="mt-4 rounded-xl border px-4 py-2.5 text-sm font-bold">Download Data</button></div><div className="rounded-3xl border bg-white p-5 dark:border-gray-700 dark:bg-gray-800"><FiMoon className="text-2xl"/><h3 className="mt-3 font-bold">Appearance</h3><button onClick={()=>{const next=!darkMode;setDarkMode(next);localStorage.setItem("theme",next?"dark":"light");document.documentElement.classList.toggle("dark",next);}} className="mt-4 rounded-xl bg-black px-4 py-2.5 text-sm font-bold text-white">{darkMode?"Light Mode":"Dark Mode"}</button></div></section>
+                                <section className="rounded-3xl border border-red-200 bg-red-50 p-5 dark:bg-red-900/10"><h3 className="font-bold text-red-700">Delete Account</h3><p className="mt-1 text-sm text-red-600">Type DELETE to confirm permanent deletion.</p><button onClick={handleDeleteAccount} disabled={deletingAccount} className="mt-4 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white">{deletingAccount?"Deleting...":"Delete Account"}</button></section>
                             </motion.div>
                         )}
                     </div>
                 </div>
 
-                {/* Premium Edit Profile Modal - Keep the same */}
+                {/* RETURN ITEM MODAL */}
                 <AnimatePresence>
-                    {isEditingProfile && (
+                    {selectedItemForReturn && (
                         <motion.div
-                            className="fixed inset-0 z-[70] flex items-end justify-center bg-black/65 p-0 backdrop-blur-md sm:items-center sm:p-5"
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-3 sm:p-4 backdrop-blur-sm"
                             onMouseDown={(event) => {
-                                if (event.target === event.currentTarget && !isSavingProfile) {
-                                    setIsEditingProfile(false);
+                                if (
+                                    event.target ===
+                                    event.currentTarget
+                                ) {
+                                    resetReturnForm();
                                 }
                             }}
                         >
                             <motion.div
-                                role="dialog"
-                                aria-modal="true"
-                                aria-labelledby="edit-profile-title"
-                                initial={{ opacity: 0, y: 70, scale: 0.97 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 70, scale: 0.97 }}
-                                transition={{ type: "spring", stiffness: 280, damping: 28 }}
-                                className="relative flex max-h-[96vh] w-full max-w-5xl flex-col overflow-hidden rounded-t-[28px] border border-white/10 bg-[#fbfaf8] shadow-[0_30px_100px_rgba(0,0,0,.45)] sm:max-h-[92vh] sm:rounded-[28px] dark:bg-gray-900"
+                                initial={{
+                                    opacity: 0,
+                                    y: 24,
+                                    scale: 0.97
+                                }}
+                                animate={{
+                                    opacity: 1,
+                                    y: 0,
+                                    scale: 1
+                                }}
+                                exit={{
+                                    opacity: 0,
+                                    y: 15,
+                                    scale: 0.98
+                                }}
+                                className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-4 shadow-2xl sm:p-6 dark:bg-gray-800"
+                                style={{
+                                    fontFamily:
+                                        "'Times New Roman', Times, serif"
+                                }}
                             >
-                                {/* Header */}
-                                <div className="relative overflow-hidden bg-[#111111] px-5 py-5 text-white sm:px-8 sm:py-7">
-                                    <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-[#c8954f]/20 blur-3xl" />
-                                    <div className="relative flex items-start justify-between gap-5">
-                                        <div>
-                                            <p className="mb-2 text-[10px] font-semibold tracking-[0.3em] text-[#d8ad70]">
-                                                ZAMED PREMIUM ACCOUNT
-                                            </p>
-                                            <h2 id="edit-profile-title" className="font-serif text-3xl sm:text-4xl">
-                                                Edit Your Profile
-                                            </h2>
-                                            <p className="mt-2 max-w-xl text-sm leading-6 text-white/60">
-                                                Keep your personal details and style preferences updated for a more personalised shopping experience.
-                                            </p>
+                                <div className="flex items-start justify-between gap-4 border-b border-gray-100 pb-4 dark:border-gray-700">
+                                    <div className="min-w-0">
+                                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-orange-600">
+                                            Returns & Refunds
+                                        </p>
+
+                                        <h2 className="mt-1 text-xl font-bold sm:text-2xl">
+                                            Return Item
+                                        </h2>
+
+                                        <p className="mt-1 truncate text-sm text-gray-500">
+                                            {
+                                                selectedItemForReturn.productName
+                                            }
+                                        </p>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={
+                                            resetReturnForm
+                                        }
+                                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300"
+                                        aria-label="Close return form"
+                                    >
+                                        <FiX />
+                                    </button>
+                                </div>
+
+                                <div className="mt-5 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-700/40">
+                                    {selectedItemForReturn.productImage ? (
+                                        <img
+                                            src={
+                                                selectedItemForReturn.productImage
+                                            }
+                                            alt={
+                                                selectedItemForReturn.productName
+                                            }
+                                            className="h-16 w-16 shrink-0 rounded-xl object-cover"
+                                        />
+                                    ) : (
+                                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-white dark:bg-gray-700">
+                                            <FiPackage className="text-gray-400" />
                                         </div>
-                                        <motion.button
-                                            whileHover={{ rotate: 90, scale: 1.05 }}
-                                            whileTap={{ scale: 0.92 }}
-                                            type="button"
-                                            disabled={isSavingProfile}
-                                            onClick={() => setIsEditingProfile(false)}
-                                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white transition hover:bg-white/10 disabled:opacity-50"
-                                            aria-label="Close edit profile"
-                                        >
-                                            <FiX size={20} />
-                                        </motion.button>
+                                    )}
+
+                                    <div className="min-w-0">
+                                        <p className="truncate font-bold">
+                                            {
+                                                selectedItemForReturn.productName
+                                            }
+                                        </p>
+
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            Order #
+                                            {
+                                                selectedItemForReturn.orderId
+                                            }
+                                        </p>
+
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            Paid by:{" "}
+                                            <strong>
+                                                {
+                                                    selectedItemForReturn.paymentMethod
+                                                }
+                                            </strong>
+                                        </p>
                                     </div>
                                 </div>
 
-                                <div className="overflow-y-auto">
-                                    <div className="grid lg:grid-cols-[280px_1fr]">
-                                        {/* Profile preview panel */}
-                                        <aside className="border-b border-[#e8e1d6] bg-gradient-to-b from-[#f5ecdd] to-[#fbfaf8] p-6 lg:border-b-0 lg:border-r dark:border-gray-700 dark:from-gray-800 dark:to-gray-900">
-                                            <div className="sticky top-0 text-center">
-                                                <div className="relative mx-auto h-36 w-36">
-                                                    <motion.div
-                                                        whileHover={{ scale: 1.025 }}
-                                                        className="h-full w-full overflow-hidden rounded-full border-[5px] border-white bg-[#171717] shadow-[0_18px_45px_rgba(35,25,10,.18)] dark:border-gray-700"
-                                                    >
-                                                        {editedUser.profileImage ? (
-                                                            <img
-                                                                src={editedUser.profileImage}
-                                                                alt="Profile preview"
-                                                                className="h-full w-full object-cover"
-                                                            />
-                                                        ) : (
-                                                            <div className="flex h-full w-full items-center justify-center font-serif text-5xl text-white">
-                                                                {editedUser.firstName?.charAt(0) || "Z"}
-                                                                {editedUser.lastName?.charAt(0) || "P"}
-                                                            </div>
-                                                        )}
-                                                    </motion.div>
+                                <div className="mt-5 space-y-5">
+                                    <div>
+                                        <label className="mb-2 block text-sm font-bold">
+                                            Reason for return
+                                        </label>
 
-                                                    <label className="absolute bottom-1 right-1 flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border-4 border-[#f5ecdd] bg-black text-white shadow-lg transition hover:bg-[#b98237] dark:border-gray-800">
-                                                        <FiCamera size={17} />
-                                                        <input
-                                                            type="file"
-                                                            accept="image/png,image/jpeg,image/webp"
-                                                            onChange={handleProfileImageChange}
-                                                            className="hidden"
-                                                        />
-                                                    </label>
-                                                </div>
-
-                                                <h3 className="mt-5 font-serif text-2xl text-gray-950 dark:text-white">
-                                                    {editedUser.preferredName || editedUser.firstName || "Your"}{" "}
-                                                    {editedUser.lastName || "Name"}
-                                                </h3>
-                                                <p className="mt-1 break-all text-xs text-gray-500">{editedUser.email}</p>
-                                                <span className="mt-3 inline-flex rounded-full bg-[#ead8bb] px-3 py-1 text-[10px] font-bold tracking-[0.16em] text-[#8b5a1f]">
-                                                    PREMIUM MEMBER
-                                                </span>
-
-                                                <div className="mt-6 rounded-2xl border border-[#e6d8c4] bg-white/75 p-4 text-left dark:border-gray-700 dark:bg-gray-800/80">
-                                                    <div className="flex items-center justify-between text-xs">
-                                                        <span className="font-medium text-gray-600 dark:text-gray-300">Profile completion</span>
-                                                        <span className="font-bold text-[#a86f25]">
-                                                            {Math.round(
-                                                                [
-                                                                    editedUser.firstName,
-                                                                    editedUser.lastName,
-                                                                    editedUser.email,
-                                                                    editedUser.phone,
-                                                                    editedUser.dateOfBirth,
-                                                                    editedUser.gender,
-                                                                    editedUser.street,
-                                                                    editedUser.city,
-                                                                    editedUser.postcode,
-                                                                    editedUser.preferredSize
-                                                                ].filter(Boolean).length * 10
-                                                            )}%
-                                                        </span>
-                                                    </div>
-                                                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#e9e1d5] dark:bg-gray-700">
-                                                        <motion.div
-                                                            initial={{ width: 0 }}
-                                                            animate={{
-                                                                width: `${Math.round(
-                                                                    [
-                                                                        editedUser.firstName,
-                                                                        editedUser.lastName,
-                                                                        editedUser.email,
-                                                                        editedUser.phone,
-                                                                        editedUser.dateOfBirth,
-                                                                        editedUser.gender,
-                                                                        editedUser.street,
-                                                                        editedUser.city,
-                                                                        editedUser.postcode,
-                                                                        editedUser.preferredSize
-                                                                    ].filter(Boolean).length * 10
-                                                                )}%`
-                                                            }}
-                                                            transition={{ duration: 0.55, ease: "easeOut" }}
-                                                            className="h-full rounded-full bg-gradient-to-r from-[#9b6829] to-[#d8ad70]"
-                                                        />
-                                                    </div>
-                                                    <p className="mt-3 text-[11px] leading-5 text-gray-500">
-                                                        Complete your profile to improve sizing suggestions, delivery checkout and personalised recommendations.
-                                                    </p>
-                                                </div>
-
-                                                {editedUser.profileImage && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setProfileField("profileImage", "")}
-                                                        className="mt-4 text-xs font-semibold text-red-500 transition hover:text-red-600"
-                                                    >
-                                                        Remove profile photo
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </aside>
-
-                                        {/* Editable form */}
-                                        <div className="space-y-8 p-5 sm:p-8">
-                                            {/* Personal details */}
-                                            <section>
-                                                <div className="mb-5 flex items-center gap-3">
-                                                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f5ecdd] text-[#a86f25]">
-                                                        <FiUser size={18} />
-                                                    </div>
-                                                    <div>
-                                                        <h3 className="font-serif text-xl text-gray-950 dark:text-white">Personal details</h3>
-                                                        <p className="text-xs text-gray-500">Basic information shown on your account.</p>
-                                                    </div>
-                                                </div>
-
-                                                <div className="grid gap-4 sm:grid-cols-2">
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">
-                                                            Title
-                                                        </span>
-                                                        <select
-                                                            value={editedUser.title || ""}
-                                                            onChange={(e) => setProfileField("title", e.target.value)}
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        >
-                                                            <option value="">Select title</option>
-                                                            <option value="Mr">Mr</option>
-                                                            <option value="Mrs">Mrs</option>
-                                                            <option value="Ms">Ms</option>
-                                                            <option value="Miss">Miss</option>
-                                                            <option value="Dr">Dr</option>
-                                                        </select>
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">
-                                                            Preferred name
-                                                        </span>
-                                                        <input
-                                                            type="text"
-                                                            value={editedUser.preferredName || ""}
-                                                            onChange={(e) => setProfileField("preferredName", e.target.value)}
-                                                            placeholder="How should we address you?"
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-gray-400 focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        />
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">
-                                                            First name <span className="text-red-500">*</span>
-                                                        </span>
-                                                        <input
-                                                            type="text"
-                                                            value={editedUser.firstName || ""}
-                                                            onChange={(e) => setProfileField("firstName", e.target.value)}
-                                                            placeholder="First name"
-                                                            className={`w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none transition focus:ring-4 dark:bg-gray-800 ${
-                                                                profileErrors.firstName
-                                                                    ? "border-red-400 focus:border-red-500 focus:ring-red-500/10"
-                                                                    : "border-[#ded6ca] focus:border-[#b98237] focus:ring-[#b98237]/10 dark:border-gray-700"
-                                                            }`}
-                                                        />
-                                                        {profileErrors.firstName && <span className="mt-1.5 block text-xs text-red-500">{profileErrors.firstName}</span>}
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">
-                                                            Last name <span className="text-red-500">*</span>
-                                                        </span>
-                                                        <input
-                                                            type="text"
-                                                            value={editedUser.lastName || ""}
-                                                            onChange={(e) => setProfileField("lastName", e.target.value)}
-                                                            placeholder="Last name"
-                                                            className={`w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none transition focus:ring-4 dark:bg-gray-800 ${
-                                                                profileErrors.lastName
-                                                                    ? "border-red-400 focus:border-red-500 focus:ring-red-500/10"
-                                                                    : "border-[#ded6ca] focus:border-[#b98237] focus:ring-[#b98237]/10 dark:border-gray-700"
-                                                            }`}
-                                                        />
-                                                        {profileErrors.lastName && <span className="mt-1.5 block text-xs text-red-500">{profileErrors.lastName}</span>}
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Date of birth</span>
-                                                        <input
-                                                            type="date"
-                                                            value={editedUser.dateOfBirth ? String(editedUser.dateOfBirth).slice(0, 10) : ""}
-                                                            onChange={(e) => setProfileField("dateOfBirth", e.target.value)}
-                                                            max={new Date().toISOString().split("T")[0]}
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        />
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Gender</span>
-                                                        <select
-                                                            value={editedUser.gender || ""}
-                                                            onChange={(e) => setProfileField("gender", e.target.value)}
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        >
-                                                            <option value="">Prefer not to say</option>
-                                                            <option value="Male">Male</option>
-                                                            <option value="Female">Female</option>
-                                                            <option value="Non-binary">Non-binary</option>
-                                                            <option value="Other">Other</option>
-                                                        </select>
-                                                    </label>
-                                                </div>
-                                            </section>
-
-                                            <div className="h-px bg-[#e9e2d8] dark:bg-gray-700" />
-
-                                            {/* Contact details */}
-                                            <section>
-                                                <div className="mb-5 flex items-center gap-3">
-                                                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f5ecdd] text-[#a86f25]">
-                                                        <FiMail size={18} />
-                                                    </div>
-                                                    <div>
-                                                        <h3 className="font-serif text-xl text-gray-950 dark:text-white">Contact details</h3>
-                                                        <p className="text-xs text-gray-500">Used for order confirmations and delivery updates.</p>
-                                                    </div>
-                                                </div>
-
-                                                <div className="grid gap-4 sm:grid-cols-2">
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">
-                                                            Email address <span className="text-red-500">*</span>
-                                                        </span>
-                                                        <div className="relative">
-                                                            <FiMail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                                                            <input
-                                                                type="email"
-                                                                value={editedUser.email || ""}
-                                                                onChange={(e) => setProfileField("email", e.target.value)}
-                                                                placeholder="name@example.com"
-                                                                className={`w-full rounded-xl border bg-white py-3 pl-11 pr-4 text-sm outline-none transition focus:ring-4 dark:bg-gray-800 ${
-                                                                    profileErrors.email
-                                                                        ? "border-red-400 focus:border-red-500 focus:ring-red-500/10"
-                                                                        : "border-[#ded6ca] focus:border-[#b98237] focus:ring-[#b98237]/10 dark:border-gray-700"
-                                                                }`}
-                                                            />
-                                                        </div>
-                                                        {profileErrors.email && <span className="mt-1.5 block text-xs text-red-500">{profileErrors.email}</span>}
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Phone number</span>
-                                                        <div className="relative">
-                                                            <FiPhone className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                                                            <input
-                                                                type="tel"
-                                                                value={editedUser.phone || ""}
-                                                                onChange={(e) => setProfileField("phone", e.target.value)}
-                                                                placeholder="+44 7700 900000"
-                                                                className={`w-full rounded-xl border bg-white py-3 pl-11 pr-4 text-sm outline-none transition focus:ring-4 dark:bg-gray-800 ${
-                                                                    profileErrors.phone
-                                                                        ? "border-red-400 focus:border-red-500 focus:ring-red-500/10"
-                                                                        : "border-[#ded6ca] focus:border-[#b98237] focus:ring-[#b98237]/10 dark:border-gray-700"
-                                                                }`}
-                                                            />
-                                                        </div>
-                                                        {profileErrors.phone && <span className="mt-1.5 block text-xs text-red-500">{profileErrors.phone}</span>}
-                                                    </label>
-
-                                                    <label className="block sm:col-span-2">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">About you</span>
-                                                        <textarea
-                                                            rows="3"
-                                                            maxLength="240"
-                                                            value={editedUser.bio || ""}
-                                                            onChange={(e) => setProfileField("bio", e.target.value)}
-                                                            placeholder="Tell us a little about your style and preferences..."
-                                                            className="w-full resize-none rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-gray-400 focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        />
-                                                        <span className="mt-1 block text-right text-[10px] text-gray-400">{(editedUser.bio || "").length}/240</span>
-                                                    </label>
-                                                </div>
-                                            </section>
-
-                                            <div className="h-px bg-[#e9e2d8] dark:bg-gray-700" />
-
-                                            {/* Address */}
-                                            <section>
-                                                <div className="mb-5 flex items-center gap-3">
-                                                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f5ecdd] text-[#a86f25]">
-                                                        <FiMapPin size={18} />
-                                                    </div>
-                                                    <div>
-                                                        <h3 className="font-serif text-xl text-gray-950 dark:text-white">Primary address</h3>
-                                                        <p className="text-xs text-gray-500">This information can pre-fill your checkout details.</p>
-                                                    </div>
-                                                </div>
-
-                                                <div className="grid gap-4 sm:grid-cols-2">
-                                                    <label className="block sm:col-span-2">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Street address</span>
-                                                        <input
-                                                            type="text"
-                                                            value={editedUser.street || ""}
-                                                            onChange={(e) => setProfileField("street", e.target.value)}
-                                                            placeholder="House number and street"
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        />
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Town / City</span>
-                                                        <input
-                                                            type="text"
-                                                            value={editedUser.city || ""}
-                                                            onChange={(e) => setProfileField("city", e.target.value)}
-                                                            placeholder="London"
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        />
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">County / Region</span>
-                                                        <input
-                                                            type="text"
-                                                            value={editedUser.county || ""}
-                                                            onChange={(e) => setProfileField("county", e.target.value)}
-                                                            placeholder="Greater London"
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        />
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Postcode</span>
-                                                        <input
-                                                            type="text"
-                                                            value={editedUser.postcode || ""}
-                                                            onChange={(e) => setProfileField("postcode", e.target.value.toUpperCase())}
-                                                            placeholder="HA1 2AB"
-                                                            className={`w-full rounded-xl border bg-white px-4 py-3 text-sm uppercase outline-none transition focus:ring-4 dark:bg-gray-800 ${
-                                                                profileErrors.postcode
-                                                                    ? "border-red-400 focus:border-red-500 focus:ring-red-500/10"
-                                                                    : "border-[#ded6ca] focus:border-[#b98237] focus:ring-[#b98237]/10 dark:border-gray-700"
-                                                            }`}
-                                                        />
-                                                        {profileErrors.postcode && <span className="mt-1.5 block text-xs text-red-500">{profileErrors.postcode}</span>}
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Country</span>
-                                                        <select
-                                                            value={editedUser.country || ""}
-                                                            onChange={(e) => setProfileField("country", e.target.value)}
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        >
-                                                            <option value="">Select country</option>
-                                                            <option value="United Kingdom">United Kingdom</option>
-                                                            <option value="Sri Lanka">Sri Lanka</option>
-                                                            <option value="United States">United States</option>
-                                                            <option value="Canada">Canada</option>
-                                                            <option value="Australia">Australia</option>
-                                                            <option value="India">India</option>
-                                                            <option value="Other">Other</option>
-                                                        </select>
-                                                    </label>
-                                                </div>
-                                            </section>
-
-                                            <div className="h-px bg-[#e9e2d8] dark:bg-gray-700" />
-
-                                            {/* Style preferences */}
-                                            <section>
-                                                <div className="mb-5 flex items-center gap-3">
-                                                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f5ecdd] text-[#a86f25]">
-                                                        <FiAward size={18} />
-                                                    </div>
-                                                    <div>
-                                                        <h3 className="font-serif text-xl text-gray-950 dark:text-white">Style preferences</h3>
-                                                        <p className="text-xs text-gray-500">Helps ZAMED recommend better products and sizes.</p>
-                                                    </div>
-                                                </div>
-
-                                                <div className="grid gap-4 sm:grid-cols-3">
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Preferred size</span>
-                                                        <select
-                                                            value={editedUser.preferredSize || ""}
-                                                            onChange={(e) => setProfileField("preferredSize", e.target.value)}
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        >
-                                                            <option value="">Select size</option>
-                                                            {["XS", "S", "M", "L", "XL", "XXL", "3XL"].map(size => <option key={size} value={size}>{size}</option>)}
-                                                        </select>
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Preferred fit</span>
-                                                        <select
-                                                            value={editedUser.preferredFit || ""}
-                                                            onChange={(e) => setProfileField("preferredFit", e.target.value)}
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        >
-                                                            <option value="">Select fit</option>
-                                                            <option value="Slim">Slim</option>
-                                                            <option value="Regular">Regular</option>
-                                                            <option value="Relaxed">Relaxed</option>
-                                                            <option value="Oversized">Oversized</option>
-                                                        </select>
-                                                    </label>
-
-                                                    <label className="block">
-                                                        <span className="mb-2 block text-xs font-semibold text-gray-700 dark:text-gray-300">Favourite category</span>
-                                                        <select
-                                                            value={editedUser.favouriteCategory || ""}
-                                                            onChange={(e) => setProfileField("favouriteCategory", e.target.value)}
-                                                            className="w-full rounded-xl border border-[#ded6ca] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#b98237] focus:ring-4 focus:ring-[#b98237]/10 dark:border-gray-700 dark:bg-gray-800"
-                                                        >
-                                                            <option value="">Select category</option>
-                                                            <option value="Shirts">Shirts</option>
-                                                            <option value="T-Shirts">T-Shirts</option>
-                                                            <option value="Trousers">Trousers</option>
-                                                            <option value="Jackets">Jackets</option>
-                                                            <option value="Hoodies">Hoodies</option>
-                                                            <option value="Accessories">Accessories</option>
-                                                        </select>
-                                                    </label>
-                                                </div>
-
-                                                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                                                    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-[#e1d9ce] bg-white p-4 transition hover:border-[#b98237] dark:border-gray-700 dark:bg-gray-800">
-                                                        <div>
-                                                            <p className="text-sm font-semibold">Email recommendations</p>
-                                                            <p className="mt-1 text-xs text-gray-500">New arrivals, offers and style edits.</p>
-                                                        </div>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={Boolean(editedUser.newsletter)}
-                                                            onChange={(e) => setProfileField("newsletter", e.target.checked)}
-                                                            className="h-5 w-5 accent-[#a86f25]"
-                                                        />
-                                                    </label>
-
-                                                    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-[#e1d9ce] bg-white p-4 transition hover:border-[#b98237] dark:border-gray-700 dark:bg-gray-800">
-                                                        <div>
-                                                            <p className="text-sm font-semibold">SMS delivery updates</p>
-                                                            <p className="mt-1 text-xs text-gray-500">Important order and shipping alerts.</p>
-                                                        </div>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={Boolean(editedUser.smsUpdates)}
-                                                            onChange={(e) => setProfileField("smsUpdates", e.target.checked)}
-                                                            className="h-5 w-5 accent-[#a86f25]"
-                                                        />
-                                                    </label>
-                                                </div>
-                                            </section>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Sticky footer */}
-                                <div className="flex flex-col-reverse gap-3 border-t border-[#e5ddd1] bg-white/95 px-5 py-4 backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-8 dark:border-gray-700 dark:bg-gray-900/95">
-                                    <p className="text-center text-[11px] text-gray-500 sm:text-left">
-                                        Your information is securely stored and used according to our privacy policy.
-                                    </p>
-                                    <div className="flex gap-3">
-                                        <button
-                                            type="button"
-                                            disabled={isSavingProfile}
-                                            onClick={() => setIsEditingProfile(false)}
-                                            className="flex-1 rounded-xl border border-[#dcd3c6] px-6 py-3 text-xs font-bold tracking-wide text-gray-700 transition hover:border-black hover:text-black disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none dark:text-gray-200"
+                                        <select
+                                            value={
+                                                returnReason
+                                            }
+                                            onChange={event =>
+                                                setReturnReason(
+                                                    event.target.value
+                                                )
+                                            }
+                                            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700"
                                         >
-                                            CANCEL
-                                        </button>
-                                        <motion.button
-                                            type="button"
-                                            whileHover={{ y: -1 }}
-                                            whileTap={{ scale: 0.98 }}
-                                            disabled={isSavingProfile}
-                                            onClick={updateProfile}
-                                            className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-black px-7 py-3 text-xs font-bold tracking-wide text-white shadow-lg transition hover:bg-[#a86f25] disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none"
-                                        >
-                                            {isSavingProfile ? (
-                                                <>
-                                                    <FiLoader className="animate-spin" size={16} />
-                                                    SAVING...
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <FiSave size={16} />
-                                                    SAVE CHANGES
-                                                </>
+                                            <option value="">
+                                                Select a reason
+                                            </option>
+
+                                            {returnReasons.map(
+                                                reason => (
+                                                    <option
+                                                        key={
+                                                            reason
+                                                        }
+                                                        value={
+                                                            reason
+                                                        }
+                                                    >
+                                                        {
+                                                            reason
+                                                        }
+                                                    </option>
+                                                )
                                             )}
-                                        </motion.button>
+                                        </select>
                                     </div>
+
+                                    <div>
+                                        <label className="mb-2 block text-sm font-bold">
+                                            Additional details
+                                        </label>
+
+                                        <textarea
+                                            rows={3}
+                                            value={
+                                                returnComment
+                                            }
+                                            onChange={event =>
+                                                setReturnComment(
+                                                    event.target.value
+                                                )
+                                            }
+                                            placeholder="Tell us more about the return..."
+                                            className="w-full resize-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700"
+                                        />
+                                    </div>
+
+                                    <div className="rounded-2xl border border-gray-200 p-4 dark:border-gray-600">
+                                        <div className="mb-3 flex items-center gap-2">
+                                            <FiDollarSign className="text-green-600" />
+                                            <h3 className="font-bold">
+                                                Refund method
+                                            </h3>
+                                        </div>
+
+                                        {selectedItemForReturn.isCashOrder ? (
+                                            <div className="space-y-3">
+                                                <p className="text-sm leading-6 text-gray-500">
+                                                    This order was paid by cash. Choose how you want to receive your approved refund.
+                                                </p>
+
+                                                <label
+                                                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${
+                                                        returnMethod ===
+                                                        "bank_transfer"
+                                                            ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700"
+                                                            : "border-gray-200 dark:border-gray-600"
+                                                    }`}
+                                                >
+                                                    <input
+                                                        type="radio"
+                                                        name="returnMethod"
+                                                        value="bank_transfer"
+                                                        checked={
+                                                            returnMethod ===
+                                                            "bank_transfer"
+                                                        }
+                                                        onChange={event =>
+                                                            setReturnMethod(
+                                                                event.target.value
+                                                            )
+                                                        }
+                                                        className="mt-1 accent-black"
+                                                    />
+
+                                                    <div>
+                                                        <p className="font-bold">
+                                                            Bank transfer
+                                                        </p>
+                                                        <p className="mt-1 text-xs leading-5 text-gray-500">
+                                                            Send the refund directly to your bank account. Processing can take up to 7 days after approval.
+                                                        </p>
+                                                    </div>
+                                                </label>
+
+                                                <label
+                                                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${
+                                                        returnMethod ===
+                                                        "shop_pickup"
+                                                            ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700"
+                                                            : "border-gray-200 dark:border-gray-600"
+                                                    }`}
+                                                >
+                                                    <input
+                                                        type="radio"
+                                                        name="returnMethod"
+                                                        value="shop_pickup"
+                                                        checked={
+                                                            returnMethod ===
+                                                            "shop_pickup"
+                                                        }
+                                                        onChange={event =>
+                                                            setReturnMethod(
+                                                                event.target.value
+                                                            )
+                                                        }
+                                                        className="mt-1 accent-black"
+                                                    />
+
+                                                    <div>
+                                                        <p className="font-bold">
+                                                            Collect refund from shop
+                                                        </p>
+                                                        <p className="mt-1 text-xs leading-5 text-gray-500">
+                                                            Choose a date and time to collect the approved refund from the Zamed shop.
+                                                        </p>
+                                                    </div>
+                                                </label>
+                                            </div>
+                                        ) : (
+                                            <div className="rounded-xl bg-green-50 p-4 text-sm text-green-900 dark:bg-green-900/20 dark:text-green-300">
+                                                <div className="flex items-center gap-2 font-bold">
+                                                    <FiCreditCard />
+                                                    Original payment method
+                                                </div>
+
+                                                <p className="mt-1 text-xs leading-5">
+                                                    Your refund will be returned to the payment method used for this order. Processing can take up to 7 days after approval.
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {returnMethod ===
+                                        "bank_transfer" &&
+                                        selectedItemForReturn.isCashOrder && (
+                                        <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900/40 dark:bg-blue-900/10">
+                                            <h3 className="font-bold">
+                                                Bank details
+                                            </h3>
+
+                                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                                <input
+                                                    type="text"
+                                                    value={
+                                                        accountHolderName
+                                                    }
+                                                    onChange={event =>
+                                                        setAccountHolderName(
+                                                            event.target.value
+                                                        )
+                                                    }
+                                                    placeholder="Account holder name"
+                                                    className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                                                />
+
+                                                <input
+                                                    type="text"
+                                                    value={
+                                                        bankName
+                                                    }
+                                                    onChange={event =>
+                                                        setBankName(
+                                                            event.target.value
+                                                        )
+                                                    }
+                                                    placeholder="Bank name"
+                                                    className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                                                />
+
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    value={
+                                                        accountNumber
+                                                    }
+                                                    onChange={event =>
+                                                        setAccountNumber(
+                                                            event.target.value.replace(
+                                                                /[^0-9]/g,
+                                                                ""
+                                                            )
+                                                        )
+                                                    }
+                                                    placeholder="Account number"
+                                                    className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                                                />
+
+                                                <input
+                                                    type="text"
+                                                    value={
+                                                        bankBranch
+                                                    }
+                                                    onChange={event =>
+                                                        setBankBranch(
+                                                            event.target.value
+                                                        )
+                                                    }
+                                                    placeholder="Sort code / branch"
+                                                    className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {returnMethod ===
+                                        "shop_pickup" &&
+                                        selectedItemForReturn.isCashOrder && (
+                                        <div className="rounded-2xl border border-orange-200 bg-orange-50/50 p-4 dark:border-orange-900/40 dark:bg-orange-900/10">
+                                            <h3 className="font-bold">
+                                                Shop collection
+                                            </h3>
+
+                                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                                <div>
+                                                    <label className="mb-1 block text-xs font-bold">
+                                                        Collection date
+                                                    </label>
+
+                                                    <input
+                                                        type="date"
+                                                        min={
+                                                            new Date()
+                                                                .toISOString()
+                                                                .split(
+                                                                    "T"
+                                                                )[0]
+                                                        }
+                                                        value={
+                                                            shopPickupDate
+                                                        }
+                                                        onChange={event =>
+                                                            setShopPickupDate(
+                                                                event.target.value
+                                                            )
+                                                        }
+                                                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700"
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="mb-1 block text-xs font-bold">
+                                                        Collection time
+                                                    </label>
+
+                                                    <input
+                                                        type="time"
+                                                        value={
+                                                            shopPickupTime
+                                                        }
+                                                        onChange={event =>
+                                                            setShopPickupTime(
+                                                                event.target.value
+                                                            )
+                                                        }
+                                                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="flex items-start gap-3 rounded-2xl bg-orange-50 p-4 text-sm text-orange-900 dark:bg-orange-900/20 dark:text-orange-200">
+                                        <FiClock className="mt-0.5 shrink-0 text-orange-600" />
+                                        <div>
+                                            <p className="font-bold">
+                                                Refund processing
+                                            </p>
+                                            <p className="mt-1 text-xs leading-5">
+                                                After the returned product is received and approved, bank/original-payment refunds can take up to 7 days.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row">
+                                    <button
+                                        type="button"
+                                        onClick={
+                                            resetReturnForm
+                                        }
+                                        className="flex-1 rounded-xl border border-gray-200 py-3 text-sm font-bold dark:border-gray-600"
+                                    >
+                                        Cancel
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={
+                                            submitReturnRequest
+                                        }
+                                        disabled={
+                                            isSubmittingReturn
+                                        }
+                                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-black py-3 text-sm font-bold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        {isSubmittingReturn ? (
+                                            <>
+                                                <FiLoader className="animate-spin" />
+                                                Submitting...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <FiCornerDownLeft />
+                                                Submit Return
+                                            </>
+                                        )}
+                                    </button>
                                 </div>
                             </motion.div>
                         </motion.div>
                     )}
                 </AnimatePresence>
 
-                {/* Add Address Modal */}
-                {showAddAddress && (
-                    <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setShowAddAddress(false)}>
-                        <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex justify-between items-center mb-4">
-                                <h2 className="text-2xl font-bold">Add New Address</h2>
-                                <button onClick={() => setShowAddAddress(false)} className="text-gray-500 hover:text-gray-700">
-                                    <FiX size={24} />
-                                </button>
-                            </div>
-                            <div className="space-y-4">
-                                <input type="text" value={newAddress.street} onChange={(e) => setNewAddress({...newAddress, street: e.target.value})} className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700" placeholder="Street Address *" />
-                                <input type="text" value={newAddress.city} onChange={(e) => setNewAddress({...newAddress, city: e.target.value})} className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700" placeholder="City *" />
-                                <input type="text" value={newAddress.state} onChange={(e) => setNewAddress({...newAddress, state: e.target.value})} className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700" placeholder="State/Province" />
-                                <input type="text" value={newAddress.zipCode} onChange={(e) => setNewAddress({...newAddress, zipCode: e.target.value})} className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700" placeholder="ZIP/Postal Code" />
-                                <input type="text" value={newAddress.country} onChange={(e) => setNewAddress({...newAddress, country: e.target.value})} className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700" placeholder="Country" />
-                                <label className="flex items-center gap-2">
-                                    <input type="checkbox" checked={newAddress.isDefault} onChange={(e) => setNewAddress({...newAddress, isDefault: e.target.checked})} />
-                                    <span className="text-sm">Set as default address</span>
-                                </label>
-                                <div className="flex gap-3 pt-4">
-                                    <button onClick={addNewAddress} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition-all">
-                                        Add Address
-                                    </button>
-                                    <button onClick={() => setShowAddAddress(false)} className="flex-1 bg-gray-500 text-white py-2 rounded-lg font-semibold hover:bg-gray-600 transition-all">
-                                        Cancel
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Return Details Modal */}
-                {/* Full coupon offer details modal */}
-                <AnimatePresence>
-                    {selectedOfferNotification && (() => {
-                        const coupon = selectedOfferNotification.coupon;
-                        const expired = coupon.endDate && new Date(`${coupon.endDate}T23:59:59`) < new Date();
-                        const used = coupon.used === true || Number(coupon.userUsedCount || 0) >= Number(coupon.perUserLimit || 1);
-                        const available = !expired && !used && coupon.status !== 'inactive';
-                        return (
-                            <motion.div
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-0 backdrop-blur-md sm:items-center sm:p-5"
-                                onMouseDown={(event) => event.target === event.currentTarget && setSelectedOfferNotification(null)}
-                            >
-                                <motion.div
-                                    initial={{ opacity: 0, y: 80, scale: .96, rotateX: 8 }}
-                                    animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
-                                    exit={{ opacity: 0, y: 60, scale: .97 }}
-                                    transition={{ type: 'spring', stiffness: 260, damping: 27 }}
-                                    className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-t-[30px] bg-[#f8f4ec] shadow-2xl sm:rounded-[30px]"
-                                >
-                                    <div className="relative min-h-[310px] overflow-hidden bg-gradient-to-br from-[#17130e] to-[#4a3216] p-7 text-white sm:p-9" style={getCouponBackgroundStyle(coupon)}>
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-black/10" />
-                                        <motion.div animate={{ rotate: 360 }} transition={{ duration: 35, repeat: Infinity, ease: 'linear' }} className="absolute -right-24 -top-24 h-64 w-64 rounded-full border border-white/10" />
-                                        <div className="relative z-10 flex min-h-[250px] flex-col justify-between">
-                                            <div className="flex items-start justify-between gap-4">
-                                                <div>
-                                                    <p className="text-xs font-bold tracking-[0.26em] text-[#e4bb72]">EXCLUSIVE ZAMED OFFER</p>
-                                                    <h3 className="mt-4 font-serif text-4xl sm:text-6xl">{getDiscountLabel(coupon)}</h3>
-                                                    <p className="mt-3 max-w-xl text-base text-white/75">{coupon.title || 'Premium member offer'}</p>
-                                                </div>
-                                                <button onClick={() => setSelectedOfferNotification(null)} className="rounded-full border border-white/20 bg-black/20 p-3 text-white transition hover:rotate-90 hover:border-[#e0b665]"><FiX /></button>
-                                            </div>
-                                            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                                                <div className="rounded-2xl border border-white/20 bg-black/30 px-5 py-4 backdrop-blur-md">
-                                                    <p className="text-[10px] tracking-[.2em] text-white/55">COUPON CODE</p>
-                                                    <p className="mt-1 font-mono text-2xl font-bold tracking-[.14em]">{coupon.code}</p>
-                                                </div>
-                                                <span className={`w-fit rounded-full px-4 py-2 text-xs font-bold uppercase ${available ? 'bg-emerald-400/20 text-emerald-200' : 'bg-red-400/20 text-red-200'}`}>{available ? 'Available now' : expired ? 'Expired' : used ? 'Already used' : 'Unavailable'}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="p-6 sm:p-8">
-                                        <p className="text-sm leading-7 text-gray-600">{coupon.description || selectedOfferNotification.notification.message}</p>
-                                        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                                            <div className="rounded-2xl border border-[#e5d9c7] bg-white p-4"><p className="text-xs text-gray-400">Minimum order</p><p className="mt-2 font-semibold">{Number(coupon.minPurchase) > 0 ? formatPrice(Number(coupon.minPurchase)) : 'No minimum'}</p></div>
-                                            <div className="rounded-2xl border border-[#e5d9c7] bg-white p-4"><p className="text-xs text-gray-400">Starts</p><p className="mt-2 font-semibold">{coupon.startDate ? formatDate(coupon.startDate) : 'Available now'}</p></div>
-                                            <div className="rounded-2xl border border-[#e5d9c7] bg-white p-4"><p className="text-xs text-gray-400">Expires</p><p className="mt-2 font-semibold">{coupon.endDate ? formatDate(coupon.endDate) : 'No expiry'}</p></div>
-                                            <div className="rounded-2xl border border-[#e5d9c7] bg-white p-4"><p className="text-xs text-gray-400">Customer limit</p><p className="mt-2 font-semibold">{coupon.perUserLimit || 1} use</p></div>
-                                        </div>
-
-                                        <div className="mt-5 rounded-2xl border border-[#e5d9c7] bg-white p-5">
-                                            <h4 className="font-serif text-xl">Offer conditions</h4>
-                                            <div className="mt-4 grid gap-3 text-sm text-gray-600 sm:grid-cols-2">
-                                                <p className="flex items-center gap-2"><FiCheckCircle className="text-emerald-600" /> {coupon.applicableProducts === 'all' ? 'Valid on all eligible products' : 'Selected products only'}</p>
-                                                <p className="flex items-center gap-2"><FiUser className="text-[#b47a29]" /> {coupon.memberOnly ? 'Premium members only' : 'All assigned customers'}</p>
-                                                <p className="flex items-center gap-2"><FiShoppingBag className="text-[#b47a29]" /> {coupon.firstOrderOnly ? 'First order only' : 'Existing customers eligible'}</p>
-                                                <p className="flex items-center gap-2"><FiTag className="text-[#b47a29]" /> Cannot be combined unless stated</p>
-                                            </div>
-                                        </div>
-
-                                        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-                                            <button onClick={() => { navigator.clipboard.writeText(coupon.code); toast.success(`${coupon.code} copied`); }} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#d7c8b2] bg-white px-6 py-3.5 text-sm font-semibold transition hover:border-[#b47a29] hover:text-[#a56d22]"><FiCopy /> Copy code</button>
-                                            <button disabled={!available} onClick={() => { localStorage.setItem('selected_checkout_coupon', coupon.code); setSelectedOfferNotification(null); navigate('/checkout', { state: { couponCode: coupon.code } }); }} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#17130e] px-6 py-3.5 text-sm font-semibold text-white transition hover:bg-[#b47a29] disabled:cursor-not-allowed disabled:opacity-45">Use at checkout <FiArrowRight /></button>
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            </motion.div>
-                        );
-                    })()}
-                </AnimatePresence>
-
-                {selectedReturnRequest && (
-                    <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto" onClick={() => setSelectedReturnRequest(null)}>
-                        <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex justify-between items-center mb-4 sticky top-0 bg-white dark:bg-gray-800 pb-2">
-                                <h2 className="text-2xl font-bold">Return Tracking Details</h2>
-                                <button onClick={() => setSelectedReturnRequest(null)} className="text-gray-500 text-2xl">&times;</button>
-                            </div>
-                            
-                            <div className="space-y-5">
-                                <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl">
-                                    <h3 className="font-semibold mb-3">Return Information</h3>
-                                    <div className="flex gap-3 mb-3">
-                                        {selectedReturnRequest.productImage && (
-                                            <img src={selectedReturnRequest.productImage} alt={selectedReturnRequest.productName} className="w-20 h-20 object-cover rounded-lg" />
-                                        )}
-                                        <div>
-                                            <p className="font-medium">{selectedReturnRequest.productName}</p>
-                                            <p className="text-sm text-gray-500">Quantity: {selectedReturnRequest.productQuantity}</p>
-                                            <p className="text-xs text-gray-400">Return ID: #{selectedReturnRequest.id}</p>
-                                        </div>
-                                    </div>
-                                    <p className="text-sm"><span className="font-medium">Reason:</span> {selectedReturnRequest.reason}</p>
-                                    {selectedReturnRequest.comment && <p className="text-sm mt-1"><span className="font-medium">Comment:</span> {selectedReturnRequest.comment}</p>}
-                                </div>
-                                
-                                <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-xl">
-                                    <h3 className="font-semibold mb-3">Refund Details</h3>
-                                    <div className="space-y-2">
-                                        <div className="flex justify-between"><span>Product Price:</span><span>{formatPrice(selectedReturnRequest.productPrice)}</span></div>
-                                        <div className="flex justify-between"><span>Quantity:</span><span>x{selectedReturnRequest.productQuantity}</span></div>
-                                        <div className="flex justify-between pl-4"><span>Subtotal:</span><span>{formatPrice(selectedReturnRequest.subtotal)}</span></div>
-                                        <div className="flex justify-between"><span>Tax ({selectedReturnRequest.taxRate}%):</span><span>{formatPrice(selectedReturnRequest.taxAmount)}</span></div>
-                                        <div className="border-t pt-2 flex justify-between font-bold"><span>Total Refund:</span><span className="text-green-600">{formatPrice(selectedReturnRequest.refundAmount)}</span></div>
-                                    </div>
-                                </div>
-                                
-                                {selectedReturnRequest.trackingHistory && selectedReturnRequest.trackingHistory.length > 0 && (
-                                    <div className="border rounded-xl p-4">
-                                        <h3 className="font-semibold mb-3 flex items-center gap-2"><FiClock size={16} /> Tracking History</h3>
-                                        <div className="space-y-3 max-h-48 overflow-y-auto">
-                                            {selectedReturnRequest.trackingHistory.map((event, idx) => (
-                                                <div key={idx} className="flex gap-3 text-sm">
-                                                    <div className="flex-shrink-0">{getReturnStatusIcon(event.stage)}</div>
-                                                    <div><p className="text-gray-700 dark:text-gray-300">{event.message}</p><p className="text-xs text-gray-400">{new Date(event.timestamp).toLocaleString()}</p></div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                                
-                                {selectedReturnRequest.adminNote && (
-                                    <div className="bg-gray-50 p-3 rounded-lg">
-                                        <p className="text-xs text-gray-500">Admin Note</p>
-                                        <p className="text-sm">{selectedReturnRequest.adminNote}</p>
-                                    </div>
-                                )}
-                            </div>
-                            
-                            <button onClick={() => setSelectedReturnRequest(null)} className="w-full mt-6 bg-gray-900 text-white py-2.5 rounded-xl font-semibold hover:bg-gray-800 transition-all">Close</button>
-                        </div>
-                    </div>
-                )}
             </div>
         </div>
     );

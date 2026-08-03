@@ -59,13 +59,9 @@ const Products = () => {
             const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
             setCurrencySymbol(symbols[siteSettings.currency] || "$");
             
-            // Load shipping settings from site settings
-            setFormData(prev => ({
-                ...prev,
-                shippingFee: siteSettings.shippingFee || 5.00,
-                freeShippingThreshold: siteSettings.freeShippingThreshold || 100,
-                taxRate: siteSettings.taxRate || 10
-            }));
+            // Currency loading must NOT overwrite a product currently
+            // being edited. Product-specific values are loaded in handleEdit().
+            // Site defaults are applied only when opening a NEW product form.
         };
         loadCurrency();
         
@@ -115,6 +111,164 @@ const Products = () => {
     const defaultBrands = ["Zamed Premium", "UrbanStyle", "PremiumWear", "FashionCo", "Elite Collection"];
     const [brands, setBrands] = useState(defaultBrands);
 
+    const getSiteProductDefaults = () => {
+        try {
+            const siteSettings = JSON.parse(
+                localStorage.getItem("site_settings") || "{}"
+            );
+
+            return {
+                shippingFee:
+                    siteSettings.shippingFee ?? 5,
+                freeShippingThreshold:
+                    siteSettings.freeShippingThreshold ?? 100,
+                taxRate:
+                    siteSettings.taxRate ?? 10
+            };
+        } catch {
+            return {
+                shippingFee: 5,
+                freeShippingThreshold: 100,
+                taxRate: 10
+            };
+        }
+    };
+
+    const getFreshStoredProducts = () => {
+        const byId = new Map();
+
+        const addProducts = (list = []) => {
+            if (!Array.isArray(list)) return;
+
+            list.forEach((product) => {
+                if (!product?.id) return;
+
+                const key = String(product.id);
+                const existing = byId.get(key);
+
+                if (!existing) {
+                    byId.set(key, product);
+                    return;
+                }
+
+                const existingTime = new Date(
+                    existing.updatedAt ||
+                    existing.createdAt ||
+                    0
+                ).getTime();
+
+                const productTime = new Date(
+                    product.updatedAt ||
+                    product.createdAt ||
+                    0
+                ).getTime();
+
+                if (productTime >= existingTime) {
+                    byId.set(key, {
+                        ...existing,
+                        ...product
+                    });
+                }
+            });
+        };
+
+        try {
+            addProducts(productService.getAllProducts() || []);
+        } catch (error) {
+            console.warn(
+                "Unable to read productService products:",
+                error
+            );
+        }
+
+        ["shop_products", "admin_products", "products"].forEach(
+            (key) => {
+                try {
+                    addProducts(
+                        JSON.parse(
+                            localStorage.getItem(key) || "[]"
+                        )
+                    );
+                } catch (error) {
+                    console.warn(
+                        `Unable to read ${key}:`,
+                        error
+                    );
+                }
+            }
+        );
+
+        return [...byId.values()];
+    };
+
+    const normaliseArrayField = (value) => {
+        if (Array.isArray(value)) return value;
+
+        if (typeof value === "string") {
+            return value
+                .split(",")
+                .map(item => item.trim())
+                .filter(Boolean);
+        }
+
+        return [];
+    };
+
+    const useLatestProductValues = (product = {}) => {
+        const defaults = getSiteProductDefaults();
+
+        return {
+            name: product.name ?? "",
+            price: product.price ?? "",
+            originalPrice: product.originalPrice ?? "",
+            category: product.category ?? "",
+            gender: product.gender ?? "",
+            sizes: normaliseArrayField(product.sizes),
+            colors: normaliseArrayField(product.colors),
+            stock: product.stock ?? 0,
+            description: product.description ?? "",
+            brand: product.brand ?? "",
+            rating: product.rating ?? 4.5,
+            reviews:
+                Array.isArray(product.reviews)
+                    ? product.reviews.length
+                    : product.reviews ?? 0,
+            isFeatured: Boolean(product.isFeatured),
+            isNewArrival: Boolean(product.isNewArrival),
+            tags: normaliseArrayField(product.tags),
+            weight: product.weight ?? "",
+            material: product.material ?? "",
+            careInstructions:
+                product.careInstructions ??
+                product.care ??
+                "",
+            details:
+                product.details ??
+                product.productDetails ??
+                "",
+            shipping:
+                product.shipping ??
+                product.shippingInformation ??
+                "",
+            shippingFee:
+                product.shippingFee ??
+                defaults.shippingFee,
+            freeShippingThreshold:
+                product.freeShippingThreshold ??
+                defaults.freeShippingThreshold,
+            taxRate:
+                product.taxRate ??
+                defaults.taxRate,
+            isTaxFree: Boolean(product.isTaxFree),
+            deliveryDays:
+                product.deliveryDays ??
+                "3-5",
+            returnPolicy:
+                product.returnPolicy ??
+                "30-day easy returns"
+        };
+    };
+
     useEffect(() => {
         const checkDarkMode = () => {
             const isDark = document.documentElement.classList.contains('dark');
@@ -131,17 +285,57 @@ const Products = () => {
         filterProducts();
     }, [products, searchTerm, selectedCategory, selectedGender, selectedStatus]);
 
-    const loadProducts = async () => {
+    const loadProducts = async ({
+        showToast = false
+    } = {}) => {
         setLoading(true);
+
         try {
-            const allProducts = productService.getAllProducts();
-            setProducts(allProducts || []);
+            const latestProducts =
+                getFreshStoredProducts();
+
+            setProducts(latestProducts);
+
+            if (showToast) {
+                toast.success(
+                    `Products refreshed · ${latestProducts.length} loaded`
+                );
+            }
+
+            return latestProducts;
         } catch (error) {
-            console.error("Error loading products:", error);
-            setProducts([]);
+            console.error(
+                "Error loading products:",
+                error
+            );
+
+            if (showToast) {
+                toast.error(
+                    "Unable to refresh products"
+                );
+            }
+
+            return [];
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleRefreshProducts = async () => {
+        // Clear any stale table-image error states as well.
+        setImageError({});
+
+        const latest = await loadProducts({
+            showToast: true
+        });
+
+        window.dispatchEvent(
+            new CustomEvent("productsRefreshed", {
+                detail: {
+                    count: latest.length
+                }
+            })
+        );
     };
 
     const filterProducts = () => {
@@ -174,49 +368,144 @@ const Products = () => {
         setCurrentPage(1);
     };
 
-    const compressImage = (base64String, maxWidth = 400, quality = 0.5) => {
-        return new Promise((resolve) => {
+    // High-quality product image optimisation.
+    // The old implementation reduced every upload to 400px / 50% JPEG,
+    // which permanently destroyed detail before the image reached the storefront.
+    const compressImage = (
+        base64String,
+        maxWidth = 2200,
+        quality = 0.92
+    ) => {
+        return new Promise((resolve, reject) => {
             const img = new Image();
+
             img.onload = () => {
-                const canvas = document.createElement('canvas');
-                let width = img.width;
-                let height = img.height;
-                if (width > maxWidth) {
-                    height = (height * maxWidth) / width;
-                    width = maxWidth;
+                try {
+                    const naturalWidth = img.naturalWidth || img.width;
+                    const naturalHeight = img.naturalHeight || img.height;
+
+                    // Never upscale. Only reduce very large source files.
+                    const scale = Math.min(
+                        1,
+                        maxWidth / naturalWidth
+                    );
+
+                    const width = Math.max(
+                        1,
+                        Math.round(naturalWidth * scale)
+                    );
+
+                    const height = Math.max(
+                        1,
+                        Math.round(naturalHeight * scale)
+                    );
+
+                    const canvas = document.createElement("canvas");
+                    canvas.width = width;
+                    canvas.height = height;
+
+                    const ctx = canvas.getContext("2d", {
+                        alpha: true
+                    });
+
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = "high";
+
+                    ctx.drawImage(
+                        img,
+                        0,
+                        0,
+                        width,
+                        height
+                    );
+
+                    // WebP gives significantly better quality per byte than
+                    // the previous low-quality JPEG conversion.
+                    const optimised =
+                        canvas.toDataURL(
+                            "image/webp",
+                            quality
+                        );
+
+                    resolve(optimised);
+                } catch (error) {
+                    reject(error);
                 }
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-                ctx.drawImage(img, 0, 0, width, height);
-                const compressed = canvas.toDataURL('image/jpeg', quality);
-                resolve(compressed);
             };
+
+            img.onerror = () =>
+                reject(
+                    new Error(
+                        "Unable to process this product image."
+                    )
+                );
+
             img.src = base64String;
         });
     };
 
-    const handleImageSelect = async (e, type = 'main', colorName = null) => {
-        const file = e.target.files[0];
-        if (file) {
-            if (file.size > 2 * 1024 * 1024) {
-                toast.error("Image size must be less than 2MB");
-                return;
-            }
-            toast.loading("Processing image...", { id: "compress" });
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-                const compressed = await compressImage(reader.result, 400, 0.5);
-                toast.dismiss("compress");
-                toast.success("Image ready!");
-                setCropImage(compressed);
-                setCropType(type);
-                setCroppingColor(colorName);
-            };
-            reader.readAsDataURL(file);
+    const handleImageSelect = async (
+        e,
+        type = "main",
+        colorName = null
+    ) => {
+        const file = e.target.files?.[0];
+
+        if (!file) return;
+
+        const allowedTypes = [
+            "image/jpeg",
+            "image/jpg",
+            "image/png",
+            "image/webp"
+        ];
+
+        if (!allowedTypes.includes(file.type)) {
+            toast.error(
+                "Please upload JPG, PNG or WebP."
+            );
+            e.target.value = "";
+            return;
         }
+
+        if (file.size > 25 * 1024 * 1024) {
+            toast.error(
+                "Product image must be smaller than 25MB."
+            );
+            e.target.value = "";
+            return;
+        }
+
+        const toastId = toast.loading(
+            "Loading original-quality image..."
+        );
+
+        const reader = new FileReader();
+
+        reader.onload = () => {
+            // IMPORTANT:
+            // Do NOT compress here. ImageCropper receives the original source.
+            setCropImage(reader.result);
+            setCropType(type);
+            setCroppingColor(colorName);
+
+            toast.success(
+                "Original image loaded. Crop when ready.",
+                { id: toastId }
+            );
+        };
+
+        reader.onerror = () => {
+            toast.error(
+                "Unable to read this image.",
+                { id: toastId }
+            );
+        };
+
+        reader.readAsDataURL(file);
+
+        // Allow selecting the same file again later.
+        e.target.value = "";
     };
 
     const handleCropComplete = (croppedImage) => {
@@ -257,8 +546,23 @@ const Products = () => {
                 });
             }
             
+            const existingProduct =
+                editingProduct
+                    ? (
+                        getFreshStoredProducts().find(
+                            item =>
+                                String(item.id) ===
+                                String(editingProduct.id)
+                        ) || editingProduct
+                    )
+                    : {};
+
             const productData = {
-                id: editingProduct ? editingProduct.id : Date.now().toString(),
+                ...existingProduct,
+                id:
+                    editingProduct
+                        ? editingProduct.id
+                        : Date.now().toString(),
                 name: formData.name.trim(),
                 price: parseFloat(formData.price),
                 originalPrice: formData.originalPrice ? parseFloat(formData.originalPrice) : null,
@@ -266,16 +570,33 @@ const Products = () => {
                 gender: formData.gender,
                 sizes: formData.sizes || [],
                 colors: formData.colors || [],
-                stock: parseInt(formData.stock) || 50,
+                stock:
+                    formData.stock === "" || formData.stock === null
+                        ? 0
+                        : Number.parseInt(formData.stock, 10) || 0,
                 description: formData.description || "",
                 brand: formData.brand || "Zamed Premium",
                 image: selectedImage || (editingProduct ? editingProduct.image : null),
                 colorImages: colorImagesObj,
-                rating: parseFloat(formData.rating) || 4.5,
-                reviews: parseInt(formData.reviews) || 0,
+                rating:
+                    formData.rating === ""
+                        ? 0
+                        : Number.parseFloat(formData.rating) || 0,
+                reviews:
+                    Array.isArray(existingProduct.reviews)
+                        ? existingProduct.reviews
+                        : (
+                            formData.reviews === ""
+                                ? 0
+                                : Number.parseInt(
+                                    formData.reviews,
+                                    10
+                                ) || 0
+                        ),
                 isFeatured: formData.isFeatured || false,
                 isNewArrival: formData.isNewArrival || false,
-                inStock: true,
+                inStock:
+                    Number(formData.stock) > 0,
                 tags: formData.tags || [],
                 weight: formData.weight || "",
                 material: formData.material || "",
@@ -283,9 +604,22 @@ const Products = () => {
                 details: formData.details || "",
                 shipping: formData.shipping || "",
                 // Shipping & payment details
-                shippingFee: parseFloat(formData.shippingFee) || 5.00,
-                freeShippingThreshold: parseFloat(formData.freeShippingThreshold) || 100,
-                taxRate: formData.isTaxFree ? 0 : parseFloat(formData.taxRate) || 10,
+                shippingFee:
+                    formData.shippingFee === ""
+                        ? 0
+                        : Number.parseFloat(formData.shippingFee) || 0,
+                freeShippingThreshold:
+                    formData.freeShippingThreshold === ""
+                        ? 0
+                        : Number.parseFloat(formData.freeShippingThreshold) || 0,
+                taxRate:
+                    formData.isTaxFree
+                        ? 0
+                        : (
+                            formData.taxRate === ""
+                                ? 0
+                                : Number.parseFloat(formData.taxRate) || 0
+                        ),
                 isTaxFree: formData.isTaxFree || false,
                 deliveryDays: formData.deliveryDays || "3-5",
                 returnPolicy: formData.returnPolicy || "30-day easy returns",
@@ -325,29 +659,112 @@ const Products = () => {
     };
 
     const handleEdit = (product) => {
-        setEditingProduct(product);
-        setSelectedGenderCategory(product.gender || "men");
-        
-        setFormData({
-            name: product.name || "", price: product.price || "", originalPrice: product.originalPrice || "",
-            category: product.category || "", gender: product.gender || "", sizes: product.sizes || [],
-            colors: product.colors || [], stock: product.stock || 0, description: product.description || "",
-            brand: product.brand || "", rating: product.rating || 4.5, reviews: product.reviews || 0,
-            isFeatured: product.isFeatured || false, isNewArrival: product.isNewArrival || false,
-            tags: product.tags || [], weight: product.weight || "", material: product.material || "",
-            careInstructions: product.careInstructions || "", details: product.details || "",
-            shipping: product.shipping || "",
-            shippingFee: product.shippingFee || 5.00,
-            freeShippingThreshold: product.freeShippingThreshold || 100,
-            taxRate: product.taxRate || 10,
-            isTaxFree: product.isTaxFree || false,
-            deliveryDays: product.deliveryDays || "3-5",
-            returnPolicy: product.returnPolicy || "30-day easy returns"
+        // Always retrieve the newest stored version instead of relying on
+        // the possibly stale product object rendered in the table.
+        const latestProduct =
+            getFreshStoredProducts().find(
+                item =>
+                    String(item.id) ===
+                    String(product.id)
+            ) || product;
+
+        setEditingProduct(latestProduct);
+
+        setSelectedGenderCategory(
+            latestProduct.gender || "men"
+        );
+
+        const hydratedForm =
+            useLatestProductValues(latestProduct);
+
+        setFormData(hydratedForm);
+
+        const mainImage =
+            latestProduct.image ||
+            latestProduct.mainImage ||
+            latestProduct.thumbnail ||
+            null;
+
+        setImagePreview(mainImage);
+        setSelectedImage(mainImage);
+
+        setColorImages({
+            ...(latestProduct.colorImages || {})
         });
-        setImagePreview(product.image || null);
-        setSelectedImage(product.image || null);
-        setColorImages(product.colorImages || {});
+
         setImageError({});
+        setShowNewBrandInput(false);
+        setNewBrand("");
+        setShowModal(true);
+
+        // Useful while testing — confirms the fields Admin actually loaded.
+        console.log(
+            "✏️ Editing latest product:",
+            {
+                id: latestProduct.id,
+                name: latestProduct.name,
+                description:
+                    latestProduct.description,
+                details:
+                    latestProduct.details,
+                material:
+                    latestProduct.material,
+                careInstructions:
+                    latestProduct.careInstructions,
+                shipping:
+                    latestProduct.shipping,
+                deliveryDays:
+                    latestProduct.deliveryDays
+            }
+        );
+    };
+
+    const handleOpenAddProduct = () => {
+        const defaults =
+            getSiteProductDefaults();
+
+        setEditingProduct(null);
+        setSelectedGenderCategory("men");
+        setSelectedImage(null);
+        setImagePreview(null);
+        setColorImages({});
+        setImageError({});
+        setShowNewBrandInput(false);
+        setNewBrand("");
+
+        setFormData({
+            name: "",
+            price: "",
+            originalPrice: "",
+            category: "",
+            gender: "",
+            sizes: [],
+            colors: [],
+            stock: 0,
+            description: "",
+            brand: "",
+            rating: 4.5,
+            reviews: 0,
+            isFeatured: false,
+            isNewArrival: false,
+            tags: [],
+            weight: "",
+            material: "",
+            careInstructions: "",
+            details: "",
+            shipping: "",
+            shippingFee:
+                defaults.shippingFee,
+            freeShippingThreshold:
+                defaults.freeShippingThreshold,
+            taxRate:
+                defaults.taxRate,
+            isTaxFree: false,
+            deliveryDays: "3-5",
+            returnPolicy:
+                "30-day easy returns"
+        });
+
         setShowModal(true);
     };
 
@@ -500,10 +917,10 @@ const Products = () => {
                     <button onClick={exportProducts} className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700">
                         <FiDownload size={16} /> Export
                     </button>
-                    <button onClick={loadProducts} className="bg-gray-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-700">
+                    <button onClick={handleRefreshProducts} className="bg-gray-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-700">
                         <FiRefreshCw size={16} /> Refresh
                     </button>
-                    <button onClick={() => setShowModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700">
+                    <button onClick={handleOpenAddProduct} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700">
                         <FiPlus size={16} /> Add Product
                     </button>
                 </div>
@@ -894,7 +1311,22 @@ const Products = () => {
             </AnimatePresence>
 
             {/* Image Cropper Modal */}
-            {cropImage && <ImageCropper image={cropImage} onCropComplete={handleCropComplete} onClose={() => { setCropImage(null); setCropType(null); setCroppingColor(null); }} />}
+            {cropImage && (
+                <ImageCropper
+                    image={cropImage}
+                    cropType={
+                        cropType === "color"
+                            ? "productColor"
+                            : "product"
+                    }
+                    onCropComplete={handleCropComplete}
+                    onClose={() => {
+                        setCropImage(null);
+                        setCropType(null);
+                        setCroppingColor(null);
+                    }}
+                />
+            )}
         </div>
     );
 };

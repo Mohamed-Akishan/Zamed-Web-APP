@@ -1,4 +1,3 @@
-// src/pages/Register.jsx
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -17,10 +16,73 @@ import { toast } from "sonner";
 
 const API_URL =
   import.meta.env.VITE_API_URL ||
-  "https://zamed-backend.onrender.com/api";
+  (window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1"
+    ? "http://localhost:5000/api"
+    : "https://zamed-backend.onrender.com/api");
 
 const DB_NAME = "ZamedImageStore";
 const STORE_NAME = "images";
+
+const normalizeAuthResponse = (payload = {}) => {
+  const root = payload?.data && typeof payload.data === "object"
+    ? payload.data
+    : payload;
+
+  const user =
+    payload.user ||
+    root.user ||
+    root.customer ||
+    payload.customer ||
+    (root && (root.email || root.firstName || root._id || root.id) ? root : null);
+
+  const token =
+    payload.token ||
+    payload.accessToken ||
+    payload.jwt ||
+    root.token ||
+    root.accessToken ||
+    root.jwt ||
+    null;
+
+  return { user, token };
+};
+
+const saveAuthenticatedUser = (user, token, fallback = {}) => {
+  if (!user) return null;
+
+  const normalizedUser = {
+    id: user._id || user.id || fallback.id || null,
+    _id: user._id || user.id || fallback.id || null,
+    firstName: user.firstName || fallback.firstName || "",
+    lastName: user.lastName || fallback.lastName || "",
+    email: user.email || fallback.email || "",
+    phone: user.phone || user.phoneNumber || fallback.phone || "",
+    role: user.role || fallback.role || "user",
+    profileImage: user.profileImage || user.avatar || fallback.profileImage || "",
+    avatar: user.avatar || user.profileImage || fallback.profileImage || "",
+    ...user,
+  };
+
+  if (token) {
+    localStorage.setItem("token", token);
+  }
+
+  localStorage.setItem("user", JSON.stringify(normalizedUser));
+  localStorage.setItem("auth_timestamp", String(Date.now()));
+
+  window.dispatchEvent(
+    new CustomEvent("authChanged", {
+      detail: {
+        authenticated: Boolean(token),
+        user: normalizedUser,
+        token,
+      },
+    })
+  );
+
+  return normalizedUser;
+};
 
 const DEFAULT_AUTH = {
   siteName: "Zamed Premium Wear",
@@ -33,6 +95,17 @@ const DEFAULT_AUTH = {
   registerButtonText: "Create Account",
   authPrimaryColor: "#c79342",
   authSecondaryColor: "#2a2118",
+  authUseSiteTypography: true,
+  authHeadingFont: "Poppins",
+  authBodyFont: "Inter",
+  authTitleColor: "#081b3c",
+  authSubtitleColor: "#64748b",
+  authLabelColor: "#322b25",
+  authInputTextColor: "#111827",
+  authPlaceholderColor: "#94a3b8",
+  authLinkColor: "#c79342",
+  authButtonTextColor: "#ffffff",
+  authMutedTextColor: "#64748b",
   authImagePosition: "center",
   authBorderRadius: 28,
   authBackgroundBlur: 18,
@@ -180,13 +253,19 @@ const Register = () => {
           siteSettings.siteName ||
           DEFAULT_AUTH.siteName,
         primaryFont:
-          siteInfo.fontSettings?.primaryFont ||
-          siteSettings.primaryFont ||
-          DEFAULT_AUTH.primaryFont,
+          authSettings.authUseSiteTypography === false
+            ? authSettings.authBodyFont || DEFAULT_AUTH.authBodyFont
+            : siteInfo.fontSettings?.bodyFont ||
+              siteInfo.fontSettings?.primaryFont ||
+              siteSettings.bodyFont ||
+              siteSettings.primaryFont ||
+              DEFAULT_AUTH.primaryFont,
         headingFont:
-          siteInfo.fontSettings?.headingFont ||
-          siteSettings.headingFont ||
-          DEFAULT_AUTH.headingFont,
+          authSettings.authUseSiteTypography === false
+            ? authSettings.authHeadingFont || DEFAULT_AUTH.authHeadingFont
+            : siteInfo.fontSettings?.headingFont ||
+              siteSettings.headingFont ||
+              DEFAULT_AUTH.headingFont,
       };
 
       const logoId =
@@ -316,31 +395,75 @@ const Register = () => {
 
       const data = await response.json().catch(() => ({}));
 
-      if (!response.ok || !data.success) {
-        throw new Error(
-          data.message || "Registration failed. Please try again."
-        );
+      if (!response.ok) {
+        const message =
+          data.message ||
+          data.error ||
+          "Registration failed. Please try again.";
+
+        const normalizedMessage = String(message).toLowerCase();
+
+        if (
+          response.status === 400 &&
+          (
+            normalizedMessage.includes("already exists") ||
+            normalizedMessage.includes("already registered") ||
+            normalizedMessage.includes("email exists") ||
+            normalizedMessage.includes("user exists")
+          )
+        ) {
+          toast.error(
+            "An account already exists with this email. Please sign in."
+          );
+
+          navigate("/login", {
+            replace: true,
+            state: {
+              registeredEmail: formData.email.trim().toLowerCase(),
+            },
+          });
+
+          return;
+        }
+
+        throw new Error(message);
       }
 
-      const user = data.user || data;
+      const { user, token } = normalizeAuthResponse(data);
 
-      localStorage.setItem("token", data.token);
-      localStorage.setItem(
-        "user",
-        JSON.stringify({
-          id: user._id || user.id || data._id,
-          firstName: user.firstName || data.firstName,
-          lastName: user.lastName || data.lastName,
-          email: user.email || data.email,
-          phone: user.phone || data.phone || formData.phone.trim(),
-          role: user.role || data.role || "user",
-          profileImage: user.profileImage || user.avatar || "",
-          newsletter,
-        })
+      // Some backends create the customer successfully but intentionally
+      // do not issue a token from the register endpoint.
+      if (!token) {
+        toast.success(
+          "Account created successfully. Please sign in with your new account."
+        );
+
+        navigate("/login", {
+          replace: true,
+          state: {
+            registeredEmail: formData.email.trim().toLowerCase(),
+          },
+        });
+
+        return;
+      }
+
+      const savedUser = saveAuthenticatedUser(user || {}, token, {
+        firstName: formData.firstName.trim(),
+        lastName: formData.lastName.trim(),
+        email: formData.email.trim().toLowerCase(),
+        phone: formData.phone.trim(),
+        role: "user",
+      });
+
+      localStorage.removeItem("redirectAfterLogin");
+
+      toast.success(
+        `Welcome${savedUser?.firstName ? `, ${savedUser.firstName}` : ""}!`
       );
 
-      toast.success("Welcome to ZAMED PREMIUM!");
-      navigate("/", { replace: true });
+      // Force providers/profile/header to initialise from the new session.
+      window.location.assign("/");
     } catch (error) {
       console.error("Registration error:", error);
       toast.error(error.message || "Server error. Please try again later.");
@@ -365,37 +488,38 @@ const Register = () => {
   return (
     <main
       className="relative min-h-screen overflow-hidden bg-[#eee6dc]"
-      style={{ fontFamily: auth.primaryFont }}
+      style={{ fontFamily: auth.primaryFont, color: auth.authInputTextColor }}
     >
-      {/* Background Image - Full Cover */}
       <div
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat transition-all duration-700"
+        className="absolute inset-0 bg-cover bg-no-repeat transition-all duration-700"
         style={{
           backgroundImage: assets.background
             ? `url("${assets.background}")`
             : "linear-gradient(135deg,#f8efe2 0%,#e9d8c1 50%,#d5b789 100%)",
           backgroundPosition: auth.authImagePosition || "center",
-          backgroundSize: "cover",
         }}
       />
 
-      {/* Subtle overlay gradient */}
-      <div className="absolute inset-0 bg-gradient-to-br from-white/[0.02] via-transparent to-black/[0.03]" />
+      <div className="absolute inset-0 bg-gradient-to-r from-white/[0.01] via-transparent to-black/[0.02]" />
 
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-3 py-4 sm:px-6 sm:py-6 lg:px-8 xl:px-12">
-        {/* Left Side - Branding / Promo (Hidden on mobile) */}
-        <div className="hidden lg:block lg:w-1/2">
-          <div className="max-w-lg">
+      <div className="relative z-10 mx-auto flex min-h-screen max-w-[1720px] items-center justify-end px-3 py-4 sm:px-6 sm:py-6 lg:px-10 xl:px-16">
+        {!assets.background && (
+          <motion.div
+            initial={{ opacity: 0, x: -30 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.8 }}
+            className="absolute left-8 top-1/2 hidden max-w-xl -translate-y-1/2 lg:block xl:left-16"
+          >
             <div className="flex items-center gap-4">
               {assets.logo ? (
                 <img
                   src={assets.logo}
                   alt={auth.siteName}
-                  className="h-16 w-16 rounded-2xl bg-white/85 object-contain p-2 shadow-xl backdrop-blur-sm"
+                  className="h-16 w-16 rounded-2xl bg-white/85 object-contain p-2 shadow-xl"
                 />
               ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/80 shadow-xl backdrop-blur-sm">
-                  <FiShoppingBag size={30} className="text-[#2c231d]" />
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/80 shadow-xl">
+                  <FiShoppingBag size={30} />
                 </div>
               )}
 
@@ -405,7 +529,7 @@ const Register = () => {
                 </p>
                 <p
                   className="text-xs font-black tracking-[0.28em]"
-                  style={{ color: auth.authPrimaryColor }}
+                  style={{ color: auth.authLinkColor }}
                 >
                   {auth.authEyebrow}
                 </p>
@@ -413,24 +537,23 @@ const Register = () => {
             </div>
 
             <h1
-              className="mt-14 text-6xl font-black leading-[1.02] text-[#2d241e] drop-shadow-sm"
+              className="mt-14 max-w-lg text-6xl font-black leading-[1.02] text-[#2d241e]"
               style={{ fontFamily: auth.headingFont }}
             >
               {auth.registerPromoTitle}
             </h1>
 
-            <p className="mt-5 text-base leading-7 text-[#66594e]">
+            <p className="mt-5 max-w-md text-base leading-7 text-[#66594e]">
               {auth.registerPromoText}
             </p>
-          </div>
-        </div>
+          </motion.div>
+        )}
 
-        {/* Right Side - Register Form */}
         <motion.section
-          initial={{ opacity: 0, y: 20, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-          className="relative w-full max-w-[520px] border border-white/70 bg-white/[0.92] px-5 py-6 shadow-[0_30px_100px_rgba(62,45,28,.18)] backdrop-blur-2xl sm:px-7 sm:py-8 lg:px-9"
+          initial={{ opacity: 0, x: 45, scale: 0.97 }}
+          animate={{ opacity: 1, x: 0, scale: 1 }}
+          transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
+          className="relative max-h-[calc(100vh-2rem)] w-full max-w-[620px] overflow-y-auto border border-white/70 bg-white/[0.95] px-5 py-6 shadow-[0_30px_100px_rgba(62,45,28,.18)] backdrop-blur-2xl sm:px-8 sm:py-8 lg:px-10"
           style={{
             borderRadius: `${Number(auth.authBorderRadius || 28)}px`,
             backdropFilter: `blur(${Number(auth.authBackgroundBlur || 18)}px)`,
@@ -442,22 +565,23 @@ const Register = () => {
           />
 
           <div className="relative z-10">
-            <div className="mb-5 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 lg:hidden">
+            <div className="mb-6 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
                 {assets.logo && (
                   <img
                     src={assets.logo}
                     alt={auth.siteName}
-                    className="h-10 w-10 rounded-xl bg-white object-contain p-1 shadow"
+                    className="h-12 w-12 rounded-xl bg-white object-contain p-1 shadow"
                   />
                 )}
-                <div>
+
+                <div className="lg:hidden">
                   <p className="text-sm font-black text-[#2d241e]">
                     {auth.siteName}
                   </p>
                   <p
                     className="text-[10px] font-black tracking-[0.2em]"
-                    style={{ color: auth.authPrimaryColor }}
+                    style={{ color: auth.authLinkColor }}
                   >
                     {auth.authEyebrow}
                   </p>
@@ -469,7 +593,7 @@ const Register = () => {
                 <Link
                   to="/login"
                   className="font-black hover:underline"
-                  style={{ color: auth.authPrimaryColor }}
+                  style={{ color: auth.authLinkColor }}
                 >
                   Sign in
                 </Link>
@@ -479,27 +603,30 @@ const Register = () => {
             <div className="text-center sm:text-left">
               <p
                 className="text-[11px] font-black tracking-[0.25em]"
-                style={{ color: auth.authPrimaryColor }}
+                style={{ color: auth.authLinkColor }}
               >
                 JOIN ZAMED PREMIUM
               </p>
 
               <h2
-                className="mt-3 text-4xl font-black tracking-tight text-[#211b17] sm:text-5xl"
-                style={{ fontFamily: auth.headingFont }}
+                className="mt-3 text-4xl font-black tracking-tight sm:text-5xl"
+                style={{ fontFamily: auth.headingFont, color: auth.authTitleColor }}
               >
                 {auth.registerTitle}
               </h2>
 
-              <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500 sm:mx-0">
+              <p
+                className="mx-auto mt-3 max-w-xl text-sm leading-6 sm:mx-0"
+                style={{ color: auth.authSubtitleColor }}
+              >
                 {auth.registerSubtitle}
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
+            <form onSubmit={handleSubmit} className="mt-7 space-y-4" noValidate>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-2 block text-sm font-bold text-[#322b25]">
+                  <label className="mb-2 block text-sm font-bold" style={{ color: auth.authLabelColor }}>
                     First name
                   </label>
 
@@ -510,7 +637,7 @@ const Register = () => {
                       onChange={(event) =>
                         setField("firstName", event.target.value)
                       }
-                      className="w-full rounded-2xl bg-transparent py-3 pl-12 pr-4 outline-none sm:py-3.5"
+                      className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-4 outline-none"
                       placeholder="First name"
                       autoComplete="given-name"
                     />
@@ -524,7 +651,7 @@ const Register = () => {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-bold text-[#322b25]">
+                  <label className="mb-2 block text-sm font-bold" style={{ color: auth.authLabelColor }}>
                     Last name
                   </label>
 
@@ -535,7 +662,7 @@ const Register = () => {
                       onChange={(event) =>
                         setField("lastName", event.target.value)
                       }
-                      className="w-full rounded-2xl bg-transparent py-3 pl-12 pr-4 outline-none sm:py-3.5"
+                      className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-4 outline-none"
                       placeholder="Last name"
                       autoComplete="family-name"
                     />
@@ -550,7 +677,7 @@ const Register = () => {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-bold text-[#322b25]">
+                <label className="mb-2 block text-sm font-bold" style={{ color: auth.authLabelColor }}>
                   Email address
                 </label>
 
@@ -560,7 +687,7 @@ const Register = () => {
                     type="email"
                     value={formData.email}
                     onChange={(event) => setField("email", event.target.value)}
-                    className="w-full rounded-2xl bg-transparent py-3 pl-12 pr-4 outline-none sm:py-3.5"
+                    className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-4 outline-none"
                     placeholder="you@example.com"
                     autoComplete="email"
                   />
@@ -572,7 +699,7 @@ const Register = () => {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-bold text-[#322b25]">
+                <label className="mb-2 block text-sm font-bold" style={{ color: auth.authLabelColor }}>
                   Phone{" "}
                   <span className="font-normal text-slate-400">(optional)</span>
                 </label>
@@ -583,7 +710,7 @@ const Register = () => {
                     type="tel"
                     value={formData.phone}
                     onChange={(event) => setField("phone", event.target.value)}
-                    className="w-full rounded-2xl bg-transparent py-3 pl-12 pr-4 outline-none sm:py-3.5"
+                    className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-4 outline-none"
                     placeholder="+44 7000 000000"
                     autoComplete="tel"
                   />
@@ -596,7 +723,7 @@ const Register = () => {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-2 block text-sm font-bold text-[#322b25]">
+                  <label className="mb-2 block text-sm font-bold" style={{ color: auth.authLabelColor }}>
                     Password
                   </label>
 
@@ -609,7 +736,7 @@ const Register = () => {
                       onChange={(event) =>
                         setField("password", event.target.value)
                       }
-                      className="w-full rounded-2xl bg-transparent py-3 pl-12 pr-11 outline-none sm:py-3.5"
+                      className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-11 outline-none"
                       placeholder="Create password"
                       autoComplete="new-password"
                     />
@@ -631,7 +758,7 @@ const Register = () => {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-bold text-[#322b25]">
+                  <label className="mb-2 block text-sm font-bold" style={{ color: auth.authLabelColor }}>
                     Confirm password
                   </label>
 
@@ -644,7 +771,7 @@ const Register = () => {
                       onChange={(event) =>
                         setField("confirmPassword", event.target.value)
                       }
-                      className="w-full rounded-2xl bg-transparent py-3 pl-12 pr-11 outline-none sm:py-3.5"
+                      className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-11 outline-none"
                       placeholder="Repeat password"
                       autoComplete="new-password"
                     />
@@ -677,7 +804,7 @@ const Register = () => {
 
                     <span
                       className="font-black"
-                      style={{ color: auth.authPrimaryColor }}
+                      style={{ color: auth.authLinkColor }}
                     >
                       {passwordLabels[passwordScore]}
                     </span>
@@ -721,7 +848,7 @@ const Register = () => {
                       <Link
                         to="/terms"
                         className="font-bold hover:underline"
-                        style={{ color: auth.authPrimaryColor }}
+                        style={{ color: auth.authLinkColor }}
                       >
                         Terms of Service
                       </Link>{" "}
@@ -729,7 +856,7 @@ const Register = () => {
                       <Link
                         to="/privacy"
                         className="font-bold hover:underline"
-                        style={{ color: auth.authPrimaryColor }}
+                        style={{ color: auth.authLinkColor }}
                       >
                         Privacy Policy
                       </Link>
@@ -763,9 +890,10 @@ const Register = () => {
                 whileTap={{ scale: 0.985 }}
                 type="submit"
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-3 rounded-2xl px-5 py-3.5 text-base font-black text-white shadow-[0_18px_35px_rgba(0,0,0,.14)] transition hover:shadow-[0_20px_40px_rgba(0,0,0,.2)] disabled:cursor-not-allowed disabled:opacity-60 sm:py-4"
+                className="flex w-full items-center justify-center gap-3 rounded-2xl px-5 py-4 text-base font-black shadow-[0_18px_35px_rgba(0,0,0,.14)] disabled:cursor-not-allowed disabled:opacity-60"
                 style={{
                   background: `linear-gradient(90deg, ${auth.authPrimaryColor}, ${auth.authPrimaryColor}dd)`,
+                  color: auth.authButtonTextColor,
                 }}
               >
                 {loading ? (
@@ -831,7 +959,7 @@ const Register = () => {
               <Link
                 to="/login"
                 className="font-black hover:underline"
-                style={{ color: auth.authPrimaryColor }}
+                style={{ color: auth.authLinkColor }}
               >
                 Sign in
               </Link>
@@ -841,7 +969,7 @@ const Register = () => {
               <div className="mt-5 flex items-start gap-3 rounded-2xl border border-amber-100 bg-amber-50/70 p-3.5 text-xs text-[#5e5043]">
                 <FiShield
                   className="mt-0.5 shrink-0"
-                  style={{ color: auth.authPrimaryColor }}
+                  style={{ color: auth.authLinkColor }}
                 />
                 <p>
                   Your personal information is protected and used only to

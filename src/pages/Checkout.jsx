@@ -9,7 +9,7 @@ import {
     FiUser, FiArrowRight, FiCheckCircle, FiLock, FiCalendar, 
     FiPackage, FiClock, FiDollarSign, FiShoppingBag, FiTag,
     FiEdit2, FiTrash2, FiPlus, FiChevronRight, FiChevronDown,
-    FiAlertCircle, FiSmartphone, FiGlobe, FiHome, FiHeart
+    FiAlertCircle, FiSmartphone, FiGlobe, FiHome, FiHeart, FiDownload
 } from "react-icons/fi";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -75,12 +75,9 @@ const Checkout = () => {
         securePaymentText: "Secure payment"
     });
     
-    // Shipping options
-    const shippingOptions = [
-        { id: "standard", label: "Standard Delivery", days: "5-7 Days", price: 0, estimated: "May 20-22", icon: FiPackage },
-        { id: "express", label: "Express Delivery", days: "2-3 Days", price: 10, estimated: "May 17-18", icon: FiTruck },
-        { id: "same-day", label: "Same Day Delivery", days: "24 Hours", price: 20, estimated: "Today", icon: FiClock }
-    ];
+    // Delivery is automatically calculated from each product's
+    // deliveryDays value configured in Admin > Products.
+
     
     const [cardDetails, setCardDetails] = useState({
         cardNumber: "",
@@ -123,6 +120,182 @@ const Checkout = () => {
         return 'https://via.placeholder.com/80x80?text=No+Image';
     };
 
+    // ------------------------------------------------------------------
+    // PRODUCT DELIVERY HELPERS
+    // ------------------------------------------------------------------
+
+    const parseDeliveryDays = (value) => {
+        const raw = String(value || "").trim();
+
+        if (!raw) {
+            return { min: 3, max: 5, label: "3-5 Days" };
+        }
+
+        const normalized = raw.toLowerCase();
+
+        if (
+            normalized.includes("same day") ||
+            normalized.includes("today")
+        ) {
+            return { min: 0, max: 0, label: "Same Day" };
+        }
+
+        if (
+            normalized.includes("next day") ||
+            normalized.includes("24 hour")
+        ) {
+            return { min: 1, max: 1, label: "1 Day" };
+        }
+
+        const numbers = raw.match(/\d+/g)?.map(Number) || [];
+
+        if (numbers.length >= 2) {
+            const min = Math.min(numbers[0], numbers[1]);
+            const max = Math.max(numbers[0], numbers[1]);
+
+            return {
+                min,
+                max,
+                label: `${min}-${max} Days`
+            };
+        }
+
+        if (numbers.length === 1) {
+            const days = numbers[0];
+
+            return {
+                min: days,
+                max: days,
+                label: `${days} Day${days === 1 ? "" : "s"}`
+            };
+        }
+
+        return {
+            min: 3,
+            max: 5,
+            label: raw
+        };
+    };
+
+    const addDeliveryDays = (startDate, days) => {
+        const result = new Date(startDate);
+        result.setHours(12, 0, 0, 0);
+
+        if (days > 0) {
+            result.setDate(result.getDate() + days);
+        }
+
+        return result;
+    };
+
+    const formatDeliveryDate = (date) =>
+        new Intl.DateTimeFormat("en-GB", {
+            day: "numeric",
+            month: "short"
+        }).format(date);
+
+    const getProductDeliveryInfo = (productId) => {
+        const configured =
+            productDetails?.[productId]?.deliveryDays ||
+            "3-5";
+
+        const parsed = parseDeliveryDays(configured);
+        const today = new Date();
+
+        const from = addDeliveryDays(today, parsed.min);
+        const to = addDeliveryDays(today, parsed.max);
+
+        let estimated = "";
+
+        if (parsed.min === 0 && parsed.max === 0) {
+            estimated = "Today";
+        } else if (parsed.min === parsed.max) {
+            estimated = formatDeliveryDate(to);
+        } else {
+            estimated =
+                `${formatDeliveryDate(from)} - ${formatDeliveryDate(to)}`;
+        }
+
+        return {
+            ...parsed,
+            configured,
+            estimated
+        };
+    };
+
+    const getCartDeliverySchedule = () => {
+        const products = (cartItems || []).map((item) => {
+            const delivery = getProductDeliveryInfo(item.id);
+
+            return {
+                productId: item.id,
+                name: item.name || "Product",
+                image: item.image,
+                quantity: item.quantity || 1,
+                ...delivery
+            };
+        });
+
+        if (!products.length) {
+            const fallback = parseDeliveryDays("3-5");
+
+            return {
+                products: [],
+                overall: {
+                    ...fallback,
+                    estimated:
+                        `${formatDeliveryDate(
+                            addDeliveryDays(new Date(), fallback.min)
+                        )} - ${formatDeliveryDate(
+                            addDeliveryDays(new Date(), fallback.max)
+                        )}`
+                }
+            };
+        }
+
+        const overallMin = Math.max(
+            ...products.map((item) => item.min)
+        );
+
+        const overallMax = Math.max(
+            ...products.map((item) => item.max)
+        );
+
+        const from = addDeliveryDays(
+            new Date(),
+            overallMin
+        );
+
+        const to = addDeliveryDays(
+            new Date(),
+            overallMax
+        );
+
+        let estimated = "";
+
+        if (overallMin === 0 && overallMax === 0) {
+            estimated = "Today";
+        } else if (overallMin === overallMax) {
+            estimated = formatDeliveryDate(to);
+        } else {
+            estimated =
+                `${formatDeliveryDate(from)} - ${formatDeliveryDate(to)}`;
+        }
+
+        return {
+            products,
+            overall: {
+                min: overallMin,
+                max: overallMax,
+                label:
+                    overallMin === overallMax
+                        ? `${overallMax} Day${overallMax === 1 ? "" : "s"}`
+                        : `${overallMin}-${overallMax} Days`,
+                estimated
+            }
+        };
+    };
+
     // Load product details
     const loadProductDetails = () => {
         const products = JSON.parse(localStorage.getItem('shop_products') || '[]');
@@ -141,31 +314,278 @@ const Checkout = () => {
         setProductDetails(detailsMap);
     };
 
-    // Load coupons assigned by Admin to the currently logged-in customer
+    // Load ONLY coupons that the current customer is still eligible to use.
+    // Used / expired / inactive / over-limit / ineligible coupons are hidden.
     const loadCustomerCoupons = () => {
         try {
-            const userData = JSON.parse(localStorage.getItem('user') || 'null');
+            const userData = JSON.parse(
+                localStorage.getItem('user') || 'null'
+            );
+
             const rawEmail = userData?.email || '';
-            const email = rawEmail.toLowerCase();
-            const assignedCoupons = email
-                ? [
-                    ...JSON.parse(localStorage.getItem(`user_coupons_${rawEmail}`) || '[]'),
-                    ...JSON.parse(localStorage.getItem(`user_coupons_${email}`) || '[]')
-                ]
-                : [];
-            const adminCoupons = JSON.parse(localStorage.getItem('admin_coupons') || '[]');
+            const email = rawEmail.trim().toLowerCase();
 
-            // Merge assigned and public admin coupons without duplicates.
-            const merged = [...assignedCoupons, ...adminCoupons].reduce((list, coupon) => {
-                const code = String(coupon?.code || '').trim().toUpperCase();
-                if (!code || list.some(item => String(item.code).toUpperCase() === code)) return list;
-                list.push({ ...coupon, code });
-                return list;
-            }, []);
+            if (!email) {
+                setCustomerCoupons([]);
+                return;
+            }
 
-            setCustomerCoupons(merged);
+            const assignedCoupons = [
+                ...JSON.parse(
+                    localStorage.getItem(`user_coupons_${rawEmail}`) || '[]'
+                ),
+                ...JSON.parse(
+                    localStorage.getItem(`user_coupons_${email}`) || '[]'
+                )
+            ];
+
+            const adminCoupons = JSON.parse(
+                localStorage.getItem('admin_coupons') || '[]'
+            );
+
+            // Merge without duplicate coupon codes.
+            const merged = [...assignedCoupons, ...adminCoupons].reduce(
+                (list, coupon) => {
+                    const code = String(
+                        coupon?.code || ''
+                    )
+                        .trim()
+                        .toUpperCase();
+
+                    if (
+                        !code ||
+                        list.some(
+                            item =>
+                                String(item.code)
+                                    .trim()
+                                    .toUpperCase() === code
+                        )
+                    ) {
+                        return list;
+                    }
+
+                    list.push({
+                        ...coupon,
+                        code
+                    });
+
+                    return list;
+                },
+                []
+            );
+
+            const now = new Date();
+
+            const usageKey = `coupon_usage_${email}`;
+
+            let usage = {};
+
+            try {
+                usage = JSON.parse(
+                    localStorage.getItem(usageKey) || '{}'
+                );
+            } catch {
+                usage = {};
+            }
+
+            // Read previous orders for first-order-only eligibility.
+            let userOrders = [];
+
+            const orderKeys = [
+                'orders',
+                'all_orders',
+                'customer_orders',
+                `orders_${email}`
+            ];
+
+            orderKeys.forEach(key => {
+                try {
+                    const orders = JSON.parse(
+                        localStorage.getItem(key) || '[]'
+                    );
+
+                    if (Array.isArray(orders)) {
+                        userOrders.push(
+                            ...orders.filter(order => {
+                                const orderEmail = String(
+                                    order.userEmail ||
+                                    order.customerEmail ||
+                                    order.email ||
+                                    order.customer?.email ||
+                                    ''
+                                )
+                                    .trim()
+                                    .toLowerCase();
+
+                                return orderEmail === email;
+                            })
+                        );
+                    }
+                } catch {
+                    // Ignore malformed legacy order storage.
+                }
+            });
+
+            const cartSubtotal = (cartItems || []).reduce(
+                (sum, item) => {
+                    const price =
+                        typeof item.price === 'number'
+                            ? item.price
+                            : parseFloat(item.price) || 0;
+
+                    const quantity =
+                        Number(item.quantity) || 1;
+
+                    return sum + price * quantity;
+                },
+                0
+            );
+
+            const eligibleCoupons = merged.filter(coupon => {
+                const status = String(
+                    coupon.status || 'active'
+                ).toLowerCase();
+
+                if (status !== 'active') {
+                    return false;
+                }
+
+                const startDate = coupon.startDate
+                    ? new Date(
+                        `${String(coupon.startDate).split('T')[0]}T00:00:00`
+                    )
+                    : null;
+
+                const endDate = coupon.endDate
+                    ? new Date(
+                        `${String(coupon.endDate).split('T')[0]}T23:59:59`
+                    )
+                    : null;
+
+                if (
+                    startDate &&
+                    !Number.isNaN(startDate.getTime()) &&
+                    now < startDate
+                ) {
+                    return false;
+                }
+
+                if (
+                    endDate &&
+                    !Number.isNaN(endDate.getTime()) &&
+                    now > endDate
+                ) {
+                    return false;
+                }
+
+                const usageLimit =
+                    coupon.usageLimit === null ||
+                    coupon.usageLimit === '' ||
+                    coupon.usageLimit === undefined
+                        ? null
+                        : Number(coupon.usageLimit);
+
+                const usedCount =
+                    Number(coupon.usedCount || 0);
+
+                if (
+                    usageLimit &&
+                    usedCount >= usageLimit
+                ) {
+                    return false;
+                }
+
+                const perUserLimit =
+                    Number(coupon.perUserLimit || 1);
+
+                const customerUses =
+                    Number(usage[coupon.code] || 0);
+
+                if (
+                    perUserLimit &&
+                    customerUses >= perUserLimit
+                ) {
+                    return false;
+                }
+
+                if (
+                    coupon.redemptionStatus === 'used' ||
+                    Number(coupon.customerUsedCount || 0) >= perUserLimit
+                ) {
+                    return false;
+                }
+
+                if (
+                    coupon.firstOrderOnly &&
+                    userOrders.length > 0
+                ) {
+                    return false;
+                }
+
+                if (
+                    coupon.memberOnly &&
+                    !userData?.isPremiumMember &&
+                    !userData?.premiumMember &&
+                    userData?.membershipTier !== 'premium'
+                ) {
+                    return false;
+                }
+
+                const minPurchase =
+                    Number(
+                        coupon.minPurchase ??
+                        coupon.minimumPurchase ??
+                        0
+                    ) || 0;
+
+                if (
+                    minPurchase > 0 &&
+                    cartSubtotal < minPurchase
+                ) {
+                    return false;
+                }
+
+                const applicableProducts =
+                    coupon.applicableProducts;
+
+                const applicableCategories =
+                    coupon.applicableCategories || [];
+
+                const hasEligibleItem =
+                    (cartItems || []).some(item => {
+                        const productMatch =
+                            !applicableProducts ||
+                            applicableProducts === 'all' ||
+                            (
+                                Array.isArray(applicableProducts) &&
+                                applicableProducts
+                                    .map(String)
+                                    .includes(String(item.id))
+                            );
+
+                        const categoryMatch =
+                            !applicableCategories.length ||
+                            applicableCategories.includes(
+                                item.category
+                            );
+
+                        return productMatch && categoryMatch;
+                    });
+
+                if (!hasEligibleItem) {
+                    return false;
+                }
+
+                return true;
+            });
+
+            setCustomerCoupons(eligibleCoupons);
         } catch (error) {
-            console.error('Error loading customer coupons:', error);
+            console.error(
+                'Error loading eligible customer coupons:',
+                error
+            );
+
             setCustomerCoupons([]);
         }
     };
@@ -191,34 +611,78 @@ const Checkout = () => {
             loadProductDetails();
             loadCustomerCoupons();
             
-            // Load user data
+            // Load customer profile data.
+            // Profile values are authoritative for name/contact/address.
             const userData = localStorage.getItem('user');
-            if (userData) {
-                const user = JSON.parse(userData);
+            const user = userData
+                ? JSON.parse(userData)
+                : null;
+
+            if (user) {
+                const profileName = getProfileDisplayName(user);
+                const nameParts = profileName.trim().split(/\s+/);
+                const profileAddress = normalizeProfileAddress(user);
+
                 setFormData(prev => ({
                     ...prev,
-                    firstName: user.firstName || "",
-                    lastName: user.lastName || "",
+                    firstName:
+                        user.firstName ||
+                        nameParts[0] ||
+                        "",
+                    lastName:
+                        user.lastName ||
+                        nameParts.slice(1).join(" ") ||
+                        "",
                     email: user.email || "",
-                    phone: user.phone || "",
-                    address: user.address || ""
+                    phone: profileAddress.phone || "",
+                    address: profileAddress.address || "",
+                    city: profileAddress.city || "",
+                    state: profileAddress.state || "",
+                    postalCode: profileAddress.postalCode || "",
+                    country:
+                        profileAddress.country ||
+                        prev.country ||
+                        "Sri Lanka"
                 }));
             }
-            
-            // Load saved addresses
-            const savedAddresses = JSON.parse(localStorage.getItem('checkout_addresses') || '[]');
-            setAddresses(savedAddresses);
-            if (savedAddresses.length > 0) {
-                const defaultAddr = savedAddresses.find(a => a.isDefault) || savedAddresses[0];
+
+            // Load saved checkout addresses.
+            let savedAddresses = JSON.parse(
+                localStorage.getItem('checkout_addresses') || '[]'
+            );
+
+            // If Profile already has a complete delivery address,
+            // use it automatically and do not make the customer re-enter it.
+            if (user && profileHasDeliveryAddress(user)) {
+                const profileAddress =
+                    buildProfileCheckoutAddress(user);
+
+                savedAddresses = [
+                    profileAddress,
+                    ...savedAddresses.filter(
+                        address =>
+                            address?.id !== "profile-address"
+                    )
+                ];
+
+                setSelectedAddress(profileAddress);
+            } else if (savedAddresses.length > 0) {
+                const defaultAddr =
+                    savedAddresses.find(a => a.isDefault) ||
+                    savedAddresses[0];
+
                 setSelectedAddress(defaultAddr);
+            } else {
+                setSelectedAddress(null);
             }
-            
+
+            setAddresses(savedAddresses);
+
             // Load saved cards
             const savedCardsList = JSON.parse(localStorage.getItem('saved_cards') || '[]');
             setSavedCards(savedCardsList);
             
-            // Set default shipping
-            setSelectedShipping(shippingOptions[0]);
+            // Delivery is calculated automatically from Admin product settings.
             
         } catch (error) {
             console.error("Error loading settings:", error);
@@ -246,17 +710,24 @@ const Checkout = () => {
         window.addEventListener('productsUpdated', handleProductsUpdate);
         window.addEventListener('couponsUpdated', loadCustomerCoupons);
         window.addEventListener('couponReceived', loadCustomerCoupons);
-        window.addEventListener('storage', (e) => {
+        const handleStorage = (e) => {
             if (e.key === 'site_settings') {
                 handleSettingsUpdate();
             }
+
             if (e.key === 'shop_products') {
                 handleProductsUpdate();
             }
-            if (e.key === 'admin_coupons' || e.key?.startsWith('user_coupons_')) {
+
+            if (
+                e.key === 'admin_coupons' ||
+                e.key?.startsWith('user_coupons_')
+            ) {
                 loadCustomerCoupons();
             }
-        });
+        };
+
+        window.addEventListener('storage', handleStorage);
 
         return () => {
             window.removeEventListener('settingsSaved', handleSettingsUpdate);
@@ -265,9 +736,15 @@ const Checkout = () => {
             window.removeEventListener('productsUpdated', handleProductsUpdate);
             window.removeEventListener('couponsUpdated', loadCustomerCoupons);
             window.removeEventListener('couponReceived', loadCustomerCoupons);
-            window.removeEventListener('storage', handleSettingsUpdate);
+            window.removeEventListener('storage', handleStorage);
         };
     }, []);
+
+    // Re-evaluate coupon visibility whenever the cart changes.
+    // This keeps minimum-spend and product/category eligibility accurate.
+    useEffect(() => {
+        loadCustomerCoupons();
+    }, [cartItems]);
 
     // Get product-specific tax rate or fallback to global
     const getProductTaxRate = (productId) => {
@@ -347,9 +824,27 @@ const Checkout = () => {
     const discountAmount = appliedCoupon?.discountAmount || 0;
     const total = subtotal + shippingFee + taxAmount - discountAmount;
 
+    const deliverySchedule = getCartDeliverySchedule();
+    const overallDelivery = deliverySchedule.overall;
+
     useEffect(() => {
         setFinalOrderTotal(total);
     }, [total, cartItems, productDetails]);
+
+    useEffect(() => {
+        setSelectedShipping({
+            id: "product-delivery",
+            label: "Product Delivery",
+            days: overallDelivery.label,
+            estimated: overallDelivery.estimated,
+            price: shippingFee,
+            icon: FiTruck
+        });
+    }, [
+        overallDelivery.label,
+        overallDelivery.estimated,
+        shippingFee
+    ]);
 
     const validateCardDetails = () => {
         if (selectedSavedCard) return true;
@@ -444,6 +939,164 @@ const Checkout = () => {
         }
     };
 
+    const getProfileDisplayName = (user = {}) => {
+        return (
+            user.name ||
+            user.fullName ||
+            `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
+            user.email?.split("@")?.[0] ||
+            "Customer"
+        );
+    };
+
+    const normalizeProfileAddress = (user = {}) => {
+        const rawAddress = user.address;
+
+        if (rawAddress && typeof rawAddress === "object") {
+            return {
+                address:
+                    rawAddress.address ||
+                    rawAddress.line1 ||
+                    rawAddress.addressLine1 ||
+                    "",
+                city:
+                    rawAddress.city || "",
+                state:
+                    rawAddress.state ||
+                    rawAddress.county ||
+                    rawAddress.province ||
+                    "",
+                postalCode:
+                    rawAddress.postalCode ||
+                    rawAddress.postcode ||
+                    rawAddress.zip ||
+                    "",
+                country:
+                    rawAddress.country ||
+                    user.country ||
+                    "",
+                phone:
+                    rawAddress.phone ||
+                    user.phone ||
+                    user.phoneNumber ||
+                    ""
+            };
+        }
+
+        return {
+            address:
+                typeof rawAddress === "string"
+                    ? rawAddress
+                    : user.addressLine1 || "",
+            city: user.city || "",
+            state:
+                user.state ||
+                user.county ||
+                user.province ||
+                "",
+            postalCode:
+                user.postalCode ||
+                user.postcode ||
+                user.zip ||
+                "",
+            country: user.country || "",
+            phone:
+                user.phone ||
+                user.phoneNumber ||
+                ""
+        };
+    };
+
+    const profileHasDeliveryAddress = (user = {}) => {
+        const address = normalizeProfileAddress(user);
+
+        return Boolean(
+            String(address.address || "").trim() &&
+            String(address.city || "").trim() &&
+            String(address.country || "").trim()
+        );
+    };
+
+    const buildProfileCheckoutAddress = (user = {}) => {
+        const normalized = normalizeProfileAddress(user);
+        const displayName = getProfileDisplayName(user);
+        const nameParts = displayName.trim().split(/\s+/);
+
+        return {
+            id: "profile-address",
+            firstName:
+                user.firstName ||
+                nameParts[0] ||
+                "",
+            lastName:
+                user.lastName ||
+                nameParts.slice(1).join(" ") ||
+                "",
+            email: user.email || "",
+            phone: normalized.phone || "",
+            address: normalized.address || "",
+            city: normalized.city || "",
+            state: normalized.state || "",
+            postalCode: normalized.postalCode || "",
+            country: normalized.country || "",
+            isDefault: true,
+            source: "profile"
+        };
+    };
+
+    const getSiteLogoForInvoice = () => {
+        try {
+            const siteInfo = JSON.parse(
+                localStorage.getItem("site_info") || "{}"
+            );
+
+            const siteImages = JSON.parse(
+                localStorage.getItem("site_images") || "{}"
+            );
+
+            const siteSettings = JSON.parse(
+                localStorage.getItem("site_settings") || "{}"
+            );
+
+            return (
+                siteImages.invoiceLogo ||
+                siteImages.footerLogo ||
+                siteImages.logo ||
+                siteInfo.invoiceLogo ||
+                siteInfo.footerLogo ||
+                siteInfo.logo ||
+                siteSettings.logo ||
+                null
+            );
+        } catch {
+            return null;
+        }
+    };
+
+    const getSiteNameForInvoice = () => {
+        try {
+            const siteInfo = JSON.parse(
+                localStorage.getItem("site_info") || "{}"
+            );
+
+            const siteSettings = JSON.parse(
+                localStorage.getItem("site_settings") || "{}"
+            );
+
+            return (
+                siteInfo.siteName ||
+                siteInfo.name ||
+                siteSettings.siteName ||
+                siteSettings.storeName ||
+                siteSettings.shopName ||
+                siteSettings.name ||
+                "Zamed Premium Wear"
+            );
+        } catch {
+            return "Zamed Premium Wear";
+        }
+    };
+
     const getCouponUsageKey = (email) => `coupon_usage_${String(email || 'guest').toLowerCase()}`;
 
     const getUserCouponUsage = (email) => {
@@ -516,10 +1169,30 @@ const Checkout = () => {
             : [];
         const adminCoupons = JSON.parse(localStorage.getItem('admin_coupons') || '[]');
         const allCoupons = [...assignedCoupons, ...adminCoupons].map(normalizeCoupon);
-        const coupon = allCoupons.find(item => item.code === enteredCode);
+        const coupon = allCoupons.find(
+            item => item.code === enteredCode
+        );
 
         if (!coupon) {
-            setCouponError('Invalid coupon code. Check the code in Profile → Coupons.');
+            setCouponError(
+                'This coupon is not available for your account.'
+            );
+            return;
+        }
+
+        // Do not allow manually typing a coupon that Checkout has already
+        // determined is not currently eligible.
+        const visibleEligibleCoupon = customerCoupons.find(
+            item =>
+                String(item.code || '')
+                    .trim()
+                    .toUpperCase() === enteredCode
+        );
+
+        if (!visibleEligibleCoupon) {
+            setCouponError(
+                'This coupon is not currently eligible for this checkout.'
+            );
             return;
         }
 
@@ -648,8 +1321,23 @@ const Checkout = () => {
             localStorage.setItem(notificationKey, JSON.stringify(notifications.slice(0, 50)));
         }
 
-        window.dispatchEvent(new CustomEvent('couponsUpdated', { detail: { code } }));
-        window.dispatchEvent(new CustomEvent('couponReceived', { detail: { email, couponCode: code } }));
+        window.dispatchEvent(
+            new CustomEvent('couponsUpdated', {
+                detail: { code }
+            })
+        );
+
+        window.dispatchEvent(
+            new CustomEvent('couponReceived', {
+                detail: {
+                    email,
+                    couponCode: code
+                }
+            })
+        );
+
+        // Remove the redeemed coupon from Checkout immediately.
+        loadCustomerCoupons();
     };
 
     // Address management
@@ -728,9 +1416,42 @@ const Checkout = () => {
         
         if (currentStep === 2) {
             if (!selectedAddress) {
-                toast.error("Please select or add a delivery address");
+                const currentUser = getCurrentUser();
+
+                if (
+                    currentUser &&
+                    profileHasDeliveryAddress(currentUser)
+                ) {
+                    const profileAddress =
+                        buildProfileCheckoutAddress(currentUser);
+
+                    setSelectedAddress(profileAddress);
+
+                    setAddresses(prev => [
+                        profileAddress,
+                        ...prev.filter(
+                            address =>
+                                address?.id !== "profile-address"
+                        )
+                    ]);
+
+                    setCurrentStep(3);
+
+                    window.scrollTo({
+                        top: 0,
+                        behavior: 'smooth'
+                    });
+
+                    return;
+                }
+
+                toast.error(
+                    "Please add a delivery address to your profile or checkout."
+                );
+                setShowAddAddress(true);
                 return;
             }
+
             setCurrentStep(3);
             window.scrollTo({ top: 0, behavior: 'smooth' });
             return;
@@ -814,9 +1535,11 @@ const Checkout = () => {
             const orderData = {
                 id: orderId,
                 userEmail: user?.email || formData.email,
-                customerName: selectedAddress ? 
-                    `${selectedAddress.firstName} ${selectedAddress.lastName}` : 
-                    `${formData.firstName} ${formData.lastName}`,
+                customerName:
+                    getProfileDisplayName(user || {}) ||
+                    (selectedAddress
+                        ? `${selectedAddress.firstName || ""} ${selectedAddress.lastName || ""}`.trim()
+                        : `${formData.firstName || ""} ${formData.lastName || ""}`.trim()),
                 customerEmail: formData.email,
                 customerPhone: selectedAddress?.phone || formData.phone,
                 shippingAddress: selectedAddress ? 
@@ -833,11 +1556,15 @@ const Checkout = () => {
                     image: getValidImageUrl(item.image),
                     taxRate: getProductTaxRate(item.id),
                     shippingFee: getProductShippingFee(item.id),
-                    freeShippingThreshold: getProductFreeShippingThreshold(item.id)
+                    freeShippingThreshold: getProductFreeShippingThreshold(item.id),
+                    deliveryDays:
+                        productDetails[item.id]?.deliveryDays || "3-5",
+                    estimatedDelivery:
+                        getProductDeliveryInfo(item.id).estimated
                 })),
                 subtotal: finalSubtotal,
                 shippingFee: finalShippingFeeAmount,
-                shippingMethod: selectedShipping?.label,
+                shippingMethod: "Product Delivery",
                 taxRate: averageTaxRate,
                 taxAmount: finalTaxAmount,
                 discount: finalDiscountAmount,
@@ -848,10 +1575,15 @@ const Checkout = () => {
                               formData.paymentMethod === 'paypal' ? 'PayPal' :
                               formData.paymentMethod === 'apple_pay' ? 'Apple Pay' :
                               formData.paymentMethod === 'google_pay' ? 'Google Pay' : 'Cash on Delivery',
+                paymentStatus:
+                    formData.paymentMethod === 'cod'
+                        ? 'not_paid'
+                        : 'paid',
                 date: new Date().toISOString(),
                 deliveryDate: formData.deliveryDate,
                 deliveryStatus: "scheduled",
-                estimatedDelivery: selectedShipping?.estimated,
+                estimatedDelivery: overallDelivery.estimated,
+                deliveryDays: overallDelivery.label,
                 hasFreeShipping: hasFreeShipping
             };
             
@@ -890,6 +1622,579 @@ const Checkout = () => {
         }
     };
 
+    const AnimatedMoney = ({
+        value,
+        className = ""
+    }) => {
+        const numericValue =
+            typeof value === "number"
+                ? value
+                : parseFloat(value) || 0;
+
+        return (
+            <span className={`relative inline-flex overflow-hidden ${className}`}>
+                <AnimatePresence mode="popLayout" initial={false}>
+                    <motion.span
+                        key={numericValue.toFixed(2)}
+                        initial={{
+                            opacity: 0,
+                            y: 14,
+                            scale: 0.96
+                        }}
+                        animate={{
+                            opacity: 1,
+                            y: 0,
+                            scale: 1
+                        }}
+                        exit={{
+                            opacity: 0,
+                            y: -14,
+                            scale: 0.96
+                        }}
+                        transition={{
+                            duration: 0.28,
+                            ease: [0.22, 1, 0.36, 1]
+                        }}
+                    >
+                        {formatPrice(numericValue)}
+                    </motion.span>
+                </AnimatePresence>
+            </span>
+        );
+    };
+
+    const getPaymentDisplay = (order = {}) => {
+        const paymentMethod =
+            order.paymentMethod ||
+            (formData.paymentMethod === "card"
+                ? "Credit Card"
+                : formData.paymentMethod === "paypal"
+                ? "PayPal"
+                : formData.paymentMethod === "apple_pay"
+                ? "Apple Pay"
+                : formData.paymentMethod === "google_pay"
+                ? "Google Pay"
+                : "Cash on Delivery");
+
+        const isCashOnDelivery =
+            String(paymentMethod).toLowerCase().includes("cash") ||
+            formData.paymentMethod === "cod";
+
+        const paymentStatus =
+            order.paymentStatus ||
+            (isCashOnDelivery ? "not_paid" : "paid");
+
+        return {
+            paymentMethod,
+            paymentStatus,
+            isCashOnDelivery,
+            paymentStatusLabel:
+                paymentStatus === "paid"
+                    ? "PAID"
+                    : "NOT PAID"
+        };
+    };
+
+    const downloadInvoice = () => {
+        const invoiceOrder = orderDetails || {};
+        const payment = getPaymentDisplay(invoiceOrder);
+        const siteLogo = getSiteLogoForInvoice();
+        const siteName = getSiteNameForInvoice();
+
+        const invoiceSubtotal =
+            invoiceOrder.subtotal ?? subtotal;
+
+        const invoiceShipping =
+            invoiceOrder.shippingFee ?? shippingFee;
+
+        const invoiceTax =
+            invoiceOrder.taxAmount ?? taxAmount;
+
+        const invoiceDiscount =
+            invoiceOrder.discount ?? discountAmount;
+
+        const invoiceTotal =
+            invoiceOrder.total ?? finalOrderTotal;
+
+        const invoiceItems =
+            Array.isArray(invoiceOrder.itemsList)
+                ? invoiceOrder.itemsList
+                : [];
+
+        const profileUser = getCurrentUser() || {};
+        const profileAddress =
+            normalizeProfileAddress(profileUser);
+
+        const customerName =
+            getProfileDisplayName(profileUser) ||
+            invoiceOrder.customerName ||
+            `${formData.firstName || ""} ${formData.lastName || ""}`.trim() ||
+            "Customer";
+
+        const customerEmail =
+            profileUser.email ||
+            invoiceOrder.customerEmail ||
+            formData.email ||
+            "";
+
+        const customerPhone =
+            profileAddress.phone ||
+            invoiceOrder.customerPhone ||
+            formData.phone ||
+            "";
+
+        const profileShippingAddress = [
+            profileAddress.address,
+            profileAddress.city,
+            profileAddress.state,
+            profileAddress.postalCode,
+            profileAddress.country
+        ]
+            .filter(Boolean)
+            .join(", ");
+
+        const shippingAddress =
+            profileShippingAddress ||
+            invoiceOrder.shippingAddress ||
+            "";
+
+        const orderDate =
+            invoiceOrder.date
+                ? new Date(invoiceOrder.date)
+                : new Date();
+
+        const safe = (value) =>
+            String(value ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+
+        const rows = invoiceItems
+            .map((item) => {
+                const lineTotal =
+                    (Number(item.price) || 0) *
+                    (Number(item.quantity) || 1);
+
+                return `
+                    <tr>
+                        <td>
+                            <div class="item-name">${safe(item.name || "Product")}</div>
+                            <div class="item-meta">
+                                ${item.size ? `Size: ${safe(item.size)}` : ""}
+                                ${item.color ? ` · Color: ${safe(item.color)}` : ""}
+                            </div>
+                        </td>
+                        <td>${Number(item.quantity) || 1}</td>
+                        <td>${safe(formatPrice(Number(item.price) || 0))}</td>
+                        <td class="amount">${safe(formatPrice(lineTotal))}</td>
+                    </tr>
+                `;
+            })
+            .join("");
+
+        const statusClass =
+            payment.paymentStatus === "paid"
+                ? "paid"
+                : "not-paid";
+
+        const invoiceHtml = `
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Invoice ${safe(orderId || invoiceOrder.id || "")}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 32px;
+            background: #f4f5f7;
+            color: #171717;
+            font-family: "Times New Roman", Times, serif;
+        }
+        .invoice {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 25px 70px rgba(0,0,0,.08);
+        }
+        .top {
+            padding: 34px;
+            color: #fff;
+            background:
+                linear-gradient(135deg,#111827,#1f2937 60%,#7c2d12);
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .brand-logo {
+            max-width: 150px;
+            max-height: 64px;
+            object-fit: contain;
+            object-position: left center;
+            display: block;
+        }
+        .brand-text {
+            min-width: 0;
+        }
+        .brand-name {
+            font-size: 29px;
+            line-height: 1.05;
+            font-weight: 900;
+            letter-spacing: .02em;
+            color: #ffffff;
+        }
+        .brand small {
+            display: block;
+            margin-top: 6px;
+            font-size: 10px;
+            letter-spacing: .22em;
+            opacity: .72;
+            text-transform: uppercase;
+        }
+        .invoice-title {
+            margin-top: 28px;
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 20px;
+        }
+        .invoice-title h1 {
+            margin: 0;
+            font-size: 34px;
+        }
+        .invoice-title p {
+            margin: 6px 0 0;
+            opacity: .7;
+            font-size: 13px;
+        }
+        .status {
+            display: inline-block;
+            padding: 8px 14px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: .08em;
+        }
+        .status.paid {
+            background: #dcfce7;
+            color: #166534;
+        }
+        .status.not-paid {
+            background: #fff7ed;
+            color: #c2410c;
+        }
+        .content { padding: 34px; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2,minmax(0,1fr));
+            gap: 18px;
+            margin-bottom: 28px;
+        }
+        .card {
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            padding: 18px;
+            background: #fafafa;
+        }
+        .label {
+            font-size: 10px;
+            font-weight: 800;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: .14em;
+            margin-bottom: 7px;
+        }
+        .value {
+            font-size: 14px;
+            line-height: 1.5;
+            font-weight: 700;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th {
+            text-align: left;
+            font-size: 10px;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            color: #8a8a8a;
+            padding: 12px 10px;
+            border-bottom: 1px solid #eee;
+        }
+        td {
+            padding: 14px 10px;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 13px;
+            vertical-align: top;
+        }
+        td.amount { font-weight: 800; text-align: right; }
+        .item-name { font-weight: 800; }
+        .item-meta {
+            margin-top: 3px;
+            color: #888;
+            font-size: 11px;
+        }
+        .summary {
+            width: min(420px,100%);
+            margin-left: auto;
+            margin-top: 26px;
+        }
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            padding: 8px 0;
+            font-size: 14px;
+        }
+        .summary-row.discount { color: #dc2626; }
+        .summary-row.total {
+            margin-top: 8px;
+            padding-top: 16px;
+            border-top: 2px solid #111;
+            font-size: 20px;
+            font-weight: 900;
+            color: #15803d;
+        }
+        .payment-note {
+            margin-top: 28px;
+            padding: 18px;
+            border-radius: 16px;
+            background: ${
+                payment.isCashOnDelivery
+                    ? "#fff7ed"
+                    : "#f0fdf4"
+            };
+            border: 1px solid ${
+                payment.isCashOnDelivery
+                    ? "#fed7aa"
+                    : "#bbf7d0"
+            };
+        }
+        .payment-note strong {
+            display: block;
+            margin-bottom: 5px;
+            color: ${
+                payment.isCashOnDelivery
+                    ? "#c2410c"
+                    : "#166534"
+            };
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 18px;
+            border-top: 1px solid #eee;
+            color: #888;
+            font-size: 11px;
+            text-align: center;
+        }
+        @media print {
+            body {
+                background: #fff;
+                padding: 0;
+            }
+            .invoice {
+                box-shadow: none;
+                border-radius: 0;
+            }
+        }
+        @media (max-width: 640px) {
+            body { padding: 10px; }
+            .grid { grid-template-columns: 1fr; }
+            .content, .top { padding: 22px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="invoice">
+        <div class="top">
+            <div class="brand">
+                ${
+                    siteLogo
+                        ? `<img
+                            src="${safe(siteLogo)}"
+                            alt="${safe(siteName)}"
+                            class="brand-logo"
+                        />`
+                        : ""
+                }
+
+                <div class="brand-text">
+                    <div class="brand-name">
+                        ${safe(siteName)}
+                    </div>
+                    <small>Official Order Invoice</small>
+                </div>
+            </div>
+
+            <div class="invoice-title">
+                <div>
+                    <h1>Invoice</h1>
+                    <p>Order #${safe(orderId || invoiceOrder.id || "")}</p>
+                </div>
+
+                <span class="status ${statusClass}">
+                    ${safe(payment.paymentStatusLabel)}
+                </span>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="grid">
+                <div class="card">
+                    <div class="label">Customer</div>
+                    <div class="value">
+                        <strong>${safe(customerName)}</strong><br/>
+                        ${safe(customerEmail)}<br/>
+                        ${safe(customerPhone || "Phone not provided")}
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="label">Order Information</div>
+                    <div class="value">
+                        Date: ${safe(orderDate.toLocaleString("en-GB"))}<br/>
+                        Delivery: ${safe(invoiceOrder.estimatedDelivery || overallDelivery.estimated)}<br/>
+                        Method: ${safe(invoiceOrder.shippingMethod || "Product Delivery")}
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="label">Payment Method</div>
+                    <div class="value">
+                        ${safe(payment.paymentMethod)}<br/>
+                        Payment Status: ${safe(payment.paymentStatusLabel)}
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="label">Delivery Address</div>
+                    <div class="value">
+                        ${safe(shippingAddress || "Not provided")}
+                    </div>
+                </div>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Qty</th>
+                        <th>Unit Price</th>
+                        <th style="text-align:right">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows || `
+                        <tr>
+                            <td colspan="4">Order items unavailable</td>
+                        </tr>
+                    `}
+                </tbody>
+            </table>
+
+            <div class="summary">
+                <div class="summary-row">
+                    <span>Subtotal</span>
+                    <strong>${safe(formatPrice(invoiceSubtotal))}</strong>
+                </div>
+
+                <div class="summary-row">
+                    <span>Shipping</span>
+                    <strong>
+                        ${invoiceShipping === 0
+                            ? "Free"
+                            : safe(formatPrice(invoiceShipping))}
+                    </strong>
+                </div>
+
+                <div class="summary-row">
+                    <span>Tax</span>
+                    <strong>${safe(formatPrice(invoiceTax))}</strong>
+                </div>
+
+                ${
+                    invoiceDiscount > 0
+                        ? `
+                        <div class="summary-row discount">
+                            <span>Coupon Discount</span>
+                            <strong>-${safe(formatPrice(invoiceDiscount))}</strong>
+                        </div>
+                        `
+                        : ""
+                }
+
+                <div class="summary-row total">
+                    <span>
+                        ${
+                            payment.isCashOnDelivery
+                                ? "Amount Due"
+                                : "Total Paid"
+                        }
+                    </span>
+                    <span>${safe(formatPrice(invoiceTotal))}</span>
+                </div>
+            </div>
+
+            <div class="payment-note">
+                <strong>
+                    ${
+                        payment.isCashOnDelivery
+                            ? "Cash on Delivery — NOT PAID"
+                            : `${safe(payment.paymentMethod)} — PAID`
+                    }
+                </strong>
+
+                ${
+                    payment.isCashOnDelivery
+                        ? `Please pay ${safe(formatPrice(invoiceTotal))} when your order is delivered.`
+                        : "Payment has been recorded for this order."
+                }
+            </div>
+
+            <div class="footer">
+                Thank you for shopping with Zamed Premium Wear.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        window.onload = function () {
+            setTimeout(function () {
+                window.print();
+            }, 350);
+        };
+    </script>
+</body>
+</html>`;
+
+        const invoiceWindow = window.open(
+            "",
+            "_blank",
+            "width=980,height=900"
+        );
+
+        if (!invoiceWindow) {
+            toast.error(
+                "Please allow pop-ups to download the invoice."
+            );
+            return;
+        }
+
+        invoiceWindow.document.open();
+        invoiceWindow.document.write(invoiceHtml);
+        invoiceWindow.document.close();
+    };
+
     const handleBackStep = () => {
         if (currentStep > 1) {
             setCurrentStep(currentStep - 1);
@@ -900,11 +2205,11 @@ const Checkout = () => {
     // Order Confirmation Component
     if (orderPlaced) {
         const displayOrder = orderDetails || {};
-        const displaySubtotal = displayOrder.subtotal || subtotal;
-        const displayShipping = displayOrder.shippingFee || shippingFee;
-        const displayTax = displayOrder.taxAmount || taxAmount;
-        const displayDiscount = displayOrder.discount || discountAmount;
-        const displayTotal = displayOrder.total || finalOrderTotal;
+        const displaySubtotal = displayOrder.subtotal ?? subtotal;
+        const displayShipping = displayOrder.shippingFee ?? shippingFee;
+        const displayTax = displayOrder.taxAmount ?? taxAmount;
+        const displayDiscount = displayOrder.discount ?? discountAmount;
+        const displayTotal = displayOrder.total ?? finalOrderTotal;
         
         return (
             <div className="min-h-screen bg-gray-50 py-16">
@@ -928,11 +2233,48 @@ const Checkout = () => {
                         
                         <div className="bg-gray-50 rounded-xl p-4 mb-6 text-left">
                             <p className="mb-2"><strong>Order ID:</strong> {orderId}</p>
-                            <p className="mb-2"><strong>Estimated Delivery:</strong> {selectedShipping?.estimated || "5-7 business days"}</p>
-                            <p className="mb-2"><strong>Payment Method:</strong> {formData.paymentMethod === 'card' ? 'Credit Card' : 
-                                formData.paymentMethod === 'paypal' ? 'PayPal' : 
-                                formData.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Digital Wallet'}</p>
-                            <p><strong>Total Amount:</strong> <span className="text-green-600 font-bold text-xl">{formatPrice(displayTotal)}</span></p>
+                            <p className="mb-2">
+                                <strong>Estimated Delivery:</strong>{" "}
+                                {displayOrder.estimatedDelivery ||
+                                    overallDelivery.estimated}
+                            </p>
+                            {(() => {
+                                const payment = getPaymentDisplay(displayOrder);
+
+                                return (
+                                    <>
+                                        <p className="mb-2">
+                                            <strong>Payment Method:</strong>{" "}
+                                            {payment.paymentMethod}
+                                        </p>
+
+                                        <p className="mb-2">
+                                            <strong>Payment Status:</strong>{" "}
+                                            <span
+                                                className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${
+                                                    payment.paymentStatus === "paid"
+                                                        ? "bg-green-100 text-green-700"
+                                                        : "bg-orange-100 text-orange-700"
+                                                }`}
+                                            >
+                                                {payment.paymentStatusLabel}
+                                            </span>
+                                        </p>
+
+                                        <p>
+                                            <strong>
+                                                {payment.isCashOnDelivery
+                                                    ? "Amount Due:"
+                                                    : "Total Amount:"}
+                                            </strong>{" "}
+                                            <AnimatedMoney
+                                                value={displayTotal}
+                                                className="text-xl font-black text-green-600"
+                                            />
+                                        </p>
+                                    </>
+                                );
+                            })()}
                         </div>
                         
                         <div className="bg-gray-50 rounded-xl p-4 mb-6 text-left">
@@ -961,11 +2303,37 @@ const Checkout = () => {
                                         ✨ Free Shipping Applied! ✨
                                     </div>
                                 )}
-                                <div className="border-t pt-2 mt-2">
-                                    <div className="flex justify-between font-bold">
-                                        <span>Total Paid:</span>
-                                        <span className="text-green-600 text-lg">{formatPrice(displayTotal)}</span>
-                                    </div>
+                                <div className="border-t pt-3 mt-2">
+                                    {(() => {
+                                        const payment = getPaymentDisplay(displayOrder);
+
+                                        return (
+                                            <div className="flex items-center justify-between gap-4 font-bold">
+                                                <div>
+                                                    <span>
+                                                        {payment.isCashOnDelivery
+                                                            ? "Amount Due"
+                                                            : "Total Paid"}
+                                                    </span>
+
+                                                    <p
+                                                        className={`mt-1 text-[10px] font-black uppercase tracking-[0.16em] ${
+                                                            payment.paymentStatus === "paid"
+                                                                ? "text-green-600"
+                                                                : "text-orange-600"
+                                                        }`}
+                                                    >
+                                                        {payment.paymentStatusLabel}
+                                                    </p>
+                                                </div>
+
+                                                <AnimatedMoney
+                                                    value={displayTotal}
+                                                    className="text-lg font-black text-green-600"
+                                                />
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                         </div>
@@ -1012,10 +2380,11 @@ const Checkout = () => {
                             </button>
                         </div>
                         
-                        <button 
-                            onClick={() => window.print()}
-                            className="mt-4 text-sm text-blue-600 hover:text-blue-800"
+                        <button
+                            onClick={downloadInvoice}
+                            className="mt-5 inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-black text-gray-800 shadow-sm transition-all hover:-translate-y-0.5 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 hover:shadow-md"
                         >
+                            <FiDownload />
                             Download Invoice
                         </button>
                     </motion.div>
@@ -1041,8 +2410,8 @@ const Checkout = () => {
     return (
         <div className="checkout-premium min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(245,197,66,0.18),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.12),_transparent_30%),linear-gradient(135deg,#f8fafc_0%,#fffaf0_45%,#f1f5f9_100%)] py-10">
             <style>{`
-                .checkout-premium { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-                .checkout-premium h1, .checkout-premium h2, .checkout-premium h3 { font-family: "Plus Jakarta Sans", Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.025em; }
+                .checkout-premium { font-family: "Times New Roman", Times, serif; }
+                .checkout-premium h1, .checkout-premium h2, .checkout-premium h3 { font-family: "Times New Roman", Times, serif; letter-spacing: normal; }
                 .checkout-3d-card { transform-style: preserve-3d; transition: transform .35s ease, box-shadow .35s ease, border-color .35s ease; }
                 .checkout-3d-card:hover { transform: translateY(-4px) rotateX(.35deg); box-shadow: 0 34px 90px rgba(15,23,42,.16); border-color: rgba(245,158,11,.38); }
                 .preserve-3d { transform-style: preserve-3d; perspective: 900px; }
@@ -1233,51 +2602,116 @@ const Checkout = () => {
                                 animate={{ opacity: 1, x: 0 }}
                                 className="checkout-3d-card rounded-[28px] border border-white/70 bg-white/75 p-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur-xl"
                             >
-                                <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                                    <FiTruck className="text-blue-600" /> Select Shipping Method
-                                </h2>
-                                
-                                <div className="space-y-3">
-                                    {shippingOptions.map((option) => {
-                                        const Icon = option.icon;
-                                        const actualPrice = (option.id === 'standard' && hasFreeShipping) ? 0 : option.price;
-                                        
-                                        return (
-                                            <label
-                                                key={option.id}
-                                                className={`flex items-center justify-between p-4 border-2 rounded-xl cursor-pointer transition-all ${
-                                                    selectedShipping?.id === option.id 
-                                                        ? 'border-blue-500 bg-blue-50' 
-                                                        : 'border-gray-200 hover:border-blue-300'
-                                                }`}
+                                <div className="mb-5 flex items-start justify-between gap-4">
+                                    <div>
+                                        <h2 className="flex items-center gap-2 text-xl font-semibold">
+                                            <FiTruck className="text-blue-600" />
+                                            Delivery
+                                        </h2>
+                                        <p className="mt-1 text-sm text-gray-500">
+                                            Delivery time is automatically taken from each product configured by Admin.
+                                        </p>
+                                    </div>
+
+                                    <div className="rounded-full bg-green-50 px-3 py-1.5 text-xs font-bold text-green-700">
+                                        {shippingFee === 0
+                                            ? "Free Delivery"
+                                            : formatPrice(shippingFee)}
+                                    </div>
+                                </div>
+
+                                <div className="mb-5 overflow-hidden rounded-2xl border-2 border-blue-500 bg-gradient-to-r from-blue-50 to-indigo-50">
+                                    <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg">
+                                                <FiPackage size={23} />
+                                            </div>
+
+                                            <div>
+                                                <p className="font-black text-gray-900">
+                                                    Your Order Delivery
+                                                </p>
+                                                <p className="mt-1 text-sm font-medium text-gray-600">
+                                                    Delivery in {overallDelivery.label}
+                                                </p>
+                                                <p className="mt-1 text-xs font-semibold text-green-700">
+                                                    Estimated: {overallDelivery.estimated}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <div className="text-left sm:text-right">
+                                            <p className="font-black text-gray-900">
+                                                {shippingFee === 0
+                                                    ? "Free"
+                                                    : formatPrice(shippingFee)}
+                                            </p>
+
+                                            {hasFreeShipping && (
+                                                <p className="mt-1 text-xs font-semibold text-green-600">
+                                                    Free shipping applied
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="mb-3 flex items-center justify-between gap-3">
+                                        <h3 className="text-sm font-black text-gray-900">
+                                            Delivery by product
+                                        </h3>
+
+                                        <span className="text-xs text-gray-400">
+                                            Admin → Products
+                                        </span>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {deliverySchedule.products.map((delivery) => (
+                                            <div
+                                                key={`${delivery.productId}-${delivery.name}`}
+                                                className="flex items-center gap-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
                                             >
-                                                <div className="flex items-center gap-4">
-                                                    <input
-                                                        type="radio"
-                                                        name="shipping"
-                                                        value={option.id}
-                                                        checked={selectedShipping?.id === option.id}
-                                                        onChange={() => setSelectedShipping(option)}
-                                                        className="w-4 h-4 text-blue-600"
-                                                    />
-                                                    <Icon size={24} className="text-gray-600" />
-                                                    <div>
-                                                        <p className="font-semibold">{option.label}</p>
-                                                        <p className="text-sm text-gray-500">Delivery in {option.days}</p>
-                                                        <p className="text-xs text-green-600">Est. delivery: {option.estimated}</p>
+                                                <img
+                                                    src={getValidImageUrl(delivery.image)}
+                                                    alt={delivery.name}
+                                                    className="h-16 w-16 shrink-0 rounded-xl border border-gray-100 bg-gray-50 object-cover"
+                                                />
+
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="truncate text-sm font-bold text-gray-900">
+                                                        {delivery.name}
+                                                    </p>
+
+                                                    <p className="mt-1 text-xs text-gray-500">
+                                                        Qty: {delivery.quantity}
+                                                    </p>
+
+                                                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                                                        <span className="flex items-center gap-1.5 text-xs font-semibold text-blue-700">
+                                                            <FiClock />
+                                                            {delivery.label}
+                                                        </span>
+
+                                                        <span className="flex items-center gap-1.5 text-xs font-semibold text-green-700">
+                                                            <FiCalendar />
+                                                            {delivery.estimated}
+                                                        </span>
                                                     </div>
                                                 </div>
-                                                <div className="text-right">
-                                                    <p className="font-bold">
-                                                        {actualPrice === 0 ? 'Free' : formatPrice(actualPrice)}
-                                                    </p>
-                                                    {hasFreeShipping && option.id === 'standard' && (
-                                                        <p className="text-xs text-green-600">Free Shipping Applied!</p>
-                                                    )}
-                                                </div>
-                                            </label>
-                                        );
-                                    })}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="mt-5 flex gap-3 rounded-2xl border border-amber-100 bg-amber-50 p-4">
+                                    <FiAlertCircle className="mt-0.5 shrink-0 text-amber-600" />
+
+                                    <p className="text-xs leading-5 text-amber-800">
+                                        If products have different delivery times,
+                                        the overall order estimate uses the longest delivery time.
+                                    </p>
                                 </div>
                             </motion.div>
                         )}
@@ -1452,12 +2886,14 @@ const Checkout = () => {
                                     </div>
                                     
                                     <div className="border-b pb-3">
-                                        <h3 className="font-semibold mb-2">Shipping Method</h3>
+                                        <h3 className="font-semibold mb-2">Delivery</h3>
                                         <div className="flex justify-between">
-                                            <span>{selectedShipping?.label}</span>
+                                            <span>Product Delivery · {overallDelivery.label}</span>
                                             <span>{shippingFee === 0 ? 'Free' : formatPrice(shippingFee)}</span>
                                         </div>
-                                        <p className="text-xs text-gray-500">Est. delivery: {selectedShipping?.estimated}</p>
+                                        <p className="text-xs text-gray-500">
+                                            Estimated delivery: {overallDelivery.estimated}
+                                        </p>
                                         {hasFreeShipping && (
                                             <p className="text-xs text-green-600 mt-1">✨ Free Shipping Applied!</p>
                                         )}
@@ -1521,20 +2957,64 @@ const Checkout = () => {
                                     Back
                                 </button>
                             )}
-                            <button
+                            <motion.button
+                                whileHover={
+                                    loading
+                                        ? undefined
+                                        : {
+                                            y: -2,
+                                            scale: 1.01
+                                        }
+                                }
+                                whileTap={
+                                    loading
+                                        ? undefined
+                                        : {
+                                            scale: 0.985
+                                        }
+                                }
                                 onClick={handlePlaceOrder}
                                 disabled={loading}
-                                className="flex-1 rounded-2xl bg-gradient-to-r from-gray-950 via-gray-900 to-amber-900 px-6 py-3.5 font-semibold text-white shadow-[0_16px_34px_rgba(15,23,42,0.24)] transition-all hover:-translate-y-0.5 hover:shadow-[0_22px_45px_rgba(15,23,42,0.30)] flex items-center justify-center gap-2 disabled:opacity-50"
+                                className="group relative flex flex-1 items-center justify-center gap-3 overflow-hidden rounded-2xl border border-black bg-black px-6 py-4 text-base font-black text-white shadow-[0_18px_45px_rgba(0,0,0,0.22)] transition-all hover:bg-[#171717] hover:shadow-[0_24px_55px_rgba(0,0,0,0.30)] disabled:cursor-not-allowed disabled:opacity-50"
                             >
+                                <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
+
                                 {loading ? (
-                                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                                    <>
+                                        <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                                        <span>
+                                            {currentStep === 5
+                                                ? "Placing Order..."
+                                                : "Please wait..."}
+                                        </span>
+                                    </>
                                 ) : (
                                     <>
-                                        {currentStep === 5 ? 'Place Order' : 'Continue'} 
-                                        <FiArrowRight />
+                                        <span>
+                                            {currentStep === 5
+                                                ? "Place Order Securely"
+                                                : currentStep === 1
+                                                ? "Continue to Address"
+                                                : currentStep === 2
+                                                ? "Continue to Delivery"
+                                                : currentStep === 3
+                                                ? "Continue to Payment"
+                                                : "Continue to Review"}
+                                        </span>
+
+                                        <motion.span
+                                            className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-black"
+                                            whileHover={{ x: 2 }}
+                                        >
+                                            {currentStep === 5 ? (
+                                                <FiCheckCircle />
+                                            ) : (
+                                                <FiArrowRight />
+                                            )}
+                                        </motion.span>
                                     </>
                                 )}
-                            </button>
+                            </motion.button>
                         </div>
                     </div>
                     
@@ -1580,13 +3060,48 @@ const Checkout = () => {
                                         </button>
                                     </div>
                                 ) : (
-                                    <div className="flex items-center justify-between p-2 bg-green-50 rounded-lg">
-                                        <div className="flex items-center gap-2">
-                                            <FiTag className="text-green-600" size={14} />
-                                            <span className="text-sm text-green-700">{appliedCoupon.code}</span>
+                                    <motion.div
+                                        initial={{
+                                            opacity: 0,
+                                            y: 8,
+                                            scale: 0.98
+                                        }}
+                                        animate={{
+                                            opacity: 1,
+                                            y: 0,
+                                            scale: 1
+                                        }}
+                                        transition={{
+                                            duration: 0.28
+                                        }}
+                                        className="flex items-center justify-between rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-green-50 p-3 shadow-sm"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <motion.div
+                                                initial={{ rotate: -14, scale: 0.8 }}
+                                                animate={{ rotate: 0, scale: 1 }}
+                                                className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm"
+                                            >
+                                                <FiTag size={15} />
+                                            </motion.div>
+
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-600">
+                                                    Coupon Applied
+                                                </p>
+                                                <p className="text-sm font-black text-emerald-800">
+                                                    {appliedCoupon.code}
+                                                </p>
+                                            </div>
                                         </div>
-                                        <button onClick={removeCoupon} className="text-red-500 text-sm">Remove</button>
-                                    </div>
+
+                                        <button
+                                            onClick={removeCoupon}
+                                            className="rounded-lg px-3 py-1.5 text-xs font-bold text-red-500 transition hover:bg-red-50"
+                                        >
+                                            Remove
+                                        </button>
+                                    </motion.div>
                                 )}
                                 {couponError && <p className="text-xs text-red-500 mt-2 flex items-center gap-1"><FiAlertCircle />{couponError}</p>}
                                 {couponSuccess && <p className="text-xs text-green-600 mt-2 flex items-center gap-1"><FiCheckCircle />{couponSuccess}</p>}
@@ -1622,23 +3137,77 @@ const Checkout = () => {
                                     <span>Tax ({averageTaxRate.toFixed(1)}% avg)</span>
                                     <span>{formatPrice(taxAmount)}</span>
                                 </div>
-                                {discountAmount > 0 && (
-                                    <div className="flex justify-between text-green-600 text-sm">
-                                        <span>Discount</span>
-                                        <span>-{formatPrice(discountAmount)}</span>
-                                    </div>
-                                )}
+                                <AnimatePresence initial={false}>
+                                    {discountAmount > 0 && (
+                                        <motion.div
+                                            initial={{
+                                                opacity: 0,
+                                                height: 0,
+                                                y: -6
+                                            }}
+                                            animate={{
+                                                opacity: 1,
+                                                height: "auto",
+                                                y: 0
+                                            }}
+                                            exit={{
+                                                opacity: 0,
+                                                height: 0,
+                                                y: -6
+                                            }}
+                                            transition={{
+                                                duration: 0.26
+                                            }}
+                                            className="overflow-hidden"
+                                        >
+                                            <div className="flex items-center justify-between rounded-xl bg-red-50 px-3 py-2.5 text-sm font-bold text-red-600">
+                                                <span className="flex items-center gap-2">
+                                                    <FiTag />
+                                                    Coupon Discount
+                                                </span>
+
+                                                <span>
+                                                    -
+                                                    <AnimatedMoney
+                                                        value={discountAmount}
+                                                    />
+                                                </span>
+                                            </div>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
                                 {hasFreeShipping && (
                                     <div className="text-green-600 text-xs text-center py-1 bg-green-50 rounded-lg">
                                         ✨ Free Shipping Applied! ✨
                                     </div>
                                 )}
-                                <div className="border-t pt-3 mt-2">
-                                    <div className="flex justify-between font-bold text-lg">
-                                        <span>Total</span>
-                                        <span className="text-blue-600">{formatPrice(total)}</span>
+                                <motion.div
+                                    layout
+                                    className="mt-3 overflow-hidden rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50 via-white to-green-50 p-4"
+                                >
+                                    <div className="flex items-end justify-between gap-4">
+                                        <div>
+                                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-600">
+                                                Final Total
+                                            </p>
+
+                                            {discountAmount > 0 && (
+                                                <motion.p
+                                                    initial={{ opacity: 0, y: 4 }}
+                                                    animate={{ opacity: 1, y: 0 }}
+                                                    className="mt-1 text-xs font-semibold text-emerald-600"
+                                                >
+                                                    You saved {formatPrice(discountAmount)}
+                                                </motion.p>
+                                            )}
+                                        </div>
+
+                                        <AnimatedMoney
+                                            value={total}
+                                            className="text-2xl font-black tracking-tight text-emerald-600"
+                                        />
                                     </div>
-                                </div>
+                                </motion.div>
                             </div>
                             
                             <div className="mt-6 pt-4 border-t space-y-2">

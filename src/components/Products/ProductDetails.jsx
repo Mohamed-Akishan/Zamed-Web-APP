@@ -4,7 +4,22 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useCart } from "../../context/CartContext";
 import { toast } from "sonner";
 import { FiMinus, FiPlus, FiCheck, FiTruck, FiShield, FiRefreshCw, FiChevronDown } from "react-icons/fi";
-import { Heart, ShoppingBag, Image as ImageIcon, Star, MessageCircle, Truck, Shield, RotateCcw, Share2, Eye } from "lucide-react";
+import {
+    Heart,
+    ShoppingBag,
+    Image as ImageIcon,
+    Star,
+    MessageCircle,
+    Truck,
+    Shield,
+    RotateCcw,
+    Share2,
+    Eye,
+    X,
+    Ruler,
+    PackageCheck,
+    Shirt
+} from "lucide-react";
 import productService from "../../services/productService";
 import { loadProductImages, loadProductsImages } from "../../utils/imageLoader";
 import ProductReviews from "./ProductReviews";
@@ -26,6 +41,8 @@ const ProductDetails = () => {
     const [relatedProducts, setRelatedProducts] = useState([]);
     const [totalReviews, setTotalReviews] = useState(0);
     const [averageRating, setAverageRating] = useState(0);
+    const [showSizeGuideModal, setShowSizeGuideModal] = useState(false);
+    const [imageZoomed, setImageZoomed] = useState(false);
     const [settings, setSettings] = useState({
         showProductRatings: true,
         showProductColors: true,
@@ -73,18 +90,38 @@ const ProductDetails = () => {
             loadSettings();
         };
 
-        window.addEventListener('settingsSaved', handleSettingsUpdate);
-        window.addEventListener('siteInfoUpdated', handleSettingsUpdate);
-        window.addEventListener('storage', (e) => {
-            if (e.key === 'site_settings') {
+        const handleStorageUpdate = (event) => {
+            if (event.key === 'site_settings') {
                 handleSettingsUpdate();
             }
-        });
+        };
+
+        window.addEventListener(
+            'settingsSaved',
+            handleSettingsUpdate
+        );
+        window.addEventListener(
+            'siteInfoUpdated',
+            handleSettingsUpdate
+        );
+        window.addEventListener(
+            'storage',
+            handleStorageUpdate
+        );
 
         return () => {
-            window.removeEventListener('settingsSaved', handleSettingsUpdate);
-            window.removeEventListener('siteInfoUpdated', handleSettingsUpdate);
-            window.removeEventListener('storage', handleSettingsUpdate);
+            window.removeEventListener(
+                'settingsSaved',
+                handleSettingsUpdate
+            );
+            window.removeEventListener(
+                'siteInfoUpdated',
+                handleSettingsUpdate
+            );
+            window.removeEventListener(
+                'storage',
+                handleStorageUpdate
+            );
         };
     }, []);
 
@@ -115,9 +152,51 @@ const ProductDetails = () => {
         }
     }, [id]);
 
+    // Keep the customer product page synchronized with Admin > Products.
+    useEffect(() => {
+        const refreshProduct = () => {
+            loadProduct();
+            loadReviewStats();
+        };
+
+        const handleProductStorage = (event) => {
+            if (
+                event.key === "shop_products" ||
+                event.key === "admin_products" ||
+                event.key === "products"
+            ) {
+                refreshProduct();
+            }
+        };
+
+        window.addEventListener(
+            "productsUpdated",
+            refreshProduct
+        );
+        window.addEventListener(
+            "storage",
+            handleProductStorage
+        );
+
+        return () => {
+            window.removeEventListener(
+                "productsUpdated",
+                refreshProduct
+            );
+            window.removeEventListener(
+                "storage",
+                handleProductStorage
+            );
+        };
+    }, [id]);
+
     const loadReviewStats = () => {
         const allReviews = JSON.parse(localStorage.getItem('product_reviews') || '[]');
-        const productReviews = allReviews.filter(r => r.productId === parseInt(id));
+        const productReviews = allReviews.filter(
+            review =>
+                String(review.productId) === String(id) &&
+                String(review.status || "approved").toLowerCase() !== "rejected"
+        );
         if (productReviews.length > 0) {
             const total = productReviews.reduce((sum, r) => sum + r.rating, 0);
             const avg = total / productReviews.length;
@@ -139,11 +218,19 @@ const ProductDetails = () => {
         try {
             const allProducts = productService.getAllProducts();
             const loadedProducts = await loadProductsImages(allProducts);
-            const foundProduct = loadedProducts.find(p => p.id === parseInt(id));
+            const foundProduct = loadedProducts.find(
+                item =>
+                    String(item.id) === String(id)
+            );
             
             if (foundProduct) {
                 setProduct(foundProduct);
-                setCurrentImage(foundProduct.image);
+                setCurrentImage(
+                    foundProduct.image ||
+                    foundProduct.mainImage ||
+                    foundProduct.thumbnail ||
+                    ""
+                );
                 
                 if (settings.showProductSizes && foundProduct.sizes && foundProduct.sizes.length > 0) {
                     setSelectedSize(foundProduct.sizes[0]);
@@ -301,6 +388,97 @@ const ProductDetails = () => {
         return product.returnPolicy || "";
     };
 
+    const getSizeGuideRows = () => {
+        const gender = String(
+            product?.gender || "men"
+        ).toLowerCase();
+
+        if (gender === "women") {
+            return [
+                ["XS", "80-84", "62-66", "86-90"],
+                ["S", "85-89", "67-71", "91-95"],
+                ["M", "90-94", "72-76", "96-100"],
+                ["L", "95-101", "77-83", "101-107"],
+                ["XL", "102-108", "84-90", "108-114"],
+                ["XXL", "109-116", "91-98", "115-122"]
+            ];
+        }
+
+        if (gender === "kids") {
+            return [
+                ["XS", "3-4 yrs", "98-104", "54-56"],
+                ["S", "5-6 yrs", "110-116", "57-59"],
+                ["M", "7-8 yrs", "122-128", "60-64"],
+                ["L", "9-10 yrs", "134-140", "65-69"],
+                ["XL", "11-12 yrs", "146-152", "70-74"]
+            ];
+        }
+
+        return [
+            ["XS", "84-89", "71-76", "84-89"],
+            ["S", "90-95", "77-82", "90-95"],
+            ["M", "96-101", "83-88", "96-101"],
+            ["L", "102-107", "89-94", "102-107"],
+            ["XL", "108-113", "95-100", "108-113"],
+            ["XXL", "114-121", "101-108", "114-121"],
+            ["3XL", "122-129", "109-116", "122-129"]
+        ];
+    };
+
+    const getSizeGuideHeaders = () => {
+        const gender = String(
+            product?.gender || "men"
+        ).toLowerCase();
+
+        if (gender === "women") {
+            return [
+                "Size",
+                "Bust (cm)",
+                "Waist (cm)",
+                "Hips (cm)"
+            ];
+        }
+
+        if (gender === "kids") {
+            return [
+                "Size",
+                "Age",
+                "Height (cm)",
+                "Chest (cm)"
+            ];
+        }
+
+        return [
+            "Size",
+            "Chest (cm)",
+            "Waist (cm)",
+            "Hips (cm)"
+        ];
+    };
+
+    const getProductInformationRows = () => [
+        ["Brand", product?.brand],
+        ["Category", product?.category],
+        [
+            "Collection",
+            product?.gender
+                ? `${product.gender.charAt(0).toUpperCase()}${product.gender.slice(1)}`
+                : ""
+        ],
+        ["Material", product?.material],
+        ["Weight", product?.weight],
+        ["Care Instructions", product?.careInstructions],
+        [
+            "Delivery",
+            product?.deliveryDays
+                ? `${product.deliveryDays} days`
+                : ""
+        ],
+        ["Return Policy", product?.returnPolicy]
+    ].filter(([, value]) =>
+        String(value ?? "").trim()
+    );
+
     if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -368,15 +546,31 @@ const ProductDetails = () => {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
                 {/* Product Images Section */}
                 <div className="space-y-4">
-                    <div className="relative overflow-hidden rounded-2xl bg-gray-100 flex items-center justify-center min-h-[500px]">
-                        <img 
-                            src={currentImage} 
-                            alt={product.name} 
-                            className="w-full h-auto max-h-[600px] object-contain"
-                            onError={(e) => {
-                                e.target.src = 'https://via.placeholder.com/600x600?text=No+Image';
+                    <div
+                        className="group relative overflow-hidden rounded-2xl border border-gray-100 bg-white flex items-center justify-center min-h-[560px] cursor-zoom-in"
+                        onClick={() => {
+                            if (currentImage) {
+                                setImageZoomed(true);
+                            }
+                        }}
+                    >
+                        <img
+                            src={currentImage}
+                            alt={product.name}
+                            className="block h-auto w-full max-h-[760px] object-contain"
+                            style={{
+                                imageRendering: "auto"
+                            }}
+                            decoding="async"
+                            onError={(event) => {
+                                event.currentTarget.src =
+                                    'https://via.placeholder.com/900x900?text=No+Image';
                             }}
                         />
+
+                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1.5 text-xs font-semibold text-white opacity-0 transition group-hover:opacity-100">
+                            Click image to enlarge
+                        </div>
                         {settings.showSaleBadge && product.originalPrice && (
                             <div className="absolute top-4 left-4 bg-red-500 text-white px-3 py-1 rounded-lg text-sm font-bold z-10">
                                 {Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)}% OFF
@@ -561,11 +755,22 @@ const ProductDetails = () => {
                     )}
                     
                     {/* Size Guide - Controlled by settings */}
-                    {settings.showSizeGuide && (
-                        <div className="text-xs text-gray-500 mt-1">
-                            <button className="text-blue-600 hover:underline">📏 Size Guide</button>
-                        </div>
-                    )}
+                    {settings.showSizeGuide &&
+                        product.sizes &&
+                        product.sizes.length > 0 && (
+                            <div className="mt-1">
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setShowSizeGuideModal(true)
+                                    }
+                                    className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800 transition hover:border-black hover:bg-gray-50"
+                                >
+                                    <Ruler size={16} />
+                                    Size Guide
+                                </button>
+                            </div>
+                        )}
                     
                     {/* Quantity */}
                     <div>
@@ -630,23 +835,72 @@ const ProductDetails = () => {
                         </div>
                         <div className="pt-4">
                             {activeTab === "description" && (
-                                <p className="text-gray-600 leading-relaxed">
-                                    {productDescription || "No description available"}
-                                </p>
+                                <div className="whitespace-pre-line text-gray-600 leading-7">
+                                    {productDescription ||
+                                        "No description available"}
+                                </div>
                             )}
                             {activeTab === "details" && (
-                                <ul className="space-y-2 text-gray-600">
-                                    {detailsList.length > 0 ? (
-                                        detailsList.map((item, index) => (
-                                            <li key={index} className="flex items-start gap-2">
-                                                <span className="text-blue-500 mt-1">•</span>
-                                                <span>{item}</span>
-                                            </li>
-                                        ))
-                                    ) : (
-                                        <li className="text-gray-400">No product details available</li>
+                                <div className="space-y-6">
+                                    {detailsList.length > 0 && (
+                                        <div>
+                                            <h4 className="mb-3 font-semibold text-gray-900">
+                                                Product Details
+                                            </h4>
+
+                                            <ul className="space-y-2.5 text-gray-600">
+                                                {detailsList.map(
+                                                    (item, index) => (
+                                                        <li
+                                                            key={index}
+                                                            className="flex items-start gap-2"
+                                                        >
+                                                            <FiCheck
+                                                                className="mt-1 shrink-0 text-green-600"
+                                                                size={15}
+                                                            />
+                                                            <span className="leading-6">
+                                                                {item}
+                                                            </span>
+                                                        </li>
+                                                    )
+                                                )}
+                                            </ul>
+                                        </div>
                                     )}
-                                </ul>
+
+                                    {getProductInformationRows().length > 0 && (
+                                        <div className="overflow-hidden rounded-xl border border-gray-200">
+                                            {getProductInformationRows().map(
+                                                ([label, value], index) => (
+                                                    <div
+                                                        key={label}
+                                                        className={`grid grid-cols-[140px_1fr] gap-4 px-4 py-3 text-sm ${
+                                                            index % 2 === 0
+                                                                ? "bg-gray-50"
+                                                                : "bg-white"
+                                                        }`}
+                                                    >
+                                                        <span className="font-semibold text-gray-800">
+                                                            {label}
+                                                        </span>
+
+                                                        <span className="text-gray-600">
+                                                            {value}
+                                                        </span>
+                                                    </div>
+                                                )
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {detailsList.length === 0 &&
+                                        getProductInformationRows().length === 0 && (
+                                            <p className="text-gray-400">
+                                                No product details available
+                                            </p>
+                                        )}
+                                </div>
                             )}
                             {activeTab === "specifications" && (
                                 <div className="space-y-4">
@@ -681,9 +935,37 @@ const ProductDetails = () => {
                                     )}
                                     
                                     {/* If no specifications exist */}
-                                    {!productSpecs.material && !productSpecs.careInstructions && !productSpecs.tags && (
-                                        <p className="text-gray-400">No specifications available</p>
+                                    {product.weight && (
+                                        <div className="border-b border-gray-100 pb-3">
+                                            <h4 className="font-semibold text-gray-800 mb-1">
+                                                Weight
+                                            </h4>
+                                            <p className="text-gray-600">
+                                                {product.weight}
+                                            </p>
+                                        </div>
                                     )}
+
+                                    {product.category && (
+                                        <div className="border-b border-gray-100 pb-3">
+                                            <h4 className="font-semibold text-gray-800 mb-1">
+                                                Category
+                                            </h4>
+                                            <p className="text-gray-600">
+                                                {product.category}
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {!productSpecs.material &&
+                                        !productSpecs.careInstructions &&
+                                        !productSpecs.tags &&
+                                        !product.weight &&
+                                        !product.category && (
+                                            <p className="text-gray-400">
+                                                No specifications available
+                                            </p>
+                                        )}
                                 </div>
                             )}
                             {activeTab === "shipping" && (
@@ -704,6 +986,15 @@ const ProductDetails = () => {
                                         </span>
                                     </div>
                                     
+                                    {product.deliveryDays && (
+                                        <div className="flex items-center gap-3 text-sm text-gray-600">
+                                            <PackageCheck className="w-5 h-5 text-orange-600" />
+                                            <span>
+                                                Estimated delivery: {product.deliveryDays} days
+                                            </span>
+                                        </div>
+                                    )}
+
                                     {/* Secure Payment */}
                                     <div className="flex items-center gap-3 text-sm text-gray-600">
                                         <Shield className="w-5 h-5 text-purple-600" />
@@ -731,6 +1022,185 @@ const ProductDetails = () => {
                 </div>
             </div>
             
+            {/* Full-resolution product image viewer */}
+            {imageZoomed && currentImage && (
+                <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4"
+                    onClick={() => setImageZoomed(false)}
+                >
+                    <button
+                        type="button"
+                        onClick={() => setImageZoomed(false)}
+                        className="absolute right-5 top-5 flex h-11 w-11 items-center justify-center rounded-full bg-white text-black shadow-lg"
+                    >
+                        <X size={22} />
+                    </button>
+
+                    <img
+                        src={currentImage}
+                        alt={product.name}
+                        className="max-h-[94vh] max-w-[94vw] object-contain"
+                        style={{
+                            imageRendering: "auto"
+                        }}
+                        onClick={event =>
+                            event.stopPropagation()
+                        }
+                    />
+                </div>
+            )}
+
+            {/* Working Size Guide */}
+            {showSizeGuideModal && (
+                <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+                    onClick={() =>
+                        setShowSizeGuideModal(false)
+                    }
+                >
+                    <div
+                        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"
+                        onClick={event =>
+                            event.stopPropagation()
+                        }
+                    >
+                        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5">
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <Ruler
+                                        size={20}
+                                        className="text-gray-900"
+                                    />
+                                    <h2 className="text-xl font-bold text-gray-900">
+                                        Size Guide
+                                    </h2>
+                                </div>
+
+                                <p className="mt-1 text-sm text-gray-500">
+                                    {product.name}
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setShowSizeGuideModal(false)
+                                }
+                                className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-600 transition hover:bg-gray-200"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-6">
+                            <div className="mb-5 rounded-xl bg-gray-50 p-4">
+                                <div className="flex items-start gap-3">
+                                    <Shirt
+                                        size={22}
+                                        className="mt-0.5 shrink-0 text-gray-800"
+                                    />
+
+                                    <div>
+                                        <p className="font-semibold text-gray-900">
+                                            How to choose your size
+                                        </p>
+                                        <p className="mt-1 text-sm leading-6 text-gray-600">
+                                            Measure around the fullest part of your chest/bust,
+                                            keep the tape level around your waist, and compare
+                                            your measurements with the table below. If you are
+                                            between two sizes, choose the larger size for a
+                                            more relaxed fit.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="overflow-x-auto rounded-xl border border-gray-200">
+                                <table className="min-w-full border-collapse text-sm">
+                                    <thead className="bg-black text-white">
+                                        <tr>
+                                            {getSizeGuideHeaders().map(
+                                                header => (
+                                                    <th
+                                                        key={header}
+                                                        className="px-4 py-3 text-left font-semibold"
+                                                    >
+                                                        {header}
+                                                    </th>
+                                                )
+                                            )}
+                                        </tr>
+                                    </thead>
+
+                                    <tbody>
+                                        {getSizeGuideRows().map(
+                                            (row, rowIndex) => (
+                                                <tr
+                                                    key={row[0]}
+                                                    className={
+                                                        rowIndex % 2 === 0
+                                                            ? "bg-white"
+                                                            : "bg-gray-50"
+                                                    }
+                                                >
+                                                    {row.map(
+                                                        (cell, cellIndex) => (
+                                                            <td
+                                                                key={`${row[0]}-${cellIndex}`}
+                                                                className={`border-t border-gray-100 px-4 py-3 ${
+                                                                    cellIndex === 0
+                                                                        ? "font-bold text-gray-900"
+                                                                        : "text-gray-600"
+                                                                }`}
+                                                            >
+                                                                {cell}
+                                                            </td>
+                                                        )
+                                                    )}
+                                                </tr>
+                                            )
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {product.sizes?.length > 0 && (
+                                <div className="mt-5">
+                                    <p className="mb-2 text-sm font-semibold text-gray-900">
+                                        Available for this product
+                                    </p>
+
+                                    <div className="flex flex-wrap gap-2">
+                                        {product.sizes.map(size => (
+                                            <span
+                                                key={size}
+                                                className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${
+                                                    selectedSize === size
+                                                        ? "border-black bg-black text-white"
+                                                        : "border-gray-200 bg-white text-gray-700"
+                                                }`}
+                                            >
+                                                {size}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setShowSizeGuideModal(false)
+                                }
+                                className="mt-6 w-full rounded-xl bg-black py-3 font-semibold text-white transition hover:bg-gray-800"
+                            >
+                                Close Size Guide
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Related Products - Controlled by settings */}
             {settings.showRelatedProducts && relatedProducts.length > 0 && (
                 <div className="mt-16">
