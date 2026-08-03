@@ -115,9 +115,9 @@ const Checkout = () => {
 
     // Function to get valid image URL
     const getValidImageUrl = (image) => {
-        if (!image) return 'https://via.placeholder.com/80x80?text=No+Image';
+        if (!image) return '/images/no-image.svg';
         if (image.startsWith('data:') || image.startsWith('http')) return image;
-        return 'https://via.placeholder.com/80x80?text=No+Image';
+        return '/images/no-image.svg';
     };
 
     // ------------------------------------------------------------------
@@ -2476,7 +2476,7 @@ const Checkout = () => {
                                                     src={getValidImageUrl(item.image)} 
                                                     alt={item.name} 
                                                     className="w-20 h-20 object-cover rounded-lg"
-                                                    onError={(e) => { e.target.src = 'https://via.placeholder.com/80x80?text=No+Image'; }}
+                                                    onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                 />
                                                 <div className="flex-1">
                                                     <div className="flex justify-between">
@@ -3030,7 +3030,7 @@ const Checkout = () => {
                                             src={getValidImageUrl(item.image)} 
                                             alt={item.name} 
                                             className="w-12 h-12 object-cover rounded-lg"
-                                            onError={(e) => { e.target.src = 'https://via.placeholder.com/48x48?text=No+Image'; }}
+                                            onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                         />
                                         <div className="flex-1">
                                             <p className="font-medium text-sm line-clamp-1">{item.name}</p>

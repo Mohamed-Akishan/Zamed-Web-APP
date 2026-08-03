@@ -216,9 +216,9 @@ const FeaturedCollection = () => {
 
     // Helper function to get valid image URL
     const getValidImageUrl = (image) => {
-        if (!image) return 'https://via.placeholder.com/800x800?text=No+Image';
+        if (!image) return '/images/no-image.svg';
         if (image.startsWith('data:') || image.startsWith('http')) return image;
-        return 'https://via.placeholder.com/800x800?text=No+Image';
+        return '/images/no-image.svg';
     };
 
     // Helper function to safely get tags array
@@ -336,7 +336,7 @@ const FeaturedCollection = () => {
                                                                 alt={featuredProduct.name} 
                                                                 className="w-full h-full object-contain transition-transform duration-700 hover:scale-105"
                                                                 onError={(e) => {
-                                                                    e.target.src = 'https://via.placeholder.com/800x800?text=No+Image';
+                                                                    e.target.src = '/images/no-image.svg';
                                                                 }}
                                                             />
                                                         </div>
@@ -476,7 +476,7 @@ const FeaturedCollection = () => {
                                                                                             alt={color}
                                                                                             className="w-full h-full object-cover"
                                                                                             onError={(e) => {
-                                                                                                e.target.src = 'https://via.placeholder.com/48x48?text=No+Image';
+                                                                                                e.target.src = '/images/no-image.svg';
                                                                                             }}
                                                                                         />
                                                                                     </div>
@@ -571,7 +571,7 @@ const FeaturedCollection = () => {
                                 alt="Product full view" 
                                 className="max-w-full max-h-[85vh] object-contain"
                                 onError={(e) => {
-                                    e.target.src = 'https://via.placeholder.com/800x800?text=No+Image';
+                                    e.target.src = '/images/no-image.svg';
                                 }}
                             />
                         </div>

@@ -1104,7 +1104,7 @@ const Products = () => {
                                                         src={product.image} 
                                                         alt={product.name} 
                                                         className="w-10 h-10 object-cover rounded"
-                                                        onError={(e) => { e.target.src = 'https://via.placeholder.com/40'; }}
+                                                        onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                     />
                                                 ) : (
                                                     <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center">

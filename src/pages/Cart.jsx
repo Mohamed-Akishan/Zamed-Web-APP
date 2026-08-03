@@ -121,7 +121,7 @@ const Cart = () => {
         if (item.image && (item.image.startsWith('data:') || item.image.startsWith('http'))) {
             return item.image;
         }
-        return 'https://via.placeholder.com/80x80?text=No+Image';
+        return '/images/no-image.svg';
     };
 
     // Get product-specific tax rate or fallback to global
@@ -292,7 +292,7 @@ const Cart = () => {
                                                 src={productImage} 
                                                 alt={item.name} 
                                                 className="w-20 h-20 object-cover rounded-lg"
-                                                onError={(e) => { e.target.src = 'https://via.placeholder.com/80x80?text=No+Image'; }}
+                                                onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                             />
                                             <div>
                                                 <h3 className="font-semibold">{item.name}</h3>

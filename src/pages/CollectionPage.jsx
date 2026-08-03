@@ -1876,8 +1876,7 @@ const CollectionPage = () => {
                             loading="lazy"
                             decoding="async"
                             onError={event => {
-                                event.currentTarget.src =
-                                    "https://via.placeholder.com/700x900?text=No+Image";
+                                event.currentTarget.src = "/images/no-image.svg";
                             }}
                         />
                     </button>

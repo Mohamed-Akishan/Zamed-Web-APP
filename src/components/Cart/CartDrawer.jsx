@@ -87,10 +87,10 @@ const CartDrawer = ({ drawerOpen, toggleCartDrawer }) => {
                         {cartItems.map((item, index) => (
                             <div key={`${item.id}-${item.size}-${item.color}-${index}`} className="flex py-4 border-b last:border-b-0">
                                 <img 
-                                    src={item.image || 'https://via.placeholder.com/100'} 
+                                    src={item.image || '/images/no-image.svg'} 
                                     alt={item.name || 'Product'} 
                                     className="w-20 h-24 object-cover rounded-lg" 
-                                    onError={(e) => { e.target.src = "https://via.placeholder.com/100"; }}
+                                    onError={(e) => { e.target.src = "/images/no-image.svg"; }}
                                 />
                                 <div className="flex-1 ml-4">
                                     <h3 className="font-semibold text-gray-800">{item.name || 'Product'}</h3>

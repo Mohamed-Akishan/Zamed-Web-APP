@@ -3609,10 +3609,10 @@ const Profile = () => {
                                             <div key={product.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-2xl p-4 hover:shadow-xl transition-all group">
                                                 <div className="relative">
                                                     <img 
-                                                        src={product.image || 'https://via.placeholder.com/300x300?text=No+Image'} 
+                                                        src={product.image || '/images/no-image.svg'} 
                                                         alt={product.name} 
                                                         className="w-full h-48 object-cover rounded-xl mb-3 group-hover:scale-105 transition-transform duration-300"
-                                                        onError={(e) => { e.target.src = 'https://via.placeholder.com/300x300?text=No+Image'; }}
+                                                        onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                     />
                                                     <button onClick={() => removeFromFavorites(product.id)} className="absolute top-2 right-2 bg-white rounded-full p-2 shadow-md hover:scale-110 transition-transform">
                                                         <FiTrash2 size={16} className="text-red-500" />
@@ -3642,10 +3642,10 @@ const Profile = () => {
                                         {favorites.map((product) => (
                                             <div key={product.id} className="flex items-center gap-4 p-4 border rounded-xl hover:shadow-md transition-all">
                                                 <img 
-                                                    src={product.image || 'https://via.placeholder.com/80x80?text=No+Image'} 
+                                                    src={product.image || '/images/no-image.svg'} 
                                                     alt={product.name} 
                                                     className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-lg"
-                                                    onError={(e) => { e.target.src = 'https://via.placeholder.com/80x80?text=No+Image'; }}
+                                                    onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                 />
                                                 <div className="flex-1">
                                                     <h3 className="font-semibold text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.name}</h3>

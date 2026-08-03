@@ -563,8 +563,7 @@ const ProductDetails = () => {
                             }}
                             decoding="async"
                             onError={(event) => {
-                                event.currentTarget.src =
-                                    'https://via.placeholder.com/900x900?text=No+Image';
+                                event.currentTarget.src = '/images/no-image.svg';
                             }}
                         />
 
@@ -615,7 +614,7 @@ const ProductDetails = () => {
                                                     alt={color}
                                                     className="w-full h-full object-cover"
                                                     onError={(e) => {
-                                                        e.target.src = 'https://via.placeholder.com/80x80?text=No+Image';
+                                                        e.target.src = '/images/no-image.svg';
                                                     }}
                                                 />
                                             </div>
@@ -1222,7 +1221,7 @@ const ProductDetails = () => {
                                             alt={related.name} 
                                             className="w-full h-auto max-h-[280px] object-contain group-hover:scale-105 transition-transform duration-300"
                                             onError={(e) => {
-                                                e.target.src = 'https://via.placeholder.com/280x280?text=No+Image';
+                                                e.target.src = '/images/no-image.svg';
                                             }}
                                         />
                                         {settings.showSaleBadge && related.originalPrice && (

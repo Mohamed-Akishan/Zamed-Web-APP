@@ -333,9 +333,9 @@ const Orders = () => {
     const formatPrice = (price) => `${currencySymbol}${(price || 0).toFixed(2)}`;
 
     const getValidImageUrl = (image) => {
-        if (!image) return 'https://via.placeholder.com/60x60?text=No+Image';
+        if (!image) return '/images/no-image.svg';
         if (image.startsWith('data:') || image.startsWith('http')) return image;
-        return 'https://via.placeholder.com/60x60?text=No+Image';
+        return '/images/no-image.svg';
     };
 
     if (loading && orders.length === 0) {
@@ -515,7 +515,7 @@ const Orders = () => {
                                                                     src={getValidImageUrl(item.image)} 
                                                                     alt={item.name}
                                                                     className="w-6 h-6 rounded-full border-2 border-white dark:border-gray-800 object-cover"
-                                                                    onError={(e) => { e.target.src = 'https://via.placeholder.com/24x24?text=?'; }}
+                                                                    onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                                 />
                                                             ))}
                                                             {items.length > 3 && (
@@ -676,7 +676,7 @@ const Orders = () => {
                                                     src={getValidImageUrl(item.image)} 
                                                     alt={item.name} 
                                                     className="w-16 h-16 object-cover rounded-lg border border-gray-200 dark:border-gray-600"
-                                                    onError={(e) => { e.target.src = 'https://via.placeholder.com/64x64?text=No+Image'; }}
+                                                    onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                 />
                                                 <div className="flex-1">
                                                     <p className="font-medium dark:text-white">{item.name}</p>
