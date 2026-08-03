@@ -1870,12 +1870,13 @@ const CollectionPage = () => {
                         className="h-full w-full"
                     >
                         <img
-                            src={product.image}
+                            src={product.image || "/images/no-image.svg"}
                             alt={product.name}
                             className="h-full w-full object-contain p-2 transition duration-500 group-hover:scale-[1.03]"
                             loading="lazy"
                             decoding="async"
-                            onError={event => {
+                            onError={(event) => {
+                                event.currentTarget.onerror = null;
                                 event.currentTarget.src = "/images/no-image.svg";
                             }}
                         />
