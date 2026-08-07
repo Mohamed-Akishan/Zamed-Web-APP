@@ -12,12 +12,18 @@ import orderService from "../../services/orderService";
 import productService from "../../services/productService";
 
 // ============================================================
-// IMPORTANT: Use correct API URL for Vercel
+// FIX: Correct API URL for Vercel
 // ============================================================
 const API_URL = import.meta.env.VITE_API_URL || 
   (window.location.hostname.includes('vercel.app') 
-    ? 'https://zamed-backend-1.onrender.com/api'  // Add /api for Vercel
+    ? 'https://zamed-backend-1.onrender.com/api'
     : 'http://localhost:5000/api');
+
+// Also try the health endpoint to test connectivity
+const API_HEALTH_URL = import.meta.env.VITE_API_URL || 
+  (window.location.hostname.includes('vercel.app') 
+    ? 'https://zamed-backend-1.onrender.com/api/health'
+    : 'http://localhost:5000/api/health');
 
 const Dashboard = () => {
     const [stats, setStats] = useState({
@@ -47,11 +53,13 @@ const Dashboard = () => {
     const [error, setError] = useState(null);
     const [currencySymbol, setCurrencySymbol] = useState("$");
     const [hoveredCard, setHoveredCard] = useState(null);
+    const [apiHealthy, setApiHealthy] = useState(false);
 
     const CHART_MAX_BAR_HEIGHT = 180;
 
     useEffect(() => {
         loadCurrencySymbol();
+        checkApiHealth();
         loadDashboardData();
 
         window.addEventListener('productsUpdated', loadDashboardData);
@@ -64,6 +72,29 @@ const Dashboard = () => {
             window.removeEventListener('currencyChanged', handleCurrencyChange);
         };
     }, []);
+
+    // Check if backend API is reachable
+    const checkApiHealth = async () => {
+        try {
+            console.log('🔍 Checking API health at:', API_HEALTH_URL);
+            const response = await fetch(API_HEALTH_URL, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log('✅ API is healthy:', data);
+                setApiHealthy(true);
+            } else {
+                console.warn('⚠️ API returned status:', response.status);
+                setApiHealthy(false);
+            }
+        } catch (error) {
+            console.warn('⚠️ API not reachable:', error.message);
+            setApiHealthy(false);
+        }
+    };
 
     const loadCurrencySymbol = () => {
         try {
@@ -88,11 +119,15 @@ const Dashboard = () => {
         setError(null);
 
         try {
-            // Load orders
+            // Show API status
+            console.log(`🔗 API URL: ${API_URL}`);
+            console.log(`🩺 API Healthy: ${apiHealthy}`);
+
+            // Load orders - using orderService which uses localStorage
             let orders = [];
             try {
                 orders = await orderService.getAllOrders();
-                console.log(`📦 Loaded ${orders.length} orders`);
+                console.log(`📦 Loaded ${orders.length} orders from localStorage`);
             } catch (orderError) {
                 console.warn('Error loading orders:', orderError);
                 orders = [];
@@ -126,7 +161,7 @@ const Dashboard = () => {
                 customers = [];
             }
 
-            // Calculate stats
+            // Calculate stats from local data
             const deliveredOrdersList = orders.filter(o =>
                 (o.status === 'delivered' || o.orderStatus === 'delivered')
             );
@@ -386,6 +421,17 @@ const Dashboard = () => {
 
     return (
         <div className="pb-8 space-y-6">
+            {/* API Status Banner */}
+            {!apiHealthy && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-center gap-3">
+                    <FiAlertCircle className="text-yellow-600 text-xl flex-shrink-0" />
+                    <div>
+                        <p className="text-yellow-800 font-medium">Backend API not reachable</p>
+                        <p className="text-yellow-700 text-sm">Using local data only. Some features may be limited.</p>
+                    </div>
+                </div>
+            )}
+
             <AnimatePresence>
                 {error && (
                     <motion.div
@@ -425,6 +471,7 @@ const Dashboard = () => {
                 </button>
             </div>
 
+            {/* Rest of the dashboard remains the same */}
             {/* Stats Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                 {statCards.map((card, index) => {
