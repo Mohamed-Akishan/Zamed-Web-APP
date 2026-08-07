@@ -28,6 +28,7 @@ import {
     motion
 } from "framer-motion";
 import { toast } from "sonner";
+import { getWorkingImage } from "../utils/imageUtils";
 
 import { useCart } from "../context/CartContext";
 import productService from "../services/productService";
@@ -1835,6 +1836,8 @@ const CollectionPage = () => {
         return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
     };
 
+    const fallbackProductImage = getWorkingImage(0);
+
     const ProductCard = ({ product }) => {
         const favourite =
             favorites.some(
@@ -1870,14 +1873,14 @@ const CollectionPage = () => {
                         className="h-full w-full"
                     >
                         <img
-                            src={product.image || "/images/no-image.svg"}
+                            src={product.image || fallbackProductImage}
                             alt={product.name}
                             className="h-full w-full object-contain p-2 transition duration-500 group-hover:scale-[1.03]"
                             loading="lazy"
                             decoding="async"
                             onError={(event) => {
                                 event.currentTarget.onerror = null;
-                                event.currentTarget.src = "/images/no-image.svg";
+                                event.currentTarget.src = fallbackProductImage;
                             }}
                         />
                     </button>

@@ -5,6 +5,7 @@ import { ShoppingBag, Star, Heart, ArrowRight, ChevronLeft, ChevronRight, Maximi
 import { useCart } from "../../context/CartContext";
 import { toast } from "sonner";
 import productService from "../../services/productService";
+import { getWorkingImage } from "../../utils/imageUtils";
 
 const FeaturedCollection = () => {
     const [featuredProducts, setFeaturedProducts] = useState([]);
@@ -215,10 +216,12 @@ const FeaturedCollection = () => {
     }, [featuredProducts.length]);
 
     // Helper function to get valid image URL
+    const fallbackProductImage = getWorkingImage(0);
+
     const getValidImageUrl = (image) => {
-        if (!image) return '/images/no-image.svg';
+        if (!image) return fallbackProductImage;
         if (image.startsWith('data:') || image.startsWith('http')) return image;
-        return '/images/no-image.svg';
+        return fallbackProductImage;
     };
 
     // Helper function to safely get tags array

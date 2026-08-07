@@ -7,6 +7,7 @@ import { useCart } from "../../context/CartContext";
 import { toast } from "sonner";
 import productService from "../../services/productService";
 import { loadProductsImages } from "../../utils/imageLoader";
+import { getWorkingImage } from "../../utils/imageUtils";
 
 const NewArrivals = () => {
     const [newArrivals, setNewArrivals] = useState([]);
@@ -27,6 +28,8 @@ const NewArrivals = () => {
         showQuickAdd: true,
         showProductBrand: true
     });
+
+    const fallbackProductImage = getWorkingImage(0);
     const scrollContainerRef = useRef(null);
     const sectionRef = useRef(null);
     const navigate = useNavigate();
@@ -379,12 +382,16 @@ const NewArrivals = () => {
                                     {/* Image Container */}
                                     <div className="relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 h-[320px]">
                                         <motion.img 
-                                            src={currentImage} 
+                                            src={currentImage || fallbackProductImage} 
                                             alt={product.name} 
                                             className="w-full h-full object-cover"
                                             initial={{ scale: 1 }}
                                             animate={{ scale: isHovered ? 1.08 : 1 }}
                                             transition={{ duration: 0.5 }}
+                                            onError={(e) => {
+                                                e.currentTarget.onerror = null;
+                                                e.currentTarget.src = fallbackProductImage;
+                                            }}
                                         />
                                         
                                         {/* Sale Badge - Controlled by settings */}

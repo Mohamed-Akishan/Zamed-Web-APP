@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import productService from "../../services/productService";
 import { loadProductImages, loadProductsImages } from "../../utils/imageLoader";
+import { getWorkingImage } from "../../utils/imageUtils";
 import ProductReviews from "./ProductReviews";
 
 const ProductDetails = () => {
@@ -555,7 +556,7 @@ const ProductDetails = () => {
                         }}
                     >
                         <img
-                            src={currentImage}
+                            src={currentImage || fallbackProductImage}
                             alt={product.name}
                             className="block h-auto w-full max-h-[760px] object-contain"
                             style={{
@@ -563,7 +564,8 @@ const ProductDetails = () => {
                             }}
                             decoding="async"
                             onError={(event) => {
-                                event.currentTarget.src = '/images/no-image.svg';
+                                event.currentTarget.onerror = null;
+                                event.currentTarget.src = fallbackProductImage;
                             }}
                         />
 
@@ -1036,11 +1038,15 @@ const ProductDetails = () => {
                     </button>
 
                     <img
-                        src={currentImage}
+                        src={currentImage || fallbackProductImage}
                         alt={product.name}
                         className="max-h-[94vh] max-w-[94vw] object-contain"
                         style={{
                             imageRendering: "auto"
+                        }}
+                        onError={(event) => {
+                            event.currentTarget.onerror = null;
+                            event.currentTarget.src = fallbackProductImage;
                         }}
                         onClick={event =>
                             event.stopPropagation()

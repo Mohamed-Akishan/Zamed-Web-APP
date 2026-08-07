@@ -4,6 +4,7 @@ import { Search, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import productService from "../../services/productService";
+import { getWorkingImage } from "../../utils/imageUtils";
 
 const SearchBar = () => {
     const [searchTerm, setSearchTerm] = useState("");
@@ -16,6 +17,7 @@ const SearchBar = () => {
     const navigate = useNavigate();
     const resultsContainerRef = useRef(null);
     const searchInputRef = useRef(null);
+    const fallbackProductImage = getWorkingImage(0);
 
     useEffect(() => {
         const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
@@ -223,9 +225,13 @@ const SearchBar = () => {
                                             >
                                                 <div className="relative overflow-hidden">
                                                     <img 
-                                                        src={product.image} 
+                                                        src={product.image || fallbackProductImage} 
                                                         alt={product.name}
                                                         className="w-full h-56 object-cover group-hover:scale-105 transition-transform duration-300"
+                                                        onError={(event) => {
+                                                            event.currentTarget.onerror = null;
+                                                            event.currentTarget.src = fallbackProductImage;
+                                                        }}
                                                     />
                                                     {product.originalPrice && (
                                                         <div className="absolute top-2 left-2 bg-red-500 text-white px-2 py-1 rounded-lg text-xs font-semibold">
