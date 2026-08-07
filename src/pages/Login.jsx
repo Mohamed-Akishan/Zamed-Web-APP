@@ -13,19 +13,13 @@ import {
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
-const API_URL = (() => {
-  const envUrl = import.meta.env.VITE_API_URL?.trim();
-  const fallbackUrl =
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1"
-      ? "http://localhost:5000/api"
-      : "https://zamed-backend-1.onrender.com/api";
-
-  if (!envUrl) return fallbackUrl;
-
-  const normalizedUrl = envUrl.replace(/\/+$|\s+$/g, "");
-  return normalizedUrl.endsWith("/api") ? normalizedUrl : `${normalizedUrl}/api`;
-})();
+// ============================================================
+// FIX: Define API_URL directly in the file
+// ============================================================
+const API_URL = import.meta.env.VITE_API_URL || 
+  (window.location.hostname.includes('vercel.app') 
+    ? 'https://zamed-backend-1.onrender.com/api'
+    : 'http://localhost:5000/api');
 
 const DB_NAME = "ZamedImageStore";
 const STORE_NAME = "images";
@@ -375,6 +369,8 @@ const Login = () => {
     setLoading(true);
 
     try {
+      console.log('🔐 Logging in with API:', `${API_URL}/auth/login`);
+      
       const response = await fetch(`${API_URL}/auth/login`, {
         method: "POST",
         headers: {
@@ -433,10 +429,8 @@ const Login = () => {
         `Welcome back${savedUser?.firstName ? `, ${savedUser.firstName}` : ""}!`
       );
 
-      // Check if user is admin and redirect to admin dashboard
       const userRole = savedUser?.role || user?.role || '';
       if (userRole === 'admin' || userRole === 'super_admin') {
-        // Store admin session
         localStorage.setItem('admin', JSON.stringify(savedUser));
         localStorage.setItem('adminToken', token);
         window.location.assign('/admin/dashboard');
