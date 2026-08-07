@@ -1018,7 +1018,7 @@ const AdminLayout = () => {
         localStorage.removeItem("admin_token");
 
         toast.success("Admin logged out successfully");
-        navigate("/admin/login");
+        navigate("/login");
     };
 
     const forceRefresh = async () => {
