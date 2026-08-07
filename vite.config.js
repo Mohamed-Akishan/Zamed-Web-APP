@@ -19,6 +19,10 @@ export default defineConfig({
       usePolling: false,
       interval: 1000,
     },
+    // ============================================================
+    // FIX: Add historyApiFallback for SPA routing
+    // ============================================================
+    historyApiFallback: true,
     proxy: {
       '/api': {
         target: 'https://zamed-backend-1.onrender.com',
