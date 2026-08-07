@@ -11,6 +11,14 @@ import { toast } from "sonner";
 import orderService from "../../services/orderService";
 import productService from "../../services/productService";
 
+// ============================================================
+// IMPORTANT: Use correct API URL for Vercel
+// ============================================================
+const API_URL = import.meta.env.VITE_API_URL || 
+  (window.location.hostname.includes('vercel.app') 
+    ? 'https://zamed-backend-1.onrender.com/api'  // Add /api for Vercel
+    : 'http://localhost:5000/api');
+
 const Dashboard = () => {
     const [stats, setStats] = useState({
         totalProducts: 0,
@@ -58,9 +66,13 @@ const Dashboard = () => {
     }, []);
 
     const loadCurrencySymbol = () => {
-        const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
-        const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
-        setCurrencySymbol(symbols[siteSettings.currency] || "$");
+        try {
+            const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+            const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
+            setCurrencySymbol(symbols[siteSettings.currency] || "$");
+        } catch (e) {
+            setCurrencySymbol("$");
+        }
     };
 
     const handleCurrencyChange = (event) => {
@@ -76,23 +88,45 @@ const Dashboard = () => {
         setError(null);
 
         try {
-            const orders = await orderService.getAllOrders();
-            console.log(`📦 Loaded ${orders.length} real orders from IndexedDB`);
-
-            const products = productService.getAllProducts();
-            console.log(`📦 Loaded ${products.length} real products`);
-
-            let customers = JSON.parse(localStorage.getItem('admin_customers') || '[]');
-            const userData = localStorage.getItem('user');
-            if (userData) {
-                try {
-                    const user = JSON.parse(userData);
-                    if (user && !customers.find(c => c.email === user.email)) {
-                        customers.push(user);
-                    }
-                } catch (e) {}
+            // Load orders
+            let orders = [];
+            try {
+                orders = await orderService.getAllOrders();
+                console.log(`📦 Loaded ${orders.length} orders`);
+            } catch (orderError) {
+                console.warn('Error loading orders:', orderError);
+                orders = [];
             }
 
+            // Load products
+            let products = [];
+            try {
+                products = productService.getAllProducts();
+                console.log(`📦 Loaded ${products.length} products`);
+            } catch (productError) {
+                console.warn('Error loading products:', productError);
+                products = [];
+            }
+
+            // Load customers
+            let customers = [];
+            try {
+                customers = JSON.parse(localStorage.getItem('admin_customers') || '[]');
+                const userData = localStorage.getItem('user');
+                if (userData) {
+                    try {
+                        const user = JSON.parse(userData);
+                        if (user && !customers.find(c => c.email === user.email)) {
+                            customers.push(user);
+                        }
+                    } catch (e) {}
+                }
+            } catch (e) {
+                console.warn('Error loading customers:', e);
+                customers = [];
+            }
+
+            // Calculate stats
             const deliveredOrdersList = orders.filter(o =>
                 (o.status === 'delivered' || o.orderStatus === 'delivered')
             );
@@ -167,21 +201,23 @@ const Dashboard = () => {
                 .sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt))
                 .slice(0, 5);
 
+            // Calculate top products
             const productSales = new Map();
             orders.forEach(order => {
                 if ((order.status === 'delivered' || order.orderStatus === 'delivered')) {
                     const items = order.itemsList || order.items || [];
                     items.forEach(item => {
-                        if (!productSales.has(item.name)) {
-                            productSales.set(item.name, {
-                                name: item.name,
+                        const name = item.name || item.productName || 'Unknown Product';
+                        if (!productSales.has(name)) {
+                            productSales.set(name, {
+                                name: name,
                                 quantity: 0,
                                 revenue: 0
                             });
                         }
-                        const prod = productSales.get(item.name);
-                        prod.quantity += item.quantity;
-                        prod.revenue += (item.price * item.quantity);
+                        const prod = productSales.get(name);
+                        prod.quantity += item.quantity || 1;
+                        prod.revenue += (item.price || 0) * (item.quantity || 1);
                     });
                 }
             });
@@ -190,6 +226,7 @@ const Dashboard = () => {
                 .sort((a, b) => b.revenue - a.revenue)
                 .slice(0, 5);
 
+            // Calculate daily sales
             const last7Days = [];
             for (let i = 6; i >= 0; i--) {
                 const date = new Date();
@@ -213,8 +250,15 @@ const Dashboard = () => {
             }
             setDailySales(last7Days);
 
-            const lowStockProducts = productService.getLowStockProducts(10);
-            const outOfStockProducts = productService.getOutOfStockProducts();
+            // Get low stock products
+            let lowStockProducts = [];
+            let outOfStockProducts = [];
+            try {
+                lowStockProducts = productService.getLowStockProducts ? productService.getLowStockProducts(10) : [];
+                outOfStockProducts = productService.getOutOfStockProducts ? productService.getOutOfStockProducts() : [];
+            } catch (e) {
+                console.warn('Error getting stock info:', e);
+            }
 
             setStats({
                 totalProducts: products.length,
@@ -381,7 +425,7 @@ const Dashboard = () => {
                 </button>
             </div>
 
-            {/* Stats Cards with Hover Tooltip for Amount */}
+            {/* Stats Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                 {statCards.map((card, index) => {
                     const Icon = card.icon;
@@ -428,7 +472,6 @@ const Dashboard = () => {
                                 </div>
                             </motion.div>
 
-                            {/* Simple Tooltip - Just showing the full amount */}
                             <AnimatePresence>
                                 {isHovered && (
                                     <motion.div
