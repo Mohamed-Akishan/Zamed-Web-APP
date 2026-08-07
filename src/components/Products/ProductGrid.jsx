@@ -254,11 +254,12 @@ const ProductGrid = ({ products, title }) => {
         }
     };
 
+    const fallbackProductImage = 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400&h=400&fit=crop';
+
     return (
         <div className="py-12 bg-white">
             <div className="container mx-auto px-4">
                 {title && (
-                    <div className="text-center mb-12">
                         <motion.h2 
                             className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"
                             initial={{ opacity: 0, y: -30 }}
@@ -295,9 +296,13 @@ const ProductGrid = ({ products, title }) => {
                                     onClick={() => handleProductClick(product.id)}
                                 >
                                     <img 
-                                        src={currentImage} 
+                                        src={currentImage || fallbackProductImage} 
                                         alt={product.name}
                                         className="w-full h-full object-contain transition-transform duration-500 group-hover:scale-105"
+                                        onError={(e) => {
+                                            e.target.onerror = null;
+                                            e.target.src = fallbackProductImage;
+                                        }}
                                     />
                                     
                                     {/* Sale Badge - Controlled by settings */}

@@ -1,8 +1,14 @@
 // src/services/productService.js
 import { SEED_PRODUCTS } from '../data/seedProducts';
+import { fixProductImages } from '../utils/imageUtils';
 
 const NO_IMAGE = '/images/no-image.svg';
 const STORAGE_KEYS = ['shop_products', 'admin_products'];
+
+const forceWorkingImages = (products) => {
+    if (!Array.isArray(products)) return [];
+    return fixProductImages(products);
+};
 
 const normalizeProductImage = (image) => {
     if (!image || typeof image !== 'string') return NO_IMAGE;
@@ -91,7 +97,7 @@ const productService = {
         const storedProducts = getStoredProducts();
 
         if (storedProducts && storedProducts.length > 0) {
-            this.products = storedProducts;
+            this.products = forceWorkingImages(storedProducts);
             console.log(`✅ Loaded ${this.products.length} products from storage`);
             this.saveProducts();
         } else {
@@ -110,7 +116,7 @@ const productService = {
             : [];
 
         console.log(`📦 Created ${defaultProducts.length} products from seed data`);
-        return defaultProducts;
+        return forceWorkingImages(defaultProducts);
     },
 
     logAllProducts() {
