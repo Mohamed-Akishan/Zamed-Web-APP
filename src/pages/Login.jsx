@@ -1,3 +1,4 @@
+// src/pages/Login.jsx
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -425,9 +426,16 @@ const Login = () => {
         `Welcome back${savedUser?.firstName ? `, ${savedUser.firstName}` : ""}!`
       );
 
-      // A full navigation is intentional here:
-      // it guarantees AuthContext/Header/Profile re-read token + user immediately.
-      window.location.assign(target);
+      // Check if user is admin and redirect to admin dashboard
+      const userRole = savedUser?.role || user?.role || '';
+      if (userRole === 'admin' || userRole === 'super_admin') {
+        // Store admin session
+        localStorage.setItem('admin', JSON.stringify(savedUser));
+        localStorage.setItem('adminToken', token);
+        window.location.assign('/admin/dashboard');
+      } else {
+        window.location.assign(target);
+      }
     } catch (error) {
       console.error("Login error:", error);
       toast.error(error.message || "Server error. Please try again later.");

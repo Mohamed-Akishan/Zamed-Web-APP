@@ -12,7 +12,6 @@ import Checkout from "./pages/Checkout";
 import OrderSuccess from "./pages/OrderSuccess";
 import Cart from "./pages/Cart";
 import AdminLayout from "./components/Admin/AdminLayout";
-import AdminLogin from "./pages/Admin/AdminLogin";
 import Dashboard from "./pages/Admin/Dashboard";
 import Products from "./pages/Admin/Products";
 import Orders from "./pages/Admin/Orders";
@@ -59,7 +58,6 @@ const App = () => {
                 </Route>
                 
                 {/* Admin Routes */}
-                <Route path="/admin/login" element={<AdminLogin />} />
                 <Route path="/admin" element={<AdminLayout />}>
                   <Route index element={<Dashboard />} />
                   <Route path="dashboard" element={<Dashboard />} />

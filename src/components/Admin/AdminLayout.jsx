@@ -197,7 +197,9 @@ const AdminLayout = () => {
 
     const getToken = () =>
         localStorage.getItem("adminToken") ||
-        localStorage.getItem("admin_token");
+        localStorage.getItem("admin_token") ||
+        localStorage.getItem("token");
+    
     const currentAdmin = safeJSON(localStorage.getItem("admin"), {});
 
     const ADMIN_ROLES = ["super_admin", "admin", "editor", "viewer"];
@@ -230,7 +232,7 @@ const AdminLayout = () => {
 
     useEffect(() => {
         const checkMobile = () => {
-            const mobile = window.innerWidth < 1024;
+            const mobile = window.innerWidth < 768;
             setIsMobile(mobile);
 
             if (!mobile) {
@@ -280,17 +282,32 @@ const AdminLayout = () => {
         const checkAuth = async () => {
             const storedAdminRaw = localStorage.getItem("admin");
 
+            // If no admin in localStorage, try to get from main user
             if (!storedAdminRaw) {
-                navigate("/admin/login");
-                return;
+                const userRaw = localStorage.getItem("user");
+                if (userRaw) {
+                    try {
+                        const user = JSON.parse(userRaw);
+                        if (user.role === "admin" || user.role === "super_admin") {
+                            localStorage.setItem("admin", userRaw);
+                            const token = localStorage.getItem("token");
+                            if (token) {
+                                localStorage.setItem("adminToken", token);
+                            }
+                        }
+                    } catch (e) {}
+                }
+                
+                // Check again after potential set
+                const updatedAdmin = localStorage.getItem("admin");
+                if (!updatedAdmin) {
+                    navigate("/admin/login");
+                    return;
+                }
             }
 
             const storedAdmin = getStoredAdminIdentity();
-
-            // The admin object is ALWAYS the authoritative identity for the
-            // admin dashboard. A customer session must never overwrite it.
             setAdminName(storedAdmin.name);
-
             setAdminRole(
                 storedAdmin.role === "super_admin"
                     ? "Super Admin"
@@ -313,18 +330,12 @@ const AdminLayout = () => {
 
                     if (response.ok) {
                         const data = await response.json().catch(() => ({}));
-
                         const remoteUser =
                             data.user ||
                             data.data?.user ||
                             data.data ||
                             null;
 
-                        // IMPORTANT:
-                        // Accept server profile data ONLY when the returned
-                        // account is an admin account. This prevents a customer
-                        // logged into the storefront from replacing the admin
-                        // name/profile in AdminLayout.
                         if (remoteUser && isAdminAccount(remoteUser)) {
                             const remoteName =
                                 remoteUser.name ||
@@ -345,8 +356,6 @@ const AdminLayout = () => {
                                     : "Viewer"
                             );
 
-                            // Keep the admin record synchronized without
-                            // touching the customer `user` object.
                             const mergedAdmin = {
                                 ...storedAdmin,
                                 ...remoteUser,
@@ -408,8 +417,6 @@ const AdminLayout = () => {
         window.addEventListener("adminSettingsSaved", handleSettingsUpdate);
         window.addEventListener("siteInfoUpdated", handleSettingsUpdate);
 
-        // Poll occasionally so admin receives activity even when the event
-        // happened in another tab/component that did not dispatch a custom event.
         const interval = window.setInterval(loadNotifications, 15000);
 
         return () => {
@@ -851,7 +858,6 @@ const AdminLayout = () => {
 
         setNotifications(merged);
 
-        // Preserve normalized notifications for other admin components/tabs.
         try {
             localStorage.setItem(
                 LOCAL_NOTIFICATION_KEY,
@@ -1011,8 +1017,6 @@ const AdminLayout = () => {
         localStorage.removeItem("adminToken");
         localStorage.removeItem("admin_token");
 
-        // Do NOT remove the storefront customer token/user here.
-        // Admin and customer sessions are kept separate.
         toast.success("Admin logged out successfully");
         navigate("/admin/login");
     };
@@ -1070,15 +1074,6 @@ const AdminLayout = () => {
                 notification.type === notificationFilter
         );
     }, [notifications, notificationFilter]);
-
-    const getGreeting = () => {
-        const hour = new Date().getHours();
-
-        if (hour < 12) return "Good morning";
-        if (hour < 18) return "Good afternoon";
-
-        return "Good evening";
-    };
 
     const getRoleBadgeColor = () => {
         const role = getStoredAdminIdentity().role;
@@ -1146,11 +1141,8 @@ const AdminLayout = () => {
                 </div>
 
                 <button
-                    type="button"
                     onClick={toggleSidebar}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-gray-400 transition hover:bg-white/10 hover:text-white"
-                    aria-label="Close sidebar"
-                    title="Close sidebar"
+                    className="rounded-xl p-2 text-gray-400 transition hover:bg-white/10 hover:text-white"
                 >
                     <FiX size={20} />
                 </button>
@@ -1243,11 +1235,8 @@ const AdminLayout = () => {
                     ) : (
                         <div className="flex h-full flex-col items-center py-4">
                             <button
-                                type="button"
                                 onClick={toggleSidebar}
-                                className="mb-5 flex h-11 w-11 items-center justify-center rounded-xl text-gray-400 transition hover:bg-white/10 hover:text-white"
-                                aria-label="Open sidebar"
-                                title="Open sidebar"
+                                className="mb-5 rounded-xl p-3 text-gray-400 transition hover:bg-white/10 hover:text-white"
                             >
                                 <FiMenu size={20} />
                             </button>
@@ -1327,7 +1316,7 @@ const AdminLayout = () => {
                                 damping: 25,
                                 stiffness: 250
                             }}
-                            className="fixed inset-y-0 left-0 z-50 w-[min(86vw,288px)] bg-[#07111f] text-white shadow-2xl"
+                            className="fixed inset-y-0 left-0 z-50 w-72 bg-[#07111f] text-white shadow-2xl"
                         >
                             <SidebarContent />
                         </motion.aside>
@@ -1353,23 +1342,18 @@ const AdminLayout = () => {
                             : "border-gray-200/80 bg-white/90"
                     }`}
                 >
-                    <div className="flex min-h-[64px] items-center justify-between gap-2 px-3 sm:min-h-[68px] sm:gap-3 sm:px-4 lg:min-h-[72px] lg:px-6">
-                        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-                            {isMobile && (
-                                <button
-                                    type="button"
-                                    onClick={toggleSidebar}
-                                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
-                                        darkMode
-                                            ? "text-gray-300 hover:bg-gray-800"
-                                            : "text-gray-600 hover:bg-gray-100"
-                                    }`}
-                                    aria-label="Open admin menu"
-                                    title="Open admin menu"
-                                >
-                                    <FiMenu size={20} />
-                                </button>
-                            )}
+                    <div className="flex min-h-[72px] items-center justify-between gap-3 px-3 sm:px-6">
+                        <div className="flex min-w-0 items-center gap-3">
+                            <button
+                                onClick={toggleSidebar}
+                                className={`rounded-xl p-2.5 transition ${
+                                    darkMode
+                                        ? "text-gray-300 hover:bg-gray-800"
+                                        : "text-gray-600 hover:bg-gray-100"
+                                }`}
+                            >
+                                <FiMenu size={20} />
+                            </button>
 
                             <div className="min-w-0">
                                 <h2
@@ -1379,7 +1363,7 @@ const AdminLayout = () => {
                                             : "text-gray-900"
                                     }`}
                                 >
-                                    {getGreeting()}, {adminName}
+                                    {adminName}
                                 </h2>
 
                                 <p
@@ -1394,7 +1378,7 @@ const AdminLayout = () => {
                             </div>
                         </div>
 
-                        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5 lg:gap-2">
+                        <div className="flex items-center gap-1.5 sm:gap-2">
                             <button
                                 onClick={forceRefresh}
                                 className={`rounded-xl p-2.5 transition ${
@@ -1949,7 +1933,7 @@ const AdminLayout = () => {
                     </div>
                 </header>
 
-                <main className="p-3 sm:p-4 lg:p-6">
+                <main className="p-3 sm:p-6">
                     <Outlet
                         context={{
                             darkMode,
