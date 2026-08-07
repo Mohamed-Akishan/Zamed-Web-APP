@@ -13,14 +13,19 @@ import {
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  (window.location.hostname === "localhost" ||
-  window.location.hostname === "127.0.0.1"
-    ? "http://localhost:5000/api"
-    : window.location.hostname.endsWith(".vercel.app")
-      ? "https://zamed-backend-1.onrender.com/api"
-      : "https://zamed-backend-1.onrender.com/api");
+const API_URL = (() => {
+  const envUrl = import.meta.env.VITE_API_URL?.trim();
+  const fallbackUrl =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+      ? "http://localhost:5000/api"
+      : "https://zamed-backend-1.onrender.com/api";
+
+  if (!envUrl) return fallbackUrl;
+
+  const normalizedUrl = envUrl.replace(/\/+$|\s+$/g, "");
+  return normalizedUrl.endsWith("/api") ? normalizedUrl : `${normalizedUrl}/api`;
+})();
 
 const DB_NAME = "ZamedImageStore";
 const STORE_NAME = "images";
