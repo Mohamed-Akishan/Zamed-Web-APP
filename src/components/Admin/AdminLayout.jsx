@@ -42,7 +42,9 @@ const API_URL =
     (window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1"
         ? "http://localhost:5000/api"
-        : "https://zamed-backend.onrender.com/api");
+        : window.location.hostname.endsWith(".vercel.app")
+            ? "https://zamed-backend-1.onrender.com/api"
+            : "https://zamed-backend-1.onrender.com/api");
 
 const LOCAL_NOTIFICATION_KEY = "admin_notifications";
 const READ_NOTIFICATION_KEY = "admin_notification_read_ids";

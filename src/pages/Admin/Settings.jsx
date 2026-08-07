@@ -12,7 +12,14 @@ import {
 import { toast } from "sonner";
 import ImageCropper from "../../components/Admin/ImageCropper";
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  (window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:5000/api'
+    : window.location.hostname.endsWith('.vercel.app')
+      ? 'https://zamed-backend-1.onrender.com/api'
+      : 'https://zamed-backend-1.onrender.com/api');
 
 const MAX_UPLOAD_BYTES = 60 * 1024 * 1024; // supports large 8K source files
 const IMAGE_TYPES = [

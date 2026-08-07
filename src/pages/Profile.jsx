@@ -21,7 +21,14 @@ import { useCart } from "../context/CartContext";
 import orderService from "../services/orderService";
 import productService from "../services/productService";
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  (window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:5000/api'
+    : window.location.hostname.endsWith('.vercel.app')
+      ? 'https://zamed-backend-1.onrender.com/api'
+      : 'https://zamed-backend-1.onrender.com/api');
 
 const RETURNS_DB_NAME = "zamed_returns_db";
 const RETURNS_DB_VERSION = 1;

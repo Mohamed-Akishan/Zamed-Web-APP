@@ -31,7 +31,14 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  (window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:5000/api'
+    : window.location.hostname.endsWith('.vercel.app')
+      ? 'https://zamed-backend-1.onrender.com/api'
+      : 'https://zamed-backend-1.onrender.com/api');
 
 const COUPON_IMAGE_DB = "zamed_coupon_assets";
 const COUPON_IMAGE_STORE = "coupon_images";
