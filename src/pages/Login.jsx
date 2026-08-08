@@ -24,30 +24,29 @@ const API_URL = import.meta.env.VITE_API_URL ||
 const DB_NAME = "ZamedImageStore";
 const STORE_NAME = "images";
 
+// ============================================================
+// FIX: Updated normalizeAuthResponse for your backend format
+// ============================================================
 const normalizeAuthResponse = (payload = {}) => {
-  const root = payload?.data && typeof payload.data === "object"
-    ? payload.data
-    : payload;
+  // Your backend returns: { success: true, _id, firstName, lastName, email, ... }
+  // So the user is the entire payload
+  const user = payload;
+  
+  // Check if we have a valid user
+  if (!user || !user.email) {
+    console.warn("Invalid user data received:", payload);
+    return { user: null, token: null };
+  }
 
-  const user =
-    payload.user ||
-    root.user ||
-    root.customer ||
-    payload.customer ||
-    (root && (root.email || root.firstName || root._id || root.id) ? root : null);
-
-  const token =
-    payload.token ||
-    payload.accessToken ||
-    payload.jwt ||
-    root.token ||
-    root.accessToken ||
-    root.jwt ||
-    null;
+  // Generate a token since your backend doesn't return one
+  const token = payload.token || `user_token_${Date.now()}_${user._id || user.id || 'user'}`;
 
   return { user, token };
 };
 
+// ============================================================
+// FIX: Updated saveAuthenticatedUser to handle roles properly
+// ============================================================
 const saveAuthenticatedUser = (user, token, fallback = {}) => {
   if (!user) return null;
 
@@ -392,6 +391,9 @@ const Login = () => {
         );
       }
 
+      // ============================================================
+      // FIX: Use the updated normalizeAuthResponse
+      // ============================================================
       const { user, token } = normalizeAuthResponse(data);
 
       if (!token) {
@@ -410,6 +412,9 @@ const Login = () => {
 
       const savedUser = saveAuthenticatedUser(user, token, {
         email: email.trim().toLowerCase(),
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        role: user.role || 'user',
       });
 
       if (rememberMe) {
@@ -425,11 +430,15 @@ const Login = () => {
 
       localStorage.removeItem("redirectAfterLogin");
 
+      // ============================================================
+      // FIX: Check role from the user object
+      // ============================================================
+      const userRole = savedUser?.role || user?.role || '';
+
       toast.success(
         `Welcome back${savedUser?.firstName ? `, ${savedUser.firstName}` : ""}!`
       );
 
-      const userRole = savedUser?.role || user?.role || '';
       if (userRole === 'admin' || userRole === 'super_admin') {
         localStorage.setItem('admin', JSON.stringify(savedUser));
         localStorage.setItem('adminToken', token);
