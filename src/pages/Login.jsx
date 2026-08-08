@@ -25,27 +25,36 @@ const DB_NAME = "ZamedImageStore";
 const STORE_NAME = "images";
 
 // ============================================================
-// FIX: Updated normalizeAuthResponse for your backend format
+// FIX: Updated normalizeAuthResponse - uses the token from backend
 // ============================================================
 const normalizeAuthResponse = (payload = {}) => {
-  // Your backend returns: { success: true, _id, firstName, lastName, email, ... }
-  // So the user is the entire payload
-  const user = payload;
+  console.log('📦 Normalizing auth response:', payload);
   
-  // Check if we have a valid user
-  if (!user || !user.email) {
-    console.warn("Invalid user data received:", payload);
-    return { user: null, token: null };
-  }
+  // Your backend returns: { success: true, _id, firstName, lastName, email, role, token }
+  const user = {
+    id: payload._id || payload.id || null,
+    _id: payload._id || payload.id || null,
+    firstName: payload.firstName || '',
+    lastName: payload.lastName || '',
+    email: payload.email || '',
+    phone: payload.phone || payload.phoneNumber || '',
+    role: payload.role || 'user',
+    profileImage: payload.profileImage || payload.avatar || '',
+    avatar: payload.avatar || payload.profileImage || '',
+    ...payload,
+  };
 
-  // Generate a token since your backend doesn't return one
-  const token = payload.token || `user_token_${Date.now()}_${user._id || user.id || 'user'}`;
+  // Use the token from the backend response
+  const token = payload.token || null;
+
+  console.log('✅ Normalized user:', { email: user.email, role: user.role });
+  console.log('🔑 Token found:', !!token);
 
   return { user, token };
 };
 
 // ============================================================
-// FIX: Updated saveAuthenticatedUser to handle roles properly
+// FIX: Updated saveAuthenticatedUser - saves admin data too
 // ============================================================
 const saveAuthenticatedUser = (user, token, fallback = {}) => {
   if (!user) return null;
@@ -63,12 +72,37 @@ const saveAuthenticatedUser = (user, token, fallback = {}) => {
     ...user,
   };
 
+  // Save token
   if (token) {
     localStorage.setItem("token", token);
   }
 
+  // Save user
   localStorage.setItem("user", JSON.stringify(normalizedUser));
+  
+  // ============================================================
+  // FIX: If user is admin, also save to admin keys
+  // ============================================================
+  const userRole = normalizedUser.role || '';
+  if (userRole === 'admin' || userRole === 'super_admin') {
+    localStorage.setItem("admin", JSON.stringify(normalizedUser));
+    if (token) {
+      localStorage.setItem("adminToken", token);
+    }
+    console.log('✅ Admin data saved to localStorage:', { 
+      email: normalizedUser.email, 
+      role: normalizedUser.role 
+    });
+  }
+  
   localStorage.setItem("auth_timestamp", String(Date.now()));
+
+  console.log('✅ User saved:', { 
+    email: normalizedUser.email, 
+    role: normalizedUser.role,
+    tokenSaved: !!token,
+    isAdmin: userRole === 'admin' || userRole === 'super_admin'
+  });
 
   window.dispatchEvent(
     new CustomEvent("authChanged", {
@@ -391,6 +425,8 @@ const Login = () => {
         );
       }
 
+      console.log('📥 Login response received:', data);
+
       // ============================================================
       // FIX: Use the updated normalizeAuthResponse
       // ============================================================
@@ -439,11 +475,17 @@ const Login = () => {
         `Welcome back${savedUser?.firstName ? `, ${savedUser.firstName}` : ""}!`
       );
 
+      // ============================================================
+      // FIX: Verify admin data was saved
+      // ============================================================
+      const adminSaved = localStorage.getItem('admin');
+      console.log('📋 Admin saved in localStorage:', !!adminSaved);
+      
       if (userRole === 'admin' || userRole === 'super_admin') {
-        localStorage.setItem('admin', JSON.stringify(savedUser));
-        localStorage.setItem('adminToken', token);
+        console.log('👑 Redirecting to admin dashboard...');
         window.location.assign('/admin/dashboard');
       } else {
+        console.log('👤 Redirecting to user home...');
         window.location.assign(target);
       }
     } catch (error) {

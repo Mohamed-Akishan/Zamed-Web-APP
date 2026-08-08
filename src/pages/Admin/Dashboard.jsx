@@ -91,11 +91,10 @@ const Dashboard = () => {
             console.log('📊 Loading dashboard data...');
 
             // ============================================================
-            // FIX: Load orders from localStorage directly (fallback)
+            // Load orders from localStorage directly (fallback)
             // ============================================================
             let orders = [];
             try {
-                // Try multiple localStorage keys
                 const possibleKeys = ['orders', 'admin_orders', 'shop_orders'];
                 for (const key of possibleKeys) {
                     const stored = localStorage.getItem(key);
@@ -109,7 +108,6 @@ const Dashboard = () => {
                     }
                 }
                 
-                // If still empty, try orderService
                 if (orders.length === 0) {
                     try {
                         orders = await orderService.getAllOrders();
@@ -124,11 +122,10 @@ const Dashboard = () => {
             }
 
             // ============================================================
-            // FIX: Load products from localStorage directly
+            // Load products from localStorage directly
             // ============================================================
             let products = [];
             try {
-                // Try multiple localStorage keys
                 const possibleKeys = ['products', 'admin_products', 'shop_products'];
                 for (const key of possibleKeys) {
                     const stored = localStorage.getItem(key);
@@ -142,7 +139,6 @@ const Dashboard = () => {
                     }
                 }
                 
-                // If still empty, try productService
                 if (products.length === 0) {
                     try {
                         products = productService.getAllProducts();
