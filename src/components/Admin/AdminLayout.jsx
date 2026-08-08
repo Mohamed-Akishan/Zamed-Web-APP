@@ -285,113 +285,127 @@ const AdminLayout = () => {
             document.removeEventListener("mousedown", handleOutsideClick);
     }, []);
 
-    useEffect(() => {
-        const checkAuth = async () => {
-            const storedAdminRaw = localStorage.getItem("admin");
-
-            // If no admin in localStorage, try to get from main user
-            if (!storedAdminRaw) {
-                const userRaw = localStorage.getItem("user");
-                if (userRaw) {
-                    try {
-                        const user = JSON.parse(userRaw);
-                        if (user.role === "admin" || user.role === "super_admin") {
-                            localStorage.setItem("admin", userRaw);
-                            const token = localStorage.getItem("token");
-                            if (token) {
-                                localStorage.setItem("adminToken", token);
-                            }
-                        }
-                    } catch (e) {}
-                }
-                
-                // Check again after potential set
-                const updatedAdmin = localStorage.getItem("admin");
-                if (!updatedAdmin) {
-                    navigate("/admin/login");
-                    return;
-                }
-            }
-
-            const storedAdmin = getStoredAdminIdentity();
-            setAdminName(storedAdmin.name);
-            setAdminRole(
-                storedAdmin.role === "super_admin"
-                    ? "Super Admin"
-                    : storedAdmin.role === "admin"
-                    ? "Admin"
-                    : storedAdmin.role === "editor"
-                    ? "Editor"
-                    : "Viewer"
-            );
-
-            const token = getToken();
-
-            if (token) {
+    // ============================================================
+    // FIX: Updated checkAuth function - uses localStorage first,
+    // API call is optional and won't block the UI
+    // ============================================================
+    const checkAuth = () => {
+        console.log('🔐 Checking admin authentication...');
+        
+        const storedAdminRaw = localStorage.getItem("admin");
+        
+        // If no admin in localStorage, try to get from main user
+        if (!storedAdminRaw) {
+            const userRaw = localStorage.getItem("user");
+            if (userRaw) {
                 try {
-                    const response = await fetch(`${API_URL}/auth/me`, {
-                        headers: {
-                            Authorization: `Bearer ${token}`
+                    const user = JSON.parse(userRaw);
+                    if (user.role === "admin" || user.role === "super_admin") {
+                        localStorage.setItem("admin", userRaw);
+                        const token = localStorage.getItem("token");
+                        if (token) {
+                            localStorage.setItem("adminToken", token);
                         }
-                    });
-
-                    if (response.ok) {
-                        const data = await response.json().catch(() => ({}));
-                        const remoteUser =
-                            data.user ||
-                            data.data?.user ||
-                            data.data ||
-                            null;
-
-                        if (remoteUser && isAdminAccount(remoteUser)) {
-                            const remoteName =
-                                remoteUser.name ||
-                                `${remoteUser.firstName || ""} ${remoteUser.lastName || ""}`.trim() ||
-                                remoteUser.username ||
-                                remoteUser.email?.split("@")?.[0] ||
-                                storedAdmin.name;
-
-                            setAdminName(remoteName);
-
-                            setAdminRole(
-                                remoteUser.role === "super_admin"
-                                    ? "Super Admin"
-                                    : remoteUser.role === "admin"
-                                    ? "Admin"
-                                    : remoteUser.role === "editor"
-                                    ? "Editor"
-                                    : "Viewer"
-                            );
-
-                            const mergedAdmin = {
-                                ...storedAdmin,
-                                ...remoteUser,
-                                name: remoteName
-                            };
-
-                            localStorage.setItem(
-                                "admin",
-                                JSON.stringify(mergedAdmin)
-                            );
-                        }
+                        console.log('✅ Admin data copied from user localStorage');
                     }
-                } catch (error) {
-                    console.warn(
-                        "Admin profile verification unavailable; using stored admin profile.",
-                        error
-                    );
+                } catch (e) {
+                    console.warn('Error parsing user data:', e);
                 }
             }
+            
+            // Check again after potential set
+            const updatedAdmin = localStorage.getItem("admin");
+            if (!updatedAdmin) {
+                console.log('❌ No admin found in localStorage, redirecting to login');
+                navigate("/login");
+                return;
+            }
+        }
 
-            setLoading(false);
-        };
+        const storedAdmin = getStoredAdminIdentity();
+        console.log('✅ Admin loaded from localStorage:', { 
+            email: storedAdmin.email, 
+            role: storedAdmin.role,
+            name: storedAdmin.name 
+        });
+        
+        setAdminName(storedAdmin.name);
+        setAdminRole(
+            storedAdmin.role === "super_admin"
+                ? "Super Admin"
+                : storedAdmin.role === "admin"
+                ? "Admin"
+                : storedAdmin.role === "editor"
+                ? "Editor"
+                : "Viewer"
+        );
 
+        // ============================================================
+        // Optional: Try to sync with backend, but don't block the UI
+        // If this fails, the admin can still use the dashboard
+        // ============================================================
+        const token = getToken();
+        if (token) {
+            console.log('🔄 Attempting to sync admin data with backend...');
+            fetch(`${API_URL}/auth/me`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            .then(response => {
+                if (response.ok) {
+                    return response.json().catch(() => ({}));
+                }
+                return null;
+            })
+            .then(data => {
+                if (data) {
+                    const remoteUser = data.user || data.data?.user || data.data || null;
+                    if (remoteUser && isAdminAccount(remoteUser)) {
+                        const remoteName = remoteUser.name ||
+                            `${remoteUser.firstName || ""} ${remoteUser.lastName || ""}`.trim() ||
+                            remoteUser.username ||
+                            remoteUser.email?.split("@")?.[0] ||
+                            storedAdmin.name;
+
+                        setAdminName(remoteName);
+                        setAdminRole(
+                            remoteUser.role === "super_admin"
+                                ? "Super Admin"
+                                : remoteUser.role === "admin"
+                                ? "Admin"
+                                : remoteUser.role === "editor"
+                                ? "Editor"
+                                : "Viewer"
+                        );
+
+                        const mergedAdmin = { ...storedAdmin, ...remoteUser, name: remoteName };
+                        localStorage.setItem("admin", JSON.stringify(mergedAdmin));
+                        console.log('✅ Admin data synced from backend');
+                    }
+                }
+            })
+            .catch(error => {
+                console.log('ℹ️ Backend sync unavailable, using local admin data:', error.message);
+            });
+        }
+
+        setLoading(false);
+        console.log('✅ Admin authentication complete');
+    };
+
+    // ============================================================
+    // FIX: Updated useEffect - calls checkAuth without blocking
+    // ============================================================
+    useEffect(() => {
+        console.log('🔄 AdminLayout initializing...');
+        
+        // Check auth first - this sets loading to false
         checkAuth();
+        
+        // Load other data
         loadSiteName();
         loadNotifications();
 
         const savedTheme = localStorage.getItem("admin_dark_mode");
-
         if (savedTheme === "true") {
             setDarkMode(true);
             document.documentElement.classList.add("dark");
