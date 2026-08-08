@@ -19,12 +19,6 @@ const API_URL = import.meta.env.VITE_API_URL ||
     ? 'https://zamed-backend-1.onrender.com/api'
     : 'http://localhost:5000/api');
 
-// Also try the health endpoint to test connectivity
-const API_HEALTH_URL = import.meta.env.VITE_API_URL || 
-  (window.location.hostname.includes('vercel.app') 
-    ? 'https://zamed-backend-1.onrender.com/api/health'
-    : 'http://localhost:5000/api/health');
-
 const Dashboard = () => {
     const [stats, setStats] = useState({
         totalProducts: 0,
@@ -53,13 +47,11 @@ const Dashboard = () => {
     const [error, setError] = useState(null);
     const [currencySymbol, setCurrencySymbol] = useState("$");
     const [hoveredCard, setHoveredCard] = useState(null);
-    const [apiHealthy, setApiHealthy] = useState(false);
 
     const CHART_MAX_BAR_HEIGHT = 180;
 
     useEffect(() => {
         loadCurrencySymbol();
-        checkApiHealth();
         loadDashboardData();
 
         window.addEventListener('productsUpdated', loadDashboardData);
@@ -72,29 +64,6 @@ const Dashboard = () => {
             window.removeEventListener('currencyChanged', handleCurrencyChange);
         };
     }, []);
-
-    // Check if backend API is reachable
-    const checkApiHealth = async () => {
-        try {
-            console.log('🔍 Checking API health at:', API_HEALTH_URL);
-            const response = await fetch(API_HEALTH_URL, {
-                method: 'GET',
-                headers: { 'Content-Type': 'application/json' }
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                console.log('✅ API is healthy:', data);
-                setApiHealthy(true);
-            } else {
-                console.warn('⚠️ API returned status:', response.status);
-                setApiHealthy(false);
-            }
-        } catch (error) {
-            console.warn('⚠️ API not reachable:', error.message);
-            setApiHealthy(false);
-        }
-    };
 
     const loadCurrencySymbol = () => {
         try {
@@ -119,31 +88,77 @@ const Dashboard = () => {
         setError(null);
 
         try {
-            // Show API status
-            console.log(`🔗 API URL: ${API_URL}`);
-            console.log(`🩺 API Healthy: ${apiHealthy}`);
+            console.log('📊 Loading dashboard data...');
 
-            // Load orders - using orderService which uses localStorage
+            // ============================================================
+            // FIX: Load orders from localStorage directly (fallback)
+            // ============================================================
             let orders = [];
             try {
-                orders = await orderService.getAllOrders();
-                console.log(`📦 Loaded ${orders.length} orders from localStorage`);
+                // Try multiple localStorage keys
+                const possibleKeys = ['orders', 'admin_orders', 'shop_orders'];
+                for (const key of possibleKeys) {
+                    const stored = localStorage.getItem(key);
+                    if (stored) {
+                        const parsed = JSON.parse(stored);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            orders = parsed;
+                            console.log(`📦 Loaded ${orders.length} orders from localStorage (${key})`);
+                            break;
+                        }
+                    }
+                }
+                
+                // If still empty, try orderService
+                if (orders.length === 0) {
+                    try {
+                        orders = await orderService.getAllOrders();
+                        console.log(`📦 Loaded ${orders.length} orders from orderService`);
+                    } catch (e) {
+                        console.warn('orderService failed, using empty array');
+                    }
+                }
             } catch (orderError) {
                 console.warn('Error loading orders:', orderError);
                 orders = [];
             }
 
-            // Load products
+            // ============================================================
+            // FIX: Load products from localStorage directly
+            // ============================================================
             let products = [];
             try {
-                products = productService.getAllProducts();
-                console.log(`📦 Loaded ${products.length} products`);
+                // Try multiple localStorage keys
+                const possibleKeys = ['products', 'admin_products', 'shop_products'];
+                for (const key of possibleKeys) {
+                    const stored = localStorage.getItem(key);
+                    if (stored) {
+                        const parsed = JSON.parse(stored);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            products = parsed;
+                            console.log(`📦 Loaded ${products.length} products from localStorage (${key})`);
+                            break;
+                        }
+                    }
+                }
+                
+                // If still empty, try productService
+                if (products.length === 0) {
+                    try {
+                        products = productService.getAllProducts();
+                        console.log(`📦 Loaded ${products.length} products from productService`);
+                    } catch (e) {
+                        console.warn('productService failed, using empty array');
+                    }
+                }
             } catch (productError) {
                 console.warn('Error loading products:', productError);
                 products = [];
             }
 
-            // Load customers
+            // ============================================================
+            // Load customers from localStorage
+            // ============================================================
             let customers = [];
             try {
                 customers = JSON.parse(localStorage.getItem('admin_customers') || '[]');
@@ -156,12 +171,15 @@ const Dashboard = () => {
                         }
                     } catch (e) {}
                 }
+                console.log(`👥 Loaded ${customers.length} customers`);
             } catch (e) {
                 console.warn('Error loading customers:', e);
                 customers = [];
             }
 
+            // ============================================================
             // Calculate stats from local data
+            // ============================================================
             const deliveredOrdersList = orders.filter(o =>
                 (o.status === 'delivered' || o.orderStatus === 'delivered')
             );
@@ -318,6 +336,8 @@ const Dashboard = () => {
             setRecentOrders(recent);
             setTopProducts(topProductsList);
 
+            console.log('✅ Dashboard data loaded successfully');
+
         } catch (error) {
             console.error("Error loading dashboard data:", error);
             setError(error.message);
@@ -421,17 +441,6 @@ const Dashboard = () => {
 
     return (
         <div className="pb-8 space-y-6">
-            {/* API Status Banner */}
-            {!apiHealthy && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-center gap-3">
-                    <FiAlertCircle className="text-yellow-600 text-xl flex-shrink-0" />
-                    <div>
-                        <p className="text-yellow-800 font-medium">Backend API not reachable</p>
-                        <p className="text-yellow-700 text-sm">Using local data only. Some features may be limited.</p>
-                    </div>
-                </div>
-            )}
-
             <AnimatePresence>
                 {error && (
                     <motion.div
@@ -471,7 +480,6 @@ const Dashboard = () => {
                 </button>
             </div>
 
-            {/* Rest of the dashboard remains the same */}
             {/* Stats Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                 {statCards.map((card, index) => {
