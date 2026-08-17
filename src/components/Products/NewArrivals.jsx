@@ -1,24 +1,27 @@
 // src/components/Products/NewArrivals.jsx
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, ChevronRight, Star, ShoppingBag, Heart, Sparkles, ArrowRight, Eye } from "lucide-react";
+import { motion } from "framer-motion";
+import { ChevronLeft, ChevronRight, Star, ShoppingBag, Heart, Sparkles, ArrowRight } from "lucide-react";
 import { useCart } from "../../context/CartContext";
 import { toast } from "sonner";
 import productService from "../../services/productService";
-import { loadProductsImages } from "../../utils/imageLoader";
 import { getWorkingImage } from "../../utils/imageUtils";
+import { loadProductImages } from "../../utils/imageLoader";
+import useFavorites from "../../hooks/useFavorites";
 
 const NewArrivals = () => {
+    const navigate = useNavigate();
     const [newArrivals, setNewArrivals] = useState([]);
     const [loading, setLoading] = useState(true);
     const [currencySymbol, setCurrencySymbol] = useState("$");
     const [selectedColor, setSelectedColor] = useState({});
     const [currentImages, setCurrentImages] = useState({});
-    const [favorites, setFavorites] = useState([]);
-    const [user, setUser] = useState(null);
+    const [colorImages, setColorImages] = useState({});
     const [hoveredProduct, setHoveredProduct] = useState(null);
     const [isVisible, setIsVisible] = useState(false);
+    const [hoverInterval, setHoverInterval] = useState({});
+    const [hoverColorIndex, setHoverColorIndex] = useState({});
     const [settings, setSettings] = useState({
         productsPerRow: 4,
         showProductRatings: true,
@@ -29,27 +32,71 @@ const NewArrivals = () => {
         showProductBrand: true
     });
 
+    // ============================================================
+    // Use centralized favorites hook
+    // ============================================================
+    const { 
+        favoriteIds,
+        version,
+        toggleFavorite, 
+        isFavorited, 
+        refreshFavorites 
+    } = useFavorites();
+
     const fallbackProductImage = getWorkingImage(0);
     const scrollContainerRef = useRef(null);
     const sectionRef = useRef(null);
-    const navigate = useNavigate();
     const { addToCart } = useCart();
 
-    // Load settings from localStorage
-    const loadSettings = () => {
-        const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
-        console.log('🔄 NewArrivals - Loading settings:', siteSettings);
-        setSettings(prev => ({ ...prev, ...siteSettings }));
-    };
+    const loadSettings = useCallback(() => {
+        try {
+            const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+            const productsPerRow = parseInt(siteSettings.productsPerRow) || 4;
+            setSettings(prev => ({
+                ...prev,
+                ...siteSettings,
+                productsPerRow: productsPerRow,
+                showProductRatings: siteSettings.showProductRatings !== undefined ? siteSettings.showProductRatings : true,
+                showProductColors: siteSettings.showProductColors !== undefined ? siteSettings.showProductColors : true,
+                showProductSizes: siteSettings.showProductSizes !== undefined ? siteSettings.showProductSizes : true,
+                showSaleBadge: siteSettings.showSaleBadge !== undefined ? siteSettings.showSaleBadge : true,
+                showQuickAdd: siteSettings.showQuickAdd !== undefined ? siteSettings.showQuickAdd : true,
+                showProductBrand: siteSettings.showProductBrand !== undefined ? siteSettings.showProductBrand : true
+            }));
+        } catch (error) {
+            console.error('Error loading settings:', error);
+        }
+    }, []);
 
     useEffect(() => {
         loadSettings();
         const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
         const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
         setCurrencySymbol(symbols[siteSettings.currency] || "$");
-    }, []);
+        
+        // Refresh favorites on mount
+        refreshFavorites(true);
+    }, [loadSettings, refreshFavorites]);
 
-    // Intersection Observer for scroll animation
+    // Listen for favorites updates from other components - force re-render
+    useEffect(() => {
+        const handleFavoritesUpdate = () => {
+            refreshFavorites(true);
+        };
+
+        window.addEventListener('favoritesUpdated', handleFavoritesUpdate);
+        window.addEventListener('wishlistUpdated', handleFavoritesUpdate);
+        window.addEventListener('whitelistUpdated', handleFavoritesUpdate);
+        window.addEventListener('storage', handleFavoritesUpdate);
+
+        return () => {
+            window.removeEventListener('favoritesUpdated', handleFavoritesUpdate);
+            window.removeEventListener('wishlistUpdated', handleFavoritesUpdate);
+            window.removeEventListener('whitelistUpdated', handleFavoritesUpdate);
+            window.removeEventListener('storage', handleFavoritesUpdate);
+        };
+    }, [refreshFavorites]);
+
     useEffect(() => {
         const observer = new IntersectionObserver(
             ([entry]) => {
@@ -59,11 +106,9 @@ const NewArrivals = () => {
             },
             { threshold: 0.1, triggerOnce: true }
         );
-
         if (sectionRef.current) {
             observer.observe(sectionRef.current);
         }
-
         return () => {
             if (sectionRef.current) {
                 observer.unobserve(sectionRef.current);
@@ -71,38 +116,59 @@ const NewArrivals = () => {
         };
     }, []);
 
-    // Load user and favorites
-    useEffect(() => {
-        const userData = localStorage.getItem('user');
-        if (userData) {
-            const parsedUser = JSON.parse(userData);
-            setUser(parsedUser);
-            const userFavorites = JSON.parse(localStorage.getItem(`favorites_${parsedUser.email}`) || '[]');
-            setFavorites(userFavorites);
+    const loadNewArrivals = useCallback(async () => {
+        setLoading(true);
+        try {
+            const products = productService.getAllProducts();
+            
+            const uniqueProducts = [];
+            const seenIds = new Set();
+            products.forEach(product => {
+                if (!seenIds.has(product.id) && product.isNewArrival === true) {
+                    seenIds.add(product.id);
+                    uniqueProducts.push({ ...product });
+                }
+            });
+            
+            const productsWithImages = [];
+            const initialImages = {};
+            const initialColorImages = {};
+            const initialColors = {};
+            
+            for (const product of uniqueProducts) {
+                const loadedProduct = await loadProductImages(product);
+                productsWithImages.push(loadedProduct);
+                
+                initialImages[product.id] = loadedProduct.image || fallbackProductImage;
+                initialColorImages[product.id] = loadedProduct.colorImages || {};
+                
+                if (product.colors && product.colors.length > 0) {
+                    initialColors[product.id] = product.colors[0];
+                }
+            }
+            
+            setNewArrivals(productsWithImages);
+            setCurrentImages(initialImages);
+            setColorImages(initialColorImages);
+            setSelectedColor(initialColors);
+            
+        } catch (error) {
+            console.error("Error loading new arrivals:", error);
+        } finally {
+            setLoading(false);
         }
-    }, []);
+    }, [fallbackProductImage]);
 
-    // Load new arrivals and listen for updates
     useEffect(() => {
         loadNewArrivals();
         
-        const handleProductsUpdate = () => {
-            loadNewArrivals();
-        };
-        
-        const handleReviewUpdate = () => {
-            loadNewArrivals();
-        };
-        
-        // Listen for settings changes
+        const handleProductsUpdate = () => loadNewArrivals();
+        const handleReviewUpdate = () => loadNewArrivals();
         const handleSettingsUpdate = () => {
-            console.log('🔄 NewArrivals - Settings updated, reloading...');
             loadSettings();
         };
-        
         const handleStorageChange = (e) => {
             if (e.key === 'site_settings') {
-                console.log('🔄 NewArrivals - Storage changed, reloading settings...');
                 loadSettings();
             }
         };
@@ -120,40 +186,80 @@ const NewArrivals = () => {
             window.removeEventListener('settingsSaved', handleSettingsUpdate);
             window.removeEventListener('siteInfoUpdated', handleSettingsUpdate);
         };
-    }, []);
+    }, [loadNewArrivals, loadSettings]);
 
-    const loadNewArrivals = async () => {
-        setLoading(true);
-        try {
-            const products = productService.getAllProducts();
-            const loadedProducts = await loadProductsImages(products);
-            
-            const uniqueProducts = [];
-            const seenIds = new Set();
-            
-            loadedProducts.forEach(product => {
-                if (!seenIds.has(product.id) && product.isNewArrival === true) {
-                    seenIds.add(product.id);
-                    uniqueProducts.push(product);
-                }
+    const startHoverCycle = (productId) => {
+        stopHoverCycle(productId);
+        
+        const product = newArrivals.find(p => p.id === productId);
+        if (!product || !product.colors || product.colors.length <= 1) return;
+        
+        const colorList = product.colors;
+        const currentIndex = hoverColorIndex[productId] || 0;
+        const nextIndex = (currentIndex + 1) % colorList.length;
+        
+        const interval = setInterval(() => {
+            setHoverColorIndex(prev => {
+                const currentIdx = prev[productId] || 0;
+                const nextIdx = (currentIdx + 1) % colorList.length;
+                
+                const colorName = colorList[nextIdx];
+                const colorImgMap = colorImages[productId] || {};
+                const newImage = colorImgMap[colorName] || currentImages[productId] || fallbackProductImage;
+                
+                setCurrentImages(prevImages => ({
+                    ...prevImages,
+                    [productId]: newImage
+                }));
+                
+                setSelectedColor(prevColors => ({
+                    ...prevColors,
+                    [productId]: colorName
+                }));
+                
+                return { ...prev, [productId]: nextIdx };
             });
-            
-            setNewArrivals(uniqueProducts);
-            
-            const initialImages = {};
-            const initialColors = {};
-            uniqueProducts.forEach(product => {
-                initialImages[product.id] = product.image;
-                if (product.colors && product.colors.length > 0) {
-                    initialColors[product.id] = product.colors[0];
-                }
+        }, 1150);
+        
+        setHoverInterval(prev => ({ ...prev, [productId]: interval }));
+    };
+
+    const stopHoverCycle = (productId) => {
+        if (hoverInterval && hoverInterval[productId]) {
+            clearInterval(hoverInterval[productId]);
+            setHoverInterval(prev => {
+                const newState = { ...prev };
+                delete newState[productId];
+                return newState;
             });
-            setCurrentImages(initialImages);
-            setSelectedColor(initialColors);
-        } catch (error) {
-            console.error("Error loading new arrivals:", error);
-        } finally {
-            setLoading(false);
+        }
+    };
+
+    const handleMouseEnter = (productId) => {
+        setHoveredProduct(productId);
+        setHoverColorIndex(prev => ({ ...prev, [productId]: 0 }));
+        startHoverCycle(productId);
+    };
+
+    const handleMouseLeave = (productId) => {
+        setHoveredProduct(null);
+        stopHoverCycle(productId);
+        
+        const product = newArrivals.find(p => p.id === productId);
+        if (product) {
+            const originalColor = selectedColor[productId] || product.colors?.[0];
+            if (originalColor) {
+                const colorImgMap = colorImages[productId] || {};
+                const originalImage = colorImgMap[originalColor] || product.image || fallbackProductImage;
+                setCurrentImages(prev => ({
+                    ...prev,
+                    [productId]: originalImage
+                }));
+                setSelectedColor(prev => ({
+                    ...prev,
+                    [productId]: originalColor
+                }));
+            }
         }
     };
 
@@ -169,12 +275,20 @@ const NewArrivals = () => {
         }
     };
 
-    const handleColorClick = (productId, color, colorImage, productImage, e) => {
+    const handleColorClick = (productId, color, e) => {
         e.stopPropagation();
+        
+        stopHoverCycle(productId);
+        setHoveredProduct(null);
+        
         setSelectedColor(prev => ({ ...prev, [productId]: color }));
+        
+        const colorImgMap = colorImages[productId] || {};
+        const newImage = colorImgMap[color] || currentImages[productId] || fallbackProductImage;
+        
         setCurrentImages(prev => ({
             ...prev,
-            [productId]: colorImage || productImage
+            [productId]: newImage
         }));
     };
 
@@ -187,9 +301,7 @@ const NewArrivals = () => {
 
     const handleAddToCart = (product, e) => {
         e.stopPropagation();
-        
         const currentColorName = selectedColor[product.id] || product.colors?.[0] || "Default";
-        
         addToCart({
             id: product.id,
             name: product.name,
@@ -200,38 +312,25 @@ const NewArrivals = () => {
             color: currentColorName,
             quantity: 1
         });
-        
         toast.success(`${product.name} added to cart!`);
     };
 
-    const toggleFavorite = (product, e) => {
+    // ============================================================
+    // Handle favorite toggle - uses toggleFavorite from hook
+    // ============================================================
+    const handleToggleFavorite = (product, e) => {
         e.stopPropagation();
-        
-        if (!user) {
-            toast.error("Please login to add to favorites");
-            return;
-        }
-        
-        const isInFavorites = favorites.some(item => item.id === product.id);
-        let updatedFavorites;
-        
-        if (isInFavorites) {
-            updatedFavorites = favorites.filter(item => item.id !== product.id);
-            toast.info(`${product.name} removed from favorites`);
+        const result = toggleFavorite(product);
+        if (!result.success) {
+            toast.error(result.message);
+            navigate('/login');
         } else {
-            updatedFavorites = [...favorites, product];
-            toast.success(`${product.name} added to favorites`);
+            toast.success(result.isFavorite ? `${product.name} added to favorites` : `${product.name} removed from favorites`);
         }
-        
-        setFavorites(updatedFavorites);
-        localStorage.setItem(`favorites_${user.email}`, JSON.stringify(updatedFavorites));
     };
 
-    // Determine grid columns based on settings
     const getGridCols = () => {
         const perRow = parseInt(settings.productsPerRow) || 4;
-        console.log('📊 NewArrivals - Products per row:', perRow);
-        
         if (perRow === 3) {
             return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
         } else if (perRow === 5) {
@@ -243,7 +342,6 @@ const NewArrivals = () => {
         }
     };
 
-    // Animation variants
     const containerVariants = {
         hidden: { opacity: 0 },
         visible: {
@@ -297,7 +395,6 @@ const NewArrivals = () => {
     return (
         <section className="py-20 bg-gradient-to-b from-white via-gray-50/30 to-white" ref={sectionRef}>
             <div className="container mx-auto px-4">
-                {/* Header */}
                 <motion.div 
                     className="text-center mb-14"
                     initial={{ opacity: 0, y: -30 }}
@@ -323,9 +420,7 @@ const NewArrivals = () => {
                     </p>
                 </motion.div>
 
-                {/* Products Grid */}
                 <div className="relative">
-                    {/* Scroll Buttons */}
                     {newArrivals.length > 3 && (
                         <>
                             <motion.button 
@@ -353,36 +448,38 @@ const NewArrivals = () => {
                         </>
                     )}
 
-                    {/* Products Grid */}
+                    {/* KEY FIX: Added key prop with version to force re-render when favorites change */}
                     <motion.div 
                         ref={scrollContainerRef} 
                         className={`grid ${getGridCols()} gap-6`}
                         variants={containerVariants}
                         initial="hidden"
                         animate={isVisible ? "visible" : "hidden"}
+                        key={`newarrivals-${version}`}
                     >
-                        {newArrivals.map((product, index) => {
-                            const currentImage = currentImages[product.id] || product.image;
+                        {newArrivals.map((product) => {
+                            const currentImage = currentImages[product.id] || product.image || fallbackProductImage;
                             const currentColorName = selectedColor[product.id] || product.colors?.[0];
-                            const isFavorite = favorites.some(item => item.id === product.id);
+                            // This will re-evaluate when version changes
+                            const isFavorite = isFavorited(product.id);
                             const productRating = product.rating || 0;
                             const productReviews = product.reviews || 0;
                             const isHovered = hoveredProduct === product.id;
+                            const colorImageMap = colorImages[product.id] || {};
                             
                             return (
                                 <motion.div 
                                     key={product.id} 
                                     variants={itemVariants}
                                     whileHover="hover"
-                                    onHoverStart={() => setHoveredProduct(product.id)}
-                                    onHoverEnd={() => setHoveredProduct(null)}
+                                    onHoverStart={() => handleMouseEnter(product.id)}
+                                    onHoverEnd={() => handleMouseLeave(product.id)}
                                     className="group bg-white rounded-2xl shadow-lg hover:shadow-3xl transition-all duration-500 overflow-hidden cursor-pointer border border-gray-100"
                                     onClick={() => handleProductClick(product.id)}
                                 >
-                                    {/* Image Container */}
                                     <div className="relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 h-[320px]">
                                         <motion.img 
-                                            src={currentImage || fallbackProductImage} 
+                                            src={currentImage} 
                                             alt={product.name} 
                                             className="w-full h-full object-cover"
                                             initial={{ scale: 1 }}
@@ -394,32 +491,32 @@ const NewArrivals = () => {
                                             }}
                                         />
                                         
-                                        {/* Sale Badge - Controlled by settings */}
                                         {settings.showSaleBadge && product.originalPrice && (
                                             <motion.div 
                                                 className="absolute top-4 left-4 bg-gradient-to-r from-red-500 to-pink-500 text-white px-4 py-1.5 rounded-lg text-sm font-bold z-10 shadow-lg"
                                                 initial={{ x: -60, opacity: 0 }}
                                                 animate={isVisible ? { x: 0, opacity: 1 } : { x: -60, opacity: 0 }}
-                                                transition={{ duration: 0.5, delay: 0.3 + (index * 0.05) }}
+                                                transition={{ duration: 0.5 }}
                                             >
                                                 SALE
                                             </motion.div>
                                         )}
                                         
-                                        {/* Favorite Button */}
                                         <motion.button
-                                            onClick={(e) => toggleFavorite(product, e)}
+                                            onClick={(e) => handleToggleFavorite(product, e)}
                                             className="absolute top-4 right-4 p-2.5 bg-white/95 backdrop-blur-sm rounded-full shadow-lg z-10"
                                             whileHover={{ scale: 1.2 }}
                                             whileTap={{ scale: 0.9 }}
                                             initial={{ opacity: 0, scale: 0 }}
                                             animate={isVisible ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0 }}
-                                            transition={{ duration: 0.3, delay: 0.4 + (index * 0.05) }}
+                                            transition={{ duration: 0.3 }}
                                         >
-                                            <Heart size={20} className={isFavorite ? "text-red-500 fill-current" : "text-gray-500"} />
+                                            <Heart 
+                                                size={20} 
+                                                className={isFavorite ? "text-red-500 fill-current" : "text-gray-500"} 
+                                            />
                                         </motion.button>
 
-                                        {/* Quick Add Button - Controlled by settings */}
                                         {settings.showQuickAdd && (
                                             <motion.button
                                                 onClick={(e) => handleAddToCart(product, e)}
@@ -437,7 +534,6 @@ const NewArrivals = () => {
                                             </motion.button>
                                         )}
 
-                                        {/* Hover overlay */}
                                         <motion.div
                                             className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-all duration-500"
                                             initial={{ opacity: 0 }}
@@ -445,18 +541,15 @@ const NewArrivals = () => {
                                         />
                                     </div>
                                     
-                                    {/* Product Info */}
                                     <div className="p-5">
                                         <h3 className="font-semibold text-gray-800 text-base mb-1 line-clamp-1 group-hover:text-blue-600 transition-colors">
                                             {product.name}
                                         </h3>
                                         
-                                        {/* Product Brand - Controlled by settings */}
                                         {settings.showProductBrand && (
                                             <p className="text-gray-400 text-xs mb-2">{product.brand || "Zamed"}</p>
                                         )}
                                         
-                                        {/* Rating - Controlled by settings */}
                                         {settings.showProductRatings && (
                                             <div className="flex items-center gap-1 mb-2">
                                                 <div className="flex items-center gap-0.5">
@@ -478,7 +571,6 @@ const NewArrivals = () => {
                                             </div>
                                         )}
                                         
-                                        {/* Price */}
                                         <div className="flex items-center gap-2 mb-4">
                                             <span className="text-xl font-bold text-gray-900">
                                                 {currencySymbol}{product.price}
@@ -495,18 +587,17 @@ const NewArrivals = () => {
                                             )}
                                         </div>
                                         
-                                        {/* Color Swatches - Controlled by settings */}
                                         {settings.showProductColors && product.colors && product.colors.length > 0 && (
                                             <div className="flex gap-2 flex-wrap">
                                                 {product.colors.slice(0, 6).map((color, idx) => {
-                                                    const colorImage = product.colorImages?.[color] || product.image;
+                                                    const colorImage = colorImageMap[color] || fallbackProductImage;
                                                     const isSelected = currentColorName === color;
                                                     
                                                     return (
                                                         <motion.div
                                                             key={idx}
                                                             className="relative"
-                                                            onClick={(e) => handleColorClick(product.id, color, colorImage, product.image, e)}
+                                                            onClick={(e) => handleColorClick(product.id, color, e)}
                                                             whileHover={{ scale: 1.15 }}
                                                             whileTap={{ scale: 0.9 }}
                                                         >
@@ -519,6 +610,9 @@ const NewArrivals = () => {
                                                                     src={colorImage} 
                                                                     alt={color}
                                                                     className="w-full h-full object-cover"
+                                                                    onError={(e) => {
+                                                                        e.target.src = fallbackProductImage;
+                                                                    }}
                                                                 />
                                                             </div>
                                                             {isSelected && (
@@ -536,7 +630,6 @@ const NewArrivals = () => {
                     </motion.div>
                 </div>
 
-                {/* View All Button */}
                 <motion.div 
                     className="text-center mt-14"
                     initial={{ opacity: 0, y: 30 }}

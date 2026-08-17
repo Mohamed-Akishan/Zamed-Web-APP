@@ -1,5 +1,5 @@
 // src/pages/Profile.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { 
     FiUser, FiShoppingBag, FiHeart, FiLogOut, FiHome, FiCalendar, 
@@ -20,6 +20,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useCart } from "../context/CartContext";
 import orderService from "../services/orderService";
 import productService from "../services/productService";
+import useFavorites from "../hooks/useFavorites";
 
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -41,236 +42,103 @@ const openReturnsDatabase = () =>
             return;
         }
 
-        const request = indexedDB.open(
-            RETURNS_DB_NAME,
-            RETURNS_DB_VERSION
-        );
+        const request = indexedDB.open(RETURNS_DB_NAME, RETURNS_DB_VERSION);
 
         request.onupgradeneeded = () => {
             const db = request.result;
-
             if (!db.objectStoreNames.contains(RETURNS_STORE)) {
-                db.createObjectStore(
-                    RETURNS_STORE,
-                    {
-                        keyPath: "id"
-                    }
-                );
+                db.createObjectStore(RETURNS_STORE, { keyPath: "id" });
             }
         };
 
-        request.onsuccess = () =>
-            resolve(request.result);
-
-        request.onerror = () =>
-            reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
     });
 
 const getAllReturnRecords = async () => {
     try {
-        const db =
-            await openReturnsDatabase();
-
-        return await new Promise(
-            (resolve, reject) => {
-                const tx =
-                    db.transaction(
-                        RETURNS_STORE,
-                        "readonly"
-                    );
-
-                const request =
-                    tx.objectStore(
-                        RETURNS_STORE
-                    ).getAll();
-
-                request.onsuccess = () =>
-                    resolve(
-                        Array.isArray(
-                            request.result
-                        )
-                            ? request.result
-                            : []
-                    );
-
-                request.onerror = () =>
-                    reject(request.error);
-            }
-        );
+        const db = await openReturnsDatabase();
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction(RETURNS_STORE, "readonly");
+            const request = tx.objectStore(RETURNS_STORE).getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
     } catch (error) {
-        console.warn(
-            "Unable to load returns from IndexedDB:",
-            error
-        );
-
+        console.warn("Unable to load returns from IndexedDB:", error);
         return [];
     }
 };
 
 const putReturnRecord = async (record) => {
     if (!record) return false;
-
-    const id =
-        record.id ||
-        record._id ||
-        `${record.orderId}-${record.productId}`;
-
+    const id = record.id || record._id || `${record.orderId}-${record.productId}`;
     if (!id) return false;
 
     try {
-        const db =
-            await openReturnsDatabase();
-
-        return await new Promise(
-            (resolve, reject) => {
-                const tx =
-                    db.transaction(
-                        RETURNS_STORE,
-                        "readwrite"
-                    );
-
-                tx.objectStore(
-                    RETURNS_STORE
-                ).put({
-                    ...record,
-                    id: String(id)
-                });
-
-                tx.oncomplete = () =>
-                    resolve(true);
-
-                tx.onerror = () =>
-                    reject(tx.error);
-
-                tx.onabort = () =>
-                    reject(tx.error);
-            }
-        );
+        const db = await openReturnsDatabase();
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction(RETURNS_STORE, "readwrite");
+            tx.objectStore(RETURNS_STORE).put({ ...record, id: String(id) });
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error);
+        });
     } catch (error) {
-        console.warn(
-            "Unable to save return to IndexedDB:",
-            error
-        );
-
+        console.warn("Unable to save return to IndexedDB:", error);
         return false;
     }
 };
 
 const putAllReturnRecords = async (records = []) => {
-    const list =
-        Array.isArray(records)
-            ? records
-            : [];
-
-    const results =
-        await Promise.all(
-            list.map(record =>
-                putReturnRecord(record)
-            )
-        );
-
+    const list = Array.isArray(records) ? records : [];
+    const results = await Promise.all(list.map(record => putReturnRecord(record)));
     return results.some(Boolean);
 };
 
 const compactReturnForLocalStorage = (record = {}) => {
-    const refundMethod =
-        typeof record.refundMethod === "object" &&
-        record.refundMethod !== null
-            ? {
-                ...record.refundMethod
-            }
-            : record.refundMethod;
+    const refundMethod = typeof record.refundMethod === "object" && record.refundMethod !== null
+        ? { ...record.refundMethod }
+        : record.refundMethod;
 
     return {
         ...record,
-
-        // Base64 product images are the main source of localStorage quota errors.
-        productImage:
-            typeof record.productImage === "string" &&
-            record.productImage.startsWith("data:")
-                ? ""
-                : record.productImage || "",
-
+        productImage: typeof record.productImage === "string" && record.productImage.startsWith("data:") ? "" : record.productImage || "",
         refundMethod,
-
-        // Keep useful history, but prevent uncontrolled growth.
-        trackingHistory:
-            Array.isArray(record.trackingHistory)
-                ? record.trackingHistory.slice(-20)
-                : []
+        trackingHistory: Array.isArray(record.trackingHistory) ? record.trackingHistory.slice(-20) : []
     };
 };
 
-const saveCompactReturnsToLocalStorage = (
-    records = []
-) => {
+const saveCompactReturnsToLocalStorage = (records = []) => {
     try {
-        const compact =
-            records.map(
-                compactReturnForLocalStorage
-            );
-
-        localStorage.setItem(
-            "return_requests",
-            JSON.stringify(compact)
-        );
-
+        const compact = records.map(compactReturnForLocalStorage);
+        localStorage.setItem("return_requests", JSON.stringify(compact));
         return true;
     } catch (error) {
-        if (
-            error?.name ===
-            "QuotaExceededError"
-        ) {
+        if (error?.name === "QuotaExceededError") {
             try {
-                // Last-resort tiny cache.
-                const tiny =
-                    records.map(record => ({
-                        id:
-                            record.id ||
-                            record._id,
-                        orderId:
-                            record.orderId,
-                        productId:
-                            record.productId,
-                        productName:
-                            record.productName,
-                        userEmail:
-                            record.userEmail,
-                        refundAmount:
-                            record.refundAmount,
-                        refundMethod:
-                            record.refundMethod,
-                        status:
-                            record.status,
-                        date:
-                            record.date,
-                        updatedAt:
-                            record.updatedAt
-                    }));
-
-                localStorage.setItem(
-                    "return_requests",
-                    JSON.stringify(tiny)
-                );
-
+                const tiny = records.map(record => ({
+                    id: record.id || record._id,
+                    orderId: record.orderId,
+                    productId: record.productId,
+                    productName: record.productName,
+                    userEmail: record.userEmail,
+                    refundAmount: record.refundAmount,
+                    refundMethod: record.refundMethod,
+                    status: record.status,
+                    date: record.date,
+                    updatedAt: record.updatedAt
+                }));
+                localStorage.setItem("return_requests", JSON.stringify(tiny));
                 return true;
             } catch (fallbackError) {
-                console.warn(
-                    "Return local cache skipped because browser storage is full:",
-                    fallbackError
-                );
+                console.warn("Return local cache skipped because browser storage is full:", fallbackError);
             }
         } else {
-            console.warn(
-                "Unable to save return local cache:",
-                error
-            );
+            console.warn("Unable to save return local cache:", error);
         }
-
         return false;
     }
 };
-
 
 const COUPON_IMAGE_DB = "zamed_coupon_assets";
 const COUPON_IMAGE_STORE = "coupon_images";
@@ -304,10 +172,12 @@ const getCouponImageAsset = async (key) => {
     }
 };
 
+// ============================================================
+// MAIN PROFILE COMPONENT
+// ============================================================
 const Profile = () => {
     const [user, setUser] = useState(null);
     const [orders, setOrders] = useState([]);
-    const [favorites, setFavorites] = useState([]);
     const [activeTab, setActiveTab] = useState("overview");
     const [isEditingProfile, setIsEditingProfile] = useState(false);
     const [editedUser, setEditedUser] = useState({});
@@ -345,10 +215,7 @@ const Profile = () => {
     const [changingPassword, setChangingPassword] = useState(false);
     const [securityActionLoading, setSecurityActionLoading] = useState(false);
     const [deletingAccount, setDeletingAccount] = useState(false);
-
     const [hiddenOrderIds, setHiddenOrderIds] = useState([]);
-
-    // Return method states
     const [returnMethod, setReturnMethod] = useState("bank_transfer");
     const [bankName, setBankName] = useState("");
     const [accountNumber, setAccountNumber] = useState("");
@@ -361,8 +228,24 @@ const Profile = () => {
     const location = useLocation();
     const { addToCart } = useCart();
 
+    // ============================================================
+    // FIX: Use centralized favorites hook - THIS IS THE KEY FIX
+    // ============================================================
+    const { 
+        favorites, 
+        favoriteIds, 
+        toggleFavorite, 
+        isFavorited, 
+        refreshFavorites, 
+        loadFavorites, 
+        saveFavorites 
+    } = useFavorites();
+
     const getToken = () => localStorage.getItem('token');
 
+    // ============================================================
+    // Helper Functions
+    // ============================================================
     const safeParse = (value, fallback) => {
         try { return JSON.parse(value) ?? fallback; } catch { return fallback; }
     };
@@ -385,268 +268,81 @@ const Profile = () => {
                 lastResponse = response;
                 const data = await response.json().catch(() => ({}));
                 if (response.ok) return { ok: true, response, data };
-                if (![404,405].includes(response.status)) return { ok:false, response, data };
-            } catch {}
+                if (![404, 405].includes(response.status)) return { ok: false, response, data };
+            } catch { }
         }
-        return { ok:false, response:lastResponse, data:{} };
+        return { ok: false, response: lastResponse, data: {} };
     };
 
-
-    // Helper to normalize order status from every order field used by the shop/admin.
     const normalizeOrderStatus = (value = "") => {
-        const rawStatus =
-            typeof value === "object" && value !== null
-                ? (
-                    value.deliveryStatus ||
-                    value.status ||
-                    value.orderStatus ||
-                    value.fulfillmentStatus ||
-                    value.shippingStatus ||
-                    ""
-                )
-                : value;
+        const rawStatus = typeof value === "object" && value !== null
+            ? (value.deliveryStatus || value.status || value.orderStatus || value.fulfillmentStatus || value.shippingStatus || "")
+            : value;
 
-        const normalized = String(rawStatus || "")
-            .trim()
-            .toLowerCase()
-            .replace(/[\s-]+/g, "_");
-
+        const normalized = String(rawStatus || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
         const aliases = {
-            completed: "delivered",
-            complete: "delivered",
-            received: "delivered",
-            fulfilled: "delivered",
-            order_delivered: "delivered",
-            order_completed: "delivered",
-            delivery_completed: "delivered",
-            delivered_successfully: "delivered",
-            successfully_delivered: "delivered"
+            completed: "delivered", complete: "delivered", received: "delivered",
+            fulfilled: "delivered", order_delivered: "delivered", order_completed: "delivered",
+            delivery_completed: "delivered", delivered_successfully: "delivered", successfully_delivered: "delivered"
         };
-
         if (aliases[normalized]) return aliases[normalized];
-
-        if (
-            normalized.includes("delivered") ||
-            normalized.includes("completed")
-        ) {
-            return "delivered";
-        }
-
+        if (normalized.includes("delivered") || normalized.includes("completed")) return "delivered";
         return normalized;
     };
 
-    // One source of truth for delivered orders.
-    // Different parts of the project/admin have used different status fields,
-    // so return/review eligibility must check all of them.
     const isOrderDelivered = (order = {}) => {
         if (!order || typeof order !== "object") return false;
-
         const statusCandidates = [
-            order.deliveryStatus,
-            order.status,
-            order.orderStatus,
-            order.fulfillmentStatus,
-            order.shippingStatus,
-            order.trackingStatus,
-            order.delivery?.status,
-            order.shipping?.status,
-            order.fulfillment?.status,
-            order.tracking?.status
+            order.deliveryStatus, order.status, order.orderStatus, order.fulfillmentStatus,
+            order.shippingStatus, order.trackingStatus, order.delivery?.status,
+            order.shipping?.status, order.fulfillment?.status, order.tracking?.status
         ];
-
-        const hasDeliveredStatus = statusCandidates.some(
-            value =>
-                value &&
-                normalizeOrderStatus(value) === "delivered"
-        );
-
+        const hasDeliveredStatus = statusCandidates.some(value => value && normalizeOrderStatus(value) === "delivered");
         if (hasDeliveredStatus) return true;
-
-        // Some saved orders only keep a delivered/completed boolean.
-        if (
-            order.delivered === true ||
-            order.isDelivered === true ||
-            order.completed === true ||
-            order.isCompleted === true
-        ) {
-            return true;
-        }
-
-        // A delivery timestamp is also strong evidence that delivery completed.
-        if (
-            order.deliveredAt ||
-            order.deliveryDate ||
-            order.deliveredDate ||
-            order.actualDeliveryDate ||
-            order.completedAt
-        ) {
-            return true;
-        }
-
-        // Support tracking history used by order/admin services.
-        const histories = [
-            order.trackingHistory,
-            order.statusHistory,
-            order.orderHistory,
-            order.deliveryHistory,
-            order.timeline
-        ].filter(Array.isArray);
-
-        const historyShowsDelivered = histories.some(history =>
-            history.some(entry => {
-                const stage =
-                    entry?.stage ||
-                    entry?.status ||
-                    entry?.orderStatus ||
-                    entry?.deliveryStatus ||
-                    entry?.title ||
-                    entry?.label ||
-                    "";
-
-                return normalizeOrderStatus(stage) === "delivered";
-            })
-        );
-
-        if (historyShowsDelivered) return true;
-
-        // If tracking steps exist and Delivered is marked completed, accept it.
-        if (Array.isArray(order.trackingSteps)) {
-            const deliveredStep =
-                order.trackingSteps.find(step =>
-                    normalizeOrderStatus(
-                        step?.id ||
-                        step?.status ||
-                        step?.label ||
-                        ""
-                    ) === "delivered"
-                );
-
-            if (
-                deliveredStep &&
-                (
-                    deliveredStep.completed === true ||
-                    deliveredStep.isCompleted === true ||
-                    deliveredStep.active === true
-                )
-            ) {
-                return true;
-            }
-        }
-
+        if (order.delivered === true || order.isDelivered === true || order.completed === true || order.isCompleted === true) return true;
+        if (order.deliveredAt || order.deliveryDate || order.deliveredDate || order.actualDeliveryDate || order.completedAt) return true;
         return false;
     };
 
-    // Get order tracking steps
     const getOrderTrackingSteps = (order = {}) => {
-        const status = isOrderDelivered(order)
-            ? "delivered"
-            : normalizeOrderStatus(
-                order.deliveryStatus ||
-                order.status ||
-                order.orderStatus ||
-                order.fulfillmentStatus ||
-                order.shippingStatus ||
-                order.trackingStatus ||
-                order.delivery?.status ||
-                order.shipping?.status ||
-                "pending"
-            );
-
-        const steps = [
-            {
-                id: "pending",
-                label: "Order Placed",
-                description: "Your order has been received.",
-                icon: FiCheckCircle
-            },
-            {
-                id: "processing",
-                label: "Processing",
-                description: "Your items are being prepared.",
-                icon: FiPackage
-            },
-            {
-                id: "shipped",
-                label: "Shipped",
-                description: "Your order is on the way.",
-                icon: FiTruck
-            },
-            {
-                id: "out_for_delivery",
-                label: "Out for Delivery",
-                description: "Your parcel is with the delivery driver.",
-                icon: FiDeliveryTruck
-            },
-            {
-                id: "delivered",
-                label: "Delivered",
-                description: "Your order has been delivered.",
-                icon: FiCheckCircle
-            }
-        ];
-
-        const aliases = {
-            scheduled: "pending",
-            placed: "pending",
-            confirmed: "processing",
-            packed: "processing",
-            dispatch: "shipped",
-            dispatched: "shipped",
-            in_transit: "shipped",
-            out_for_delivery: "out_for_delivery",
-            delivered: "delivered"
-        };
-
-        const normalized = aliases[status] || status;
-        const currentIndex = Math.max(
-            0,
-            steps.findIndex(step => step.id === normalized)
+        const status = isOrderDelivered(order) ? "delivered" : normalizeOrderStatus(
+            order.deliveryStatus || order.status || order.orderStatus || order.fulfillmentStatus ||
+            order.shippingStatus || order.trackingStatus || order.delivery?.status || order.shipping?.status || "pending"
         );
-
-        return steps.map((step, index) => ({
-            ...step,
-            completed: index <= currentIndex,
-            active: index === currentIndex
-        }));
+        const steps = [
+            { id: "pending", label: "Order Placed", description: "Your order has been received.", icon: FiCheckCircle },
+            { id: "processing", label: "Processing", description: "Your items are being prepared.", icon: FiPackage },
+            { id: "shipped", label: "Shipped", description: "Your order is on the way.", icon: FiTruck },
+            { id: "out_for_delivery", label: "Out for Delivery", description: "Your parcel is with the delivery driver.", icon: FiDeliveryTruck },
+            { id: "delivered", label: "Delivered", description: "Your order has been delivered.", icon: FiCheckCircle }
+        ];
+        const aliases = { scheduled: "pending", placed: "pending", confirmed: "processing", packed: "processing", dispatch: "shipped", dispatched: "shipped", in_transit: "shipped", out_for_delivery: "out_for_delivery", delivered: "delivered" };
+        const normalized = aliases[status] || status;
+        const currentIndex = Math.max(0, steps.findIndex(step => step.id === normalized));
+        return steps.map((step, index) => ({ ...step, completed: index <= currentIndex, active: index === currentIndex }));
     };
 
-    // Check if order can be reviewed
-    const canReviewOrder = (order = {}) =>
-        isOrderDelivered(order);
+    const canReviewOrder = (order = {}) => isOrderDelivered(order);
+    const canReturnOrder = (order = {}) => isOrderDelivered(order);
 
-    // Check if order can be returned
-    const canReturnOrder = (order = {}) =>
-        isOrderDelivered(order);
-
-    // Check if item already has a return request
     const hasReturnRequestForItem = (orderId, productId) =>
         returnRequests.some(request =>
             String(request.orderId) === String(orderId) &&
             String(request.productId) === String(productId) &&
-            !["rejected", "refunded"].includes(
-                String(request.status || "").toLowerCase()
-            )
+            !["rejected", "refunded"].includes(String(request.status || "").toLowerCase())
         );
 
-    // Get existing review for an item
     const getExistingReview = (productId, orderId) => {
         try {
-            const storedReviews = JSON.parse(
-                localStorage.getItem("product_reviews") || "[]"
-            );
-
+            const storedReviews = JSON.parse(localStorage.getItem("product_reviews") || "[]");
             return storedReviews.find(review =>
                 String(review.productId) === String(productId) &&
                 String(review.orderId || "") === String(orderId || "") &&
-                String(review.userEmail || "").toLowerCase() ===
-                    String(user?.email || "").toLowerCase()
+                String(review.userEmail || "").toLowerCase() === String(user?.email || "").toLowerCase()
             );
-        } catch {
-            return null;
-        }
+        } catch { return null; }
     };
 
-    // Navigate to product page with review section
     const navigateToProductReview = (productId, productName, orderId) => {
         sessionStorage.setItem('focus_review_section', 'true');
         sessionStorage.setItem('auto_open_review_form', 'true');
@@ -687,10 +383,10 @@ const Profile = () => {
         const returnId = notification.returnId || notification.returnRequestId || notification.meta?.returnId;
         const target = notification.link || notification.url || notification.path || notification.route;
 
-        if (["coupon","offer","promotion"].includes(type)) { setActiveTab("coupons"); navigate("/profile?tab=coupons"); return; }
-        if (["order","order_status","delivery","shipping"].includes(type)) { setActiveTab("orders"); navigate("/profile?tab=orders", {state:{focusOrderId:orderId}}); return; }
-        if (["return","return_status","refund","refund_status"].includes(type)) { setActiveTab("returns"); navigate("/profile?tab=returns", {state:{focusReturnId:returnId}}); return; }
-        if (["security","login","account","password"].includes(type)) { setActiveTab("security"); navigate("/profile?tab=security"); return; }
+        if (["coupon", "offer", "promotion"].includes(type)) { setActiveTab("coupons"); navigate("/profile?tab=coupons"); return; }
+        if (["order", "order_status", "delivery", "shipping"].includes(type)) { setActiveTab("orders"); navigate("/profile?tab=orders", { state: { focusOrderId: orderId } }); return; }
+        if (["return", "return_status", "refund", "refund_status"].includes(type)) { setActiveTab("returns"); navigate("/profile?tab=returns", { state: { focusReturnId: returnId } }); return; }
+        if (["security", "login", "account", "password"].includes(type)) { setActiveTab("security"); navigate("/profile?tab=security"); return; }
         if (type === "address") { setActiveTab("addresses"); navigate("/profile?tab=addresses"); return; }
         if (type === "wishlist") { setActiveTab("wishlist"); navigate("/profile?tab=wishlist"); return; }
         if (type === "product" || type === "review") {
@@ -701,23 +397,18 @@ const Profile = () => {
             }
             navigate("/collections/all"); return;
         }
-        if (["message","support","contact"].includes(type)) {
+        if (["message", "support", "contact"].includes(type)) {
             navigate("/");
-            setTimeout(() => (document.getElementById("contact-footer") || document.querySelector("footer"))?.scrollIntoView({behavior:"smooth",block:"start"}), 300);
+            setTimeout(() => (document.getElementById("contact-footer") || document.querySelector("footer"))?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
             return;
         }
-        if (target) { navigate(target, {state:{notification}}); return; }
+        if (target) { navigate(target, { state: { notification } }); return; }
         navigate("/");
     };
 
     const returnReasons = [
-        "Wrong item received",
-        "Defective or damaged product",
-        "Size doesn't fit",
-        "Product not as described",
-        "Changed my mind",
-        "Better price available",
-        "Other"
+        "Wrong item received", "Defective or damaged product", "Size doesn't fit",
+        "Product not as described", "Changed my mind", "Better price available", "Other"
     ];
 
     const returnStages = {
@@ -730,14 +421,45 @@ const Profile = () => {
         'rejected': { label: 'Return Rejected', icon: FiX, color: 'text-red-600', bg: 'bg-red-50', progress: 0, description: 'Return request was rejected.' }
     };
 
-    // Load favorites from localStorage
-    const loadFavorites = (email) => {
-        if (!email) return;
-        const favoriteIds = JSON.parse(localStorage.getItem(`favorites_${email}`) || '[]');
-        const allProducts = productService.getAllProducts();
-        const favoriteProducts = allProducts.filter(p => favoriteIds.includes(p.id));
-        setFavorites(favoriteProducts);
-    };
+    // ============================================================
+    // Remove from favorites - using centralized hook
+    // ============================================================
+    const removeFromFavorites = useCallback((productId) => {
+        // Find the product in favorites
+        const product = favorites.find(p => String(p.id) === String(productId));
+        if (product) {
+            const result = toggleFavorite(product);
+            if (result.success) {
+                toast.success("Removed from favorites");
+            }
+        } else {
+            // If product not in favorites list, just refresh
+            refreshFavorites(true);
+            toast.success("Wishlist updated");
+        }
+    }, [favorites, toggleFavorite, refreshFavorites]);
+
+    // ============================================================
+    // Add to cart from favorites
+    // ============================================================
+    const addToCartFromFavorites = useCallback((product) => {
+        if (!product) {
+            toast.error("Product not found");
+            return;
+        }
+
+        addToCart({
+            id: product.id,
+            name: product.name,
+            price: product.price,
+            image: product.image,
+            category: product.category,
+            quantity: 1,
+            size: product.sizes?.[0] || "One Size",
+            color: product.colors?.[0] || "Default"
+        });
+        toast.success(`${product.name} added to cart!`);
+    }, [addToCart]);
 
     // Load user coupons
     const loadUserCoupons = async (email) => {
@@ -769,12 +491,9 @@ const Profile = () => {
             const assignedCoupons = JSON.parse(localStorage.getItem(userKey) || '[]');
 
             const syncedCoupons = assignedCoupons.flatMap((assigned) => {
-                const latest =
-                    (assigned?.id != null && activeById.get(String(assigned.id))) ||
+                const latest = (assigned?.id != null && activeById.get(String(assigned.id))) ||
                     activeByCode.get(String(assigned?.code || '').toUpperCase());
-
                 if (!latest) return [];
-
                 return [{
                     ...assigned,
                     ...latest,
@@ -816,13 +535,8 @@ const Profile = () => {
             const hydratedCoupons = await Promise.all(
                 finalCoupons.map(async (coupon) => {
                     const imageKey = coupon.imageStorageKey || coupon.id || coupon.code;
-                    const indexedImage = coupon.hasBackgroundImage
-                        ? await getCouponImageAsset(imageKey)
-                        : "";
-                    return {
-                        ...coupon,
-                        backgroundImage: indexedImage || coupon.backgroundImage || ""
-                    };
+                    const indexedImage = coupon.hasBackgroundImage ? await getCouponImageAsset(imageKey) : "";
+                    return { ...coupon, backgroundImage: indexedImage || coupon.backgroundImage || "" };
                 })
             );
 
@@ -867,75 +581,70 @@ const Profile = () => {
         }
     };
 
-    // Notification read state is local-first, so backend failures never break the UI.
     const markNotificationAsRead = async (notifId) => {
-        const id=String(notifId);
+        const id = String(notifId);
         setNotifications(current => {
-            const updated=current.map(n=>getNotificationId(n)===id?{...n,id,read:true,readAt:n.readAt||new Date().toISOString()}:n);
+            const updated = current.map(n => getNotificationId(n) === id ? { ...n, id, read: true, readAt: n.readAt || new Date().toISOString() } : n);
             saveNotificationsLocally(updated); return updated;
         });
-        try { const token=getToken(); if(token) await fetch(`${API_URL}/notifications/${encodeURIComponent(id)}/read`,{method:'PUT',headers:{Authorization:`Bearer ${token}`}}); } catch {}
+        try { const token = getToken(); if (token) await fetch(`${API_URL}/notifications/${encodeURIComponent(id)}/read`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` } }); } catch { }
     };
 
     const markNotificationAsUnread = async (notifId) => {
-        const id=String(notifId);
+        const id = String(notifId);
         setNotifications(current => {
-            const updated=current.map(n=>getNotificationId(n)===id?{...n,id,read:false,readAt:null}:n);
+            const updated = current.map(n => getNotificationId(n) === id ? { ...n, id, read: false, readAt: null } : n);
             saveNotificationsLocally(updated); return updated;
         });
-        try { const token=getToken(); if(token) await fetch(`${API_URL}/notifications/${encodeURIComponent(id)}/unread`,{method:'PUT',headers:{Authorization:`Bearer ${token}`}}); } catch {}
+        try { const token = getToken(); if (token) await fetch(`${API_URL}/notifications/${encodeURIComponent(id)}/unread`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` } }); } catch { }
     };
 
     const markAllNotificationsAsRead = async () => {
-        setNotifications(current => { const updated=current.map(n=>({...n,id:getNotificationId(n),read:true,readAt:n.readAt||new Date().toISOString()})); saveNotificationsLocally(updated); return updated; });
-        try { const token=getToken(); if(token) await fetch(`${API_URL}/notifications/read-all`,{method:'PUT',headers:{Authorization:`Bearer ${token}`}}); } catch {}
+        setNotifications(current => { const updated = current.map(n => ({ ...n, id: getNotificationId(n), read: true, readAt: n.readAt || new Date().toISOString() })); saveNotificationsLocally(updated); return updated; });
+        try { const token = getToken(); if (token) await fetch(`${API_URL}/notifications/read-all`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` } }); } catch { }
         toast.success("All notifications marked as read");
     };
 
     const clearReadNotifications = () => {
-        setNotifications(current=>{ const updated=current.filter(n=>!n.read); saveNotificationsLocally(updated); return updated; });
+        setNotifications(current => { const updated = current.filter(n => !n.read); saveNotificationsLocally(updated); return updated; });
         toast.success("Read notifications cleared");
     };
 
     const loadNotifications = async (email) => {
         if (!email) return;
-        const local=safeParse(localStorage.getItem(`notifications_${email}`),[]);
-        const localList=Array.isArray(local)?local.map(n=>({...n,id:getNotificationId(n)})):[];
+        const local = safeParse(localStorage.getItem(`notifications_${email}`), []);
+        const localList = Array.isArray(local) ? local.map(n => ({ ...n, id: getNotificationId(n) })) : [];
         setNotifications(localList);
         try {
-            const token=getToken(); if(!token) return;
-            const response=await fetch(`${API_URL}/notifications/user`,{headers:{Authorization:`Bearer ${token}`}});
-            if(!response.ok) return;
-            const data=await response.json();
-            const server=data.notifications||data.data?.notifications||data.data||[];
-            if(!Array.isArray(server)) return;
-            const localMap=new Map(localList.map(n=>[getNotificationId(n),n]));
-            const mergedMap=new Map();
-            server.forEach(item=>{ const id=getNotificationId(item), l=localMap.get(id); mergedMap.set(id,{...item,id,read:l?Boolean(l.read):Boolean(item.read),readAt:l?.readAt||item.readAt||null}); });
-            localList.forEach(item=>{ const id=getNotificationId(item); if(!mergedMap.has(id)) mergedMap.set(id,item); });
-            const merged=[...mergedMap.values()].sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0));
-            setNotifications(merged); saveNotificationsLocally(merged,email);
-        } catch {}
+            const token = getToken(); if (!token) return;
+            const response = await fetch(`${API_URL}/notifications/user`, { headers: { Authorization: `Bearer ${token}` } });
+            if (!response.ok) return;
+            const data = await response.json();
+            const server = data.notifications || data.data?.notifications || data.data || [];
+            if (!Array.isArray(server)) return;
+            const localMap = new Map(localList.map(n => [getNotificationId(n), n]));
+            const mergedMap = new Map();
+            server.forEach(item => { const id = getNotificationId(item), l = localMap.get(id); mergedMap.set(id, { ...item, id, read: l ? Boolean(l.read) : Boolean(item.read), readAt: l?.readAt || item.readAt || null }); });
+            localList.forEach(item => { const id = getNotificationId(item); if (!mergedMap.has(id)) mergedMap.set(id, item); });
+            const merged = [...mergedMap.values()].sort((a, b) => new Date(b.date || b.createdAt || 0) - new Date(a.date || a.createdAt || 0));
+            setNotifications(merged); saveNotificationsLocally(merged, email);
+        } catch { }
     };
 
-    // Load addresses - with proper error handling
     const loadAddresses = async (email) => {
         if (!email) {
             setAddresses([]);
             return;
         }
-        
-        // ALWAYS load from localStorage first (fastest and always available)
+
         try {
             const savedAddresses = JSON.parse(localStorage.getItem(`addresses_${email}`) || '[]');
             setAddresses(savedAddresses);
-            console.log('📦 Addresses loaded from localStorage:', savedAddresses.length);
         } catch (error) {
             console.warn('Error loading addresses from localStorage:', error);
             setAddresses([]);
         }
-        
-        // Then try backend (optional, only if available)
+
         try {
             const token = getToken();
             if (token) {
@@ -947,220 +656,66 @@ const Profile = () => {
                     if (data.success && data.addresses) {
                         setAddresses(data.addresses);
                         localStorage.setItem(`addresses_${email}`, JSON.stringify(data.addresses));
-                        console.log('✅ Addresses synced from backend:', data.addresses.length);
                         return;
                     }
                 }
             }
         } catch (error) {
-            // Silently fail - localStorage data is already set
-            console.log('ℹ️ Addresses API not available, using local data only');
+            // Silently fail - use local data
         }
     };
 
-    // Load user data (orders and returns)
     // Load user data (orders and returns)
     const loadUserData = async (email) => {
         if (!email) return;
 
         try {
-            const userOrders =
-                await orderService.getUserOrders(
-                    email
-                );
+            const userOrders = await orderService.getUserOrders(email);
+            const normalizedOrders = (Array.isArray(userOrders) ? userOrders : []).map(order => ({
+                ...order,
+                id: order.id || order._id || order.orderId,
+                status: isOrderDelivered(order) ? "delivered" : (order.status || order.orderStatus || order.deliveryStatus || order.fulfillmentStatus || order.shippingStatus || order.trackingStatus || "pending"),
+                orderStatus: isOrderDelivered(order) ? "delivered" : (order.orderStatus || order.status || order.deliveryStatus || order.fulfillmentStatus || order.shippingStatus || order.trackingStatus || "pending"),
+                deliveryStatus: isOrderDelivered(order) ? "delivered" : (order.deliveryStatus || order.status || order.orderStatus || order.fulfillmentStatus || order.shippingStatus || order.trackingStatus || "pending")
+            }));
 
-            const normalizedOrders =
-                (Array.isArray(userOrders)
-                    ? userOrders
-                    : []
-                ).map(order => ({
-                    ...order,
-                    id:
-                        order.id ||
-                        order._id ||
-                        order.orderId,
-                    status:
-                        isOrderDelivered(order)
-                            ? "delivered"
-                            : (
-                                order.status ||
-                                order.orderStatus ||
-                                order.deliveryStatus ||
-                                order.fulfillmentStatus ||
-                                order.shippingStatus ||
-                                order.trackingStatus ||
-                                "pending"
-                            ),
-                    orderStatus:
-                        isOrderDelivered(order)
-                            ? "delivered"
-                            : (
-                                order.orderStatus ||
-                                order.status ||
-                                order.deliveryStatus ||
-                                order.fulfillmentStatus ||
-                                order.shippingStatus ||
-                                order.trackingStatus ||
-                                "pending"
-                            ),
-                    deliveryStatus:
-                        isOrderDelivered(order)
-                            ? "delivered"
-                            : (
-                                order.deliveryStatus ||
-                                order.status ||
-                                order.orderStatus ||
-                                order.fulfillmentStatus ||
-                                order.shippingStatus ||
-                                order.trackingStatus ||
-                                "pending"
-                            )
-                }));
-
-            const hiddenIds =
-                JSON.parse(
-                    localStorage.getItem(
-                        `hidden_orders_${email}`
-                    ) || "[]"
-                );
-
-            const hiddenSet =
-                new Set(
-                    Array.isArray(hiddenIds)
-                        ? hiddenIds.map(String)
-                        : []
-                );
-
-            setOrders(
-                normalizedOrders.filter(
-                    order =>
-                        !hiddenSet.has(
-                            String(
-                                order.id ||
-                                order._id ||
-                                order.orderId
-                            )
-                        )
-                )
-            );
+            const hiddenIds = JSON.parse(localStorage.getItem(`hidden_orders_${email}`) || "[]");
+            const hiddenSet = new Set(Array.isArray(hiddenIds) ? hiddenIds.map(String) : []);
+            setOrders(normalizedOrders.filter(order => !hiddenSet.has(String(order.id || order._id || order.orderId))));
 
             let serviceReturns = [];
-
             try {
-                serviceReturns =
-                    await orderService.getUserReturnRequests(
-                        email
-                    );
+                serviceReturns = await orderService.getUserReturnRequests(email);
             } catch (error) {
-                console.warn(
-                    "Unable to load returns from orderService:",
-                    error
-                );
+                console.warn("Unable to load returns from orderService:", error);
             }
 
             let localReturns = [];
-
             try {
-                const allLocal =
-                    JSON.parse(
-                        localStorage.getItem(
-                            "return_requests"
-                        ) || "[]"
-                    );
-
-                localReturns =
-                    (
-                        Array.isArray(allLocal)
-                            ? allLocal
-                            : []
-                    ).filter(
-                        request =>
-                            String(
-                                request.userEmail ||
-                                ""
-                            ).toLowerCase() ===
-                            String(
-                                email
-                            ).toLowerCase()
-                    );
-            } catch {
-                localReturns = [];
-            }
-
-            const indexedReturns =
-                (
-                    await getAllReturnRecords()
-                ).filter(
-                    request =>
-                        String(
-                            request.userEmail ||
-                            ""
-                        ).toLowerCase() ===
-                        String(
-                            email
-                        ).toLowerCase()
+                const allLocal = JSON.parse(localStorage.getItem("return_requests") || "[]");
+                localReturns = (Array.isArray(allLocal) ? allLocal : []).filter(request =>
+                    String(request.userEmail || "").toLowerCase() === String(email).toLowerCase()
                 );
+            } catch { localReturns = []; }
 
-            const returnMap =
-                new Map();
+            const indexedReturns = (await getAllReturnRecords()).filter(request =>
+                String(request.userEmail || "").toLowerCase() === String(email).toLowerCase()
+            );
 
-            [
-                ...(Array.isArray(serviceReturns)
-                    ? serviceReturns
-                    : []),
-                ...localReturns,
-                ...indexedReturns
-            ].forEach(request => {
-                const key =
-                    String(
-                        request.id ||
-                        request._id ||
-                        `${request.orderId}-${request.productId}`
-                    );
-
-                returnMap.set(
-                    key,
-                    {
-                        ...(returnMap.get(key) || {}),
-                        ...request
-                    }
-                );
+            const returnMap = new Map();
+            [...(Array.isArray(serviceReturns) ? serviceReturns : []), ...localReturns, ...indexedReturns].forEach(request => {
+                const key = String(request.id || request._id || `${request.orderId}-${request.productId}`);
+                returnMap.set(key, { ...(returnMap.get(key) || {}), ...request });
             });
 
-            const mergedReturns =
-                [...returnMap.values()].sort(
-                    (a, b) =>
-                        new Date(
-                            b.updatedAt ||
-                            b.date ||
-                            b.createdAt ||
-                            0
-                        ) -
-                        new Date(
-                            a.updatedAt ||
-                            a.date ||
-                            a.createdAt ||
-                            0
-                        )
-                );
-
-            setReturnRequests(
-                mergedReturns
+            const mergedReturns = [...returnMap.values()].sort((a, b) =>
+                new Date(b.updatedAt || b.date || b.createdAt || 0) - new Date(a.updatedAt || a.date || a.createdAt || 0)
             );
-
-            await putAllReturnRecords(
-                mergedReturns
-            );
-
-            saveCompactReturnsToLocalStorage(
-                mergedReturns
-            );
+            setReturnRequests(mergedReturns);
+            await putAllReturnRecords(mergedReturns);
+            saveCompactReturnsToLocalStorage(mergedReturns);
         } catch (error) {
-            console.error(
-                "Error loading user data:",
-                error
-            );
-
+            console.error("Error loading user data:", error);
             setOrders([]);
             setReturnRequests([]);
         }
@@ -1178,53 +733,36 @@ const Profile = () => {
         ]);
     };
 
+    // ============================================================
+    // Main Effects
+    // ============================================================
     useEffect(() => {
         const userData = localStorage.getItem('user');
         const authToken = getToken();
         setToken(authToken);
-        
+
         if (!userData) {
             navigate('/login');
             return;
         }
-        
+
         try {
             const parsedUser = JSON.parse(userData);
             setUser(parsedUser);
             setEditedUser(parsedUser);
-            
+
             const email = parsedUser.email;
-
-            const savedHiddenOrders =
-                JSON.parse(
-                    localStorage.getItem(
-                        `hidden_orders_${email}`
-                    ) || "[]"
-                );
-
-            setHiddenOrderIds(
-                Array.isArray(
-                    savedHiddenOrders
-                )
-                    ? savedHiddenOrders.map(
-                        String
-                    )
-                    : []
-            );
-
-            setSecurityPrefs(prev => ({ ...prev, ...safeParse(localStorage.getItem(`security_prefs_${email}`), {}) }));
-            setAccountPrefs(prev => ({ ...prev, ...safeParse(localStorage.getItem(`account_prefs_${email}`), {}) }));
-            
+            loadFavorites(email);
             refreshUserData(email);
-            
+
             const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
             const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
             setCurrencySymbol(symbols[siteSettings.currency] || "$");
             setCurrencyCode(siteSettings.currency || "USD");
-            
+
             const savedTheme = localStorage.getItem('theme');
             if (savedTheme === 'dark') setDarkMode(true);
-            
+
             const params = new URLSearchParams(location.search);
             const tabParam = params.get('tab');
             if (tabParam && ['overview', 'orders', 'wishlist', 'coupons', 'notifications', 'returns', 'addresses', 'security', 'settings'].includes(tabParam)) {
@@ -1232,7 +770,7 @@ const Profile = () => {
             } else if (location.state?.activeTab) {
                 setActiveTab(location.state.activeTab);
             }
-            
+
         } catch (error) {
             console.error("Error parsing user data:", error);
             navigate('/login');
@@ -1241,396 +779,101 @@ const Profile = () => {
         }
     }, [navigate, location]);
 
-    // Set up event listeners for real-time updates
+    // ============================================================
+    // Listen for favorites updates from other components
+    // ============================================================
     useEffect(() => {
         if (!user) return;
-        
+
         const email = user.email;
-        
+
         const handleFavoritesUpdate = (event) => {
-            if (event.detail && event.detail.email === email) {
-                setFavorites(event.detail.favorites);
-            } else {
-                loadFavorites(email);
-            }
-        };
-        
-        const handleProductUpdate = () => {
-            const newNotification = {
-                id: Date.now(),
-                title: "New Products Available!",
-                message: "Check out our latest collection with new arrivals!",
-                type: "product",
-                icon: "🆕",
-                date: new Date().toISOString(),
-                read: false
-            };
-            
-            const existingNotifs = JSON.parse(localStorage.getItem(`notifications_${email}`) || '[]');
-            existingNotifs.unshift(newNotification);
-            localStorage.setItem(`notifications_${email}`, JSON.stringify(existingNotifs.slice(0, 50)));
-            loadNotifications(email);
-            toast.info("New products have been added to the store!");
-        };
-        
-        const handleCouponReceived = (event) => {
-            if (event.detail && event.detail.email === email) {
-                loadUserCoupons(email);
-                loadNotifications(email);
-                toast.success(`New coupon received: ${event.detail.couponCode}`);
-            } else if (event.detail && event.detail.allUsers) {
-                loadUserCoupons(email);
-                loadNotifications(email);
-                toast.success(`New coupon available: ${event.detail.couponCode}`);
-            }
-        };
-        
-        const handleCouponDeleted = (event) => {
-            const deletedId = event.detail?.couponId != null ? String(event.detail.couponId) : null;
-            const deletedCode = String(event.detail?.couponCode || '').toUpperCase();
+            if (event?.detail?.email && event?.detail?.favorites) {
+                const eventEmail = event.detail.email;
+                const eventFavorites = event.detail.favorites;
 
-            setUserCoupons((current) => {
-                const updated = current.filter((coupon) =>
-                    !(deletedId && String(coupon.id) === deletedId) &&
-                    !(deletedCode && String(coupon.code || '').toUpperCase() === deletedCode)
-                );
-                localStorage.setItem(`user_coupons_${email}`, JSON.stringify(updated));
-                return updated;
-            });
-
-            setNotifications((current) => {
-                const updated = current.filter((notification) =>
-                    !(notification.type === 'coupon' && (
-                        (deletedId && String(notification.couponId) === deletedId) ||
-                        (deletedCode && String(notification.couponCode || '').toUpperCase() === deletedCode)
-                    ))
-                );
-                localStorage.setItem(`notifications_${email}`, JSON.stringify(updated));
-                return updated;
-            });
-
-            setSelectedOfferNotification((current) => {
-                if (!current) return current;
-                const sameId = deletedId && String(current.coupon?.id) === deletedId;
-                const sameCode = deletedCode && String(current.coupon?.code || '').toUpperCase() === deletedCode;
-                return sameId || sameCode ? null : current;
-            });
-        };
-
-        const handleCouponsUpdated = () => {
-            loadUserCoupons(email);
-            loadNotifications(email);
-        };
-
-        // Handle order status updates from admin
-        const handleOrderStatusUpdated = (event) => {
-            const orderId = event.detail?.orderId || event.detail?.id;
-            const newStatus = event.detail?.status || event.detail?.orderStatus;
-            
-            if (orderId && newStatus) {
-                setOrders(prev => prev.map(order => {
-                    if (String(order.id) === String(orderId) || String(order.orderId) === String(orderId)) {
-                        const normalizedNewStatus =
-                            normalizeOrderStatus(
-                                newStatus
-                            );
-
-                        const updatedOrder = {
-                            ...order,
-                            status:
-                                normalizedNewStatus,
-                            orderStatus:
-                                normalizedNewStatus,
-                            deliveryStatus:
-                                normalizedNewStatus,
-                            trackingStatus:
-                                normalizedNewStatus,
-                            delivered:
-                                normalizedNewStatus ===
-                                "delivered"
-                                    ? true
-                                    : order.delivered,
-                            deliveredAt:
-                                normalizedNewStatus ===
-                                "delivered"
-                                    ? (
-                                        order.deliveredAt ||
-                                        new Date().toISOString()
-                                    )
-                                    : order.deliveredAt,
-                            updatedAt:
-                                new Date().toISOString()
-                        };
-                        return updatedOrder;
+                if (String(eventEmail).toLowerCase() === String(email).toLowerCase()) {
+                    if (Array.isArray(eventFavorites)) {
+                        // Refresh favorites from central hook
+                        loadFavorites(email);
                     }
-                    return order;
-                }));
-                
-                loadNotifications(email);
-                
-                const statusMessages = {
-                    'pending': 'Your order is pending review.',
-                    'processing': 'Your order is being processed!',
-                    'shipped': 'Your order has been shipped! 🚚',
-                    'delivered': 'Your order has been delivered! 📦',
-                    'cancelled': 'Your order has been cancelled.'
-                };
-                
-                const message = statusMessages[newStatus] || `Order status updated to ${newStatus}`;
-                toast.info(message);
-                
-                if (newStatus === 'delivered') {
-                    setTimeout(() => {
-                        toast.info('You can now review your items! Click "Write a Review" in the Orders section.', {
-                            duration: 5000,
-                            action: {
-                                label: 'Go to Orders',
-                                onClick: () => {
-                                    setActiveTab('orders');
-                                    navigate("/profile?tab=orders");
-                                }
-                            }
-                        });
-                    }, 1000);
+                    return;
                 }
             }
+            loadFavorites(email);
         };
 
-        const handleOrdersUpdated = () => {
-            loadUserData(email);
-            loadNotifications(email);
-        };
-
-        const handleReturnsUpdated = (event) => {
-            const updatedReturn =
-                event?.detail?.returnRequest;
-
-            if (
-                updatedReturn &&
-                String(
-                    updatedReturn.userEmail ||
-                    ""
-                ).toLowerCase() ===
-                String(email).toLowerCase()
-            ) {
-                setReturnRequests(prev => {
-                    const filtered =
-                        prev.filter(
-                            request =>
-                                String(
-                                    request.id ||
-                                    request._id
-                                ) !==
-                                String(
-                                    updatedReturn.id ||
-                                    updatedReturn._id
-                                )
-                        );
-
-                    return [
-                        updatedReturn,
-                        ...filtered
-                    ];
-                });
-            }
-
-            loadUserData(email);
-        };
-
-        const handleStorageChange = (e) => {
-            if (e.key === `favorites_${email}`) {
+        const handleStorage = (event) => {
+            if (event.key && (
+                event.key.startsWith('favorites_') ||
+                event.key.startsWith('wishlist_') ||
+                event.key.startsWith('whitelist_') ||
+                event.key === 'favorites' ||
+                event.key === 'wishlist' ||
+                event.key === 'whitelist' ||
+                event.key === 'user'
+            )) {
                 loadFavorites(email);
             }
-            if (e.key === `notifications_${email}`) {
-                loadNotifications(email);
-            }
-            if (e.key === `user_coupons_${email}`) {
-                loadUserCoupons(email);
-            }
-            if (e.key === 'admin_coupons' || e.key === 'shop_coupons') {
-                loadUserCoupons(email);
-            }
-            if (
-                e.key === 'orders' ||
-                e.key === 'admin_orders' ||
-                e.key === `orders_${email}`
-            ) {
-                loadUserData(email);
-                loadNotifications(email);
-            }
-
-            if (
-                e.key === 'return_requests' ||
-                e.key === `return_requests_${email}`
-            ) {
-                loadUserData(email);
-            }
-        };
-        
-
-        const handleOrderRefunded = (event) => {
-            const orderId =
-                event?.detail?.orderId;
-
-            if (!orderId) return;
-
-            setOrders(current =>
-                current.map(order => {
-                    const id =
-                        getOrderIdentifier(
-                            order
-                        );
-
-                    if (
-                        String(id) !==
-                        String(orderId)
-                    ) {
-                        return order;
-                    }
-
-                    return {
-                        ...order,
-                        status:
-                            "refunded",
-                        orderStatus:
-                            "refunded",
-                        refundStatus:
-                            "refunded",
-                        refunded:
-                            true,
-                        refundedAt:
-                            new Date().toISOString()
-                    };
-                })
-            );
         };
 
-        const handleCustomerNotificationUpdated = (event) => {
-            if (
-                event?.detail?.email &&
-                String(
-                    event.detail.email
-                ).toLowerCase() !==
-                String(email).toLowerCase()
-            ) {
-                return;
-            }
+        const handleAuthChange = () => {
+            loadFavorites(email);
+        };
 
-            const notification =
-                event?.detail?.notification;
-
-            if (notification) {
-                setNotifications(current => {
-                    const updated = [
-                        notification,
-                        ...current.filter(
-                            item =>
-                                String(
-                                    getNotificationId(
-                                        item
-                                    )
-                                ) !==
-                                String(
-                                    getNotificationId(
-                                        notification
-                                    )
-                                )
-                        )
-                    ];
-
-                    saveNotificationsLocally(
-                        updated,
-                        email
-                    );
-
-                    return updated;
-                });
-
-                toast.info(
-                    notification.title ||
-                    "Return status updated"
-                );
-            } else {
-                loadNotifications(email);
+        const handleProfileUpdated = (event) => {
+            if (event?.detail?.email === email || event?.detail?.email) {
+                loadFavorites(email);
             }
         };
 
         window.addEventListener('favoritesUpdated', handleFavoritesUpdate);
-        window.addEventListener('productsUpdated', handleProductUpdate);
-        window.addEventListener('couponReceived', handleCouponReceived);
-        window.addEventListener('couponDeleted', handleCouponDeleted);
-        window.addEventListener('couponsUpdated', handleCouponsUpdated);
-        window.addEventListener('ordersUpdated', handleOrdersUpdated);
-        window.addEventListener('returnsUpdated', handleReturnsUpdated);
-        window.addEventListener('orderRefunded', handleOrderRefunded);
-        window.addEventListener('customerNotificationUpdated', handleCustomerNotificationUpdated);
-        window.addEventListener('orderStatusUpdated', handleOrderStatusUpdated);
-        window.addEventListener('orderStatusChanged', handleOrderStatusUpdated);
-        window.addEventListener('storage', handleStorageChange);
-        
+        window.addEventListener('wishlistUpdated', handleFavoritesUpdate);
+        window.addEventListener('whitelistUpdated', handleFavoritesUpdate);
+        window.addEventListener('storage', handleStorage);
+        window.addEventListener('authChanged', handleAuthChange);
+        window.addEventListener('profileUpdated', handleProfileUpdated);
+        window.addEventListener('userUpdated', handleAuthChange);
+
         return () => {
             window.removeEventListener('favoritesUpdated', handleFavoritesUpdate);
-            window.removeEventListener('productsUpdated', handleProductUpdate);
-            window.removeEventListener('couponReceived', handleCouponReceived);
-            window.removeEventListener('couponDeleted', handleCouponDeleted);
-            window.removeEventListener('couponsUpdated', handleCouponsUpdated);
-            window.removeEventListener('ordersUpdated', handleOrdersUpdated);
-            window.removeEventListener('returnsUpdated', handleReturnsUpdated);
-            window.removeEventListener('orderRefunded', handleOrderRefunded);
-            window.removeEventListener('customerNotificationUpdated', handleCustomerNotificationUpdated);
-            window.removeEventListener('orderStatusUpdated', handleOrderStatusUpdated);
-            window.removeEventListener('orderStatusChanged', handleOrderStatusUpdated);
-            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('wishlistUpdated', handleFavoritesUpdate);
+            window.removeEventListener('whitelistUpdated', handleFavoritesUpdate);
+            window.removeEventListener('storage', handleStorage);
+            window.removeEventListener('authChanged', handleAuthChange);
+            window.removeEventListener('profileUpdated', handleProfileUpdated);
+            window.removeEventListener('userUpdated', handleAuthChange);
         };
-    }, [user]);
+    }, [user, loadFavorites]);
 
+    // ============================================================
     // Refresh data when tab changes
+    // ============================================================
     useEffect(() => {
-        if (user) {
-            const email = user.email;
-            if (activeTab === 'orders' || activeTab === 'returns') {
-                loadUserData(email);
-            }
-            if (activeTab === 'coupons') {
-                loadUserCoupons(email);
-            }
-            if (activeTab === 'notifications') {
-                loadNotifications(email);
-            }
-            if (activeTab === 'addresses') {
-                loadAddresses(email);
-            }
-        }
-    }, [activeTab, user]);
+        if (!user) return;
+        const email = user.email;
 
-    // Keep the edit form in sync
-    useEffect(() => {
-        if (isEditingProfile && user) {
-            setEditedUser({
-                ...user,
-                phone: user.phone || user.phoneNumber || "",
-                dateOfBirth: user.dateOfBirth || "",
-                gender: user.gender || "",
-                title: user.title || "",
-                preferredName: user.preferredName || "",
-                bio: user.bio || "",
-                occupation: user.occupation || "",
-                company: user.company || "",
-                street: user.street || "",
-                city: user.city || "",
-                county: user.county || user.state || "",
-                postcode: user.postcode || user.zipCode || "",
-                country: user.country || "United Kingdom",
-                preferredSize: user.preferredSize || "",
-                preferredFit: user.preferredFit || "",
-                favouriteCategory: user.favouriteCategory || "",
-                newsletter: user.newsletter ?? true,
-                smsUpdates: user.smsUpdates ?? false,
-            });
-            setProfileErrors({});
+        if (activeTab === 'wishlist') {
+            // Force refresh favorites when switching to wishlist
+            loadFavorites(email);
         }
-    }, [isEditingProfile, user]);
+        if (activeTab === 'orders' || activeTab === 'returns') {
+            loadUserData(email);
+        }
+        if (activeTab === 'coupons') {
+            loadUserCoupons(email);
+        }
+        if (activeTab === 'notifications') {
+            loadNotifications(email);
+        }
+        if (activeTab === 'addresses') {
+            loadAddresses(email);
+        }
+    }, [activeTab, user, loadFavorites]);
 
+    // ============================================================
+    // Profile Edit Functions
+    // ============================================================
     const setProfileField = (field, value) => {
         setEditedUser(prev => ({ ...prev, [field]: value }));
         if (profileErrors[field]) {
@@ -1653,16 +896,8 @@ const Profile = () => {
         if (editedUser.postcode && editedUser.postcode.trim().length < 3) {
             errors.postcode = "Enter a valid postcode.";
         }
-
         setProfileErrors(errors);
         return Object.keys(errors).length === 0;
-    };
-
-    const handleLogout = () => {
-        localStorage.removeItem('user');
-        localStorage.removeItem('token');
-        toast.success("Logged out successfully");
-        navigate('/login');
     };
 
     const updateProfile = async () => {
@@ -1681,13 +916,7 @@ const Profile = () => {
             email: editedUser.email?.trim(),
             phone: editedUser.phone?.trim(),
             phoneNumber: editedUser.phone?.trim(),
-            address: [
-                editedUser.street,
-                editedUser.city,
-                editedUser.county,
-                editedUser.postcode,
-                editedUser.country
-            ].filter(Boolean).join(", ")
+            address: [editedUser.street, editedUser.city, editedUser.county, editedUser.postcode, editedUser.country].filter(Boolean).join(", ")
         };
 
         try {
@@ -1708,11 +937,7 @@ const Profile = () => {
                     localStorage.setItem("user", JSON.stringify(savedUser));
                     setUser(savedUser);
                     setEditedUser(savedUser);
-                    window.dispatchEvent(
-                        new CustomEvent("profileUpdated", {
-                            detail: savedUser
-                        })
-                    );
+                    window.dispatchEvent(new CustomEvent("profileUpdated", { detail: savedUser }));
                     toast.success("Your profile has been updated.");
                     setIsEditingProfile(false);
                     return;
@@ -1722,11 +947,7 @@ const Profile = () => {
             localStorage.setItem("user", JSON.stringify(normalizedUser));
             setUser(normalizedUser);
             setEditedUser(normalizedUser);
-            window.dispatchEvent(
-                new CustomEvent("profileUpdated", {
-                    detail: normalizedUser
-                })
-            );
+            window.dispatchEvent(new CustomEvent("profileUpdated", { detail: normalizedUser }));
             toast.success("Your profile has been updated.");
             setIsEditingProfile(false);
         } catch (error) {
@@ -1734,16 +955,19 @@ const Profile = () => {
             localStorage.setItem("user", JSON.stringify(normalizedUser));
             setUser(normalizedUser);
             setEditedUser(normalizedUser);
-            window.dispatchEvent(
-                new CustomEvent("profileUpdated", {
-                    detail: normalizedUser
-                })
-            );
+            window.dispatchEvent(new CustomEvent("profileUpdated", { detail: normalizedUser }));
             toast.success("Profile saved locally.");
             setIsEditingProfile(false);
         } finally {
             setIsSavingProfile(false);
         }
+    };
+
+    const handleLogout = () => {
+        localStorage.removeItem('user');
+        localStorage.removeItem('token');
+        toast.success("Logged out successfully");
+        navigate('/login');
     };
 
     const persistSecurityPrefs = (next) => {
@@ -1754,55 +978,91 @@ const Profile = () => {
     const persistAccountPrefs = (next) => {
         setAccountPrefs(next);
         if (user?.email) localStorage.setItem(`account_prefs_${user.email}`, JSON.stringify(next));
-        window.dispatchEvent(new CustomEvent("customerPreferencesUpdated",{detail:{email:user?.email,preferences:next}}));
+        window.dispatchEvent(new CustomEvent("customerPreferencesUpdated", { detail: { email: user?.email, preferences: next } }));
     };
 
     const handleChangePassword = async (e) => {
         e?.preventDefault();
-        const {currentPassword,newPassword,confirmPassword}=passwordForm;
-        if(!currentPassword||!newPassword||!confirmPassword){toast.error("Complete all password fields.");return;}
-        if(newPassword.length<8||!/[A-Z]/.test(newPassword)||!/[a-z]/.test(newPassword)||!/[0-9]/.test(newPassword)){toast.error("Use at least 8 characters with uppercase, lowercase and a number.");return;}
-        if(newPassword!==confirmPassword){toast.error("New passwords do not match.");return;}
-        const token=getToken(); if(!token){toast.error("Please sign in again.");return;}
+        const { currentPassword, newPassword, confirmPassword } = passwordForm;
+        if (!currentPassword || !newPassword || !confirmPassword) { toast.error("Complete all password fields."); return; }
+        if (newPassword.length < 8 || !/[A-Z]/.test(newPassword) || !/[a-z]/.test(newPassword) || !/[0-9]/.test(newPassword)) { toast.error("Use at least 8 characters with uppercase, lowercase and a number."); return; }
+        if (newPassword !== confirmPassword) { toast.error("New passwords do not match."); return; }
+        const token = getToken(); if (!token) { toast.error("Please sign in again."); return; }
         setChangingPassword(true);
-        try{
-            const result=await tryApiEndpoints(["/auth/change-password","/users/change-password","/users/password"],{method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({currentPassword,oldPassword:currentPassword,newPassword,password:newPassword})});
-            if(!result.ok) throw new Error(result.data?.message||result.data?.error||"Password change API is not available.");
-            localStorage.setItem(`password_changed_at_${user.email}`,new Date().toISOString());
-            setPasswordForm({currentPassword:"",newPassword:"",confirmPassword:""});
+        try {
+            const result = await tryApiEndpoints(["/auth/change-password", "/users/change-password", "/users/password"], {
+                method: "PUT",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ currentPassword, oldPassword: currentPassword, newPassword, password: newPassword })
+            });
+            if (!result.ok) throw new Error(result.data?.message || result.data?.error || "Password change API is not available.");
+            localStorage.setItem(`password_changed_at_${user.email}`, new Date().toISOString());
+            setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
             toast.success("Password changed successfully.");
-        }catch(err){toast.error(err.message||"Unable to change password.");}finally{setChangingPassword(false);}
+        } catch (err) { toast.error(err.message || "Unable to change password."); } finally { setChangingPassword(false); }
     };
 
     const toggleTwoFactor = async () => {
-        const token=getToken(); if(!token){toast.error("Please sign in again.");return;}
+        const token = getToken(); if (!token) { toast.error("Please sign in again."); return; }
         setSecurityActionLoading(true);
-        try{
-            const enabled=!securityPrefs.twoFactorEnabled;
-            const result=await tryApiEndpoints(["/auth/2fa/toggle","/users/2fa"],{method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({enabled})});
-            if(!result.ok) throw new Error(result.data?.message||"2FA API is not configured yet.");
-            persistSecurityPrefs({...securityPrefs,twoFactorEnabled:enabled}); toast.success(enabled?"2FA enabled.":"2FA disabled.");
-        }catch(err){toast.error(err.message);}finally{setSecurityActionLoading(false);}
+        try {
+            const enabled = !securityPrefs.twoFactorEnabled;
+            const result = await tryApiEndpoints(["/auth/2fa/toggle", "/users/2fa"], {
+                method: "PUT",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ enabled })
+            });
+            if (!result.ok) throw new Error(result.data?.message || "2FA API is not configured yet.");
+            persistSecurityPrefs({ ...securityPrefs, twoFactorEnabled: enabled });
+            toast.success(enabled ? "2FA enabled." : "2FA disabled.");
+        } catch (err) { toast.error(err.message); } finally { setSecurityActionLoading(false); }
     };
 
     const logoutOtherSessions = async () => {
-        const token=getToken(); if(!token){toast.error("Please sign in again.");return;}
+        const token = getToken(); if (!token) { toast.error("Please sign in again."); return; }
         setSecurityActionLoading(true);
-        try{ const result=await tryApiEndpoints(["/auth/logout-all","/auth/sessions/revoke-all"],{method:"POST",headers:{Authorization:`Bearer ${token}`}}); if(!result.ok) throw new Error(result.data?.message||"Session API is not available."); toast.success("Other sessions signed out."); }
-        catch(err){toast.error(err.message);}finally{setSecurityActionLoading(false);}
+        try {
+            const result = await tryApiEndpoints(["/auth/logout-all", "/auth/sessions/revoke-all"], { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+            if (!result.ok) throw new Error(result.data?.message || "Session API is not available.");
+            toast.success("Other sessions signed out.");
+        } catch (err) { toast.error(err.message); } finally { setSecurityActionLoading(false); }
     };
 
     const downloadAccountData = () => {
-        const blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),profile:user,orders,addresses,returns:returnRequests,preferences:accountPrefs},null,2)],{type:"application/json"});
-        const url=URL.createObjectURL(blob), a=document.createElement("a"); a.href=url; a.download=`zamed-account-data-${new Date().toISOString().slice(0,10)}.json`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); toast.success("Account data downloaded.");
+        const blob = new Blob([JSON.stringify({
+            exportedAt: new Date().toISOString(),
+            profile: user,
+            orders,
+            addresses,
+            returns: returnRequests,
+            preferences: accountPrefs
+        }, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob), a = document.createElement("a");
+        a.href = url;
+        a.download = `zamed-account-data-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast.success("Account data downloaded.");
     };
 
     const handleDeleteAccount = async () => {
-        if(window.prompt('Type DELETE to permanently delete your account.')!=="DELETE") return;
-        const token=getToken(); if(!token){toast.error("Please sign in again.");return;}
+        if (window.prompt('Type DELETE to permanently delete your account.') !== "DELETE") return;
+        const token = getToken(); if (!token) { toast.error("Please sign in again."); return; }
         setDeletingAccount(true);
-        try{ const result=await tryApiEndpoints(["/users/account","/auth/account","/users/me"],{method:"DELETE",headers:{Authorization:`Bearer ${token}`}}); if(!result.ok) throw new Error(result.data?.message||result.data?.error||"Account deletion API is not available."); const email=user?.email; ["user","token","authToken"].forEach(k=>localStorage.removeItem(k)); if(email)[`notifications_${email}`,`favorites_${email}`,`user_coupons_${email}`,`addresses_${email}`,`security_prefs_${email}`,`account_prefs_${email}`].forEach(k=>localStorage.removeItem(k)); toast.success("Account deleted."); navigate("/register",{replace:true}); }
-        catch(err){toast.error(err.message||"Unable to delete account.");}finally{setDeletingAccount(false);}
+        try {
+            const result = await tryApiEndpoints(["/users/account", "/auth/account", "/users/me"], {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!result.ok) throw new Error(result.data?.message || result.data?.error || "Account deletion API is not available.");
+            const email = user?.email;
+            ["user", "token", "authToken"].forEach(k => localStorage.removeItem(k));
+            if (email) [`notifications_${email}`, `favorites_${email}`, `user_coupons_${email}`, `addresses_${email}`, `security_prefs_${email}`, `account_prefs_${email}`].forEach(k => localStorage.removeItem(k));
+            toast.success("Account deleted.");
+            navigate("/register", { replace: true });
+        } catch (err) { toast.error(err.message || "Unable to delete account."); } finally { setDeletingAccount(false); }
     };
 
     const addNewAddress = async () => {
@@ -1810,20 +1070,19 @@ const Profile = () => {
             toast.error("Please fill in street and city");
             return;
         }
-        
+
         const address = {
             id: Date.now(),
             ...newAddress,
             isDefault: addresses.length === 0 ? true : newAddress.isDefault
         };
-        
+
         let updatedAddresses = [...addresses];
         if (address.isDefault) {
             updatedAddresses = updatedAddresses.map(addr => ({ ...addr, isDefault: false }));
         }
         updatedAddresses.push(address);
-        
-        // Try backend first
+
         try {
             const token = getToken();
             if (token) {
@@ -1850,8 +1109,7 @@ const Profile = () => {
         } catch (error) {
             console.log("Backend not available, saving locally");
         }
-        
-        // Fallback to localStorage
+
         setAddresses(updatedAddresses);
         localStorage.setItem(`addresses_${user.email}`, JSON.stringify(updatedAddresses));
         setShowAddAddress(false);
@@ -1861,7 +1119,7 @@ const Profile = () => {
 
     const deleteAddress = async (addressId) => {
         const updatedAddresses = addresses.filter(addr => addr.id !== addressId);
-        
+
         try {
             const token = getToken();
             if (token) {
@@ -1882,7 +1140,7 @@ const Profile = () => {
         } catch (error) {
             console.log("Backend not available, deleting locally");
         }
-        
+
         setAddresses(updatedAddresses);
         localStorage.setItem(`addresses_${user.email}`, JSON.stringify(updatedAddresses));
         toast.success("Address removed (local)");
@@ -1893,7 +1151,7 @@ const Profile = () => {
             ...addr,
             isDefault: addr.id === addressId
         }));
-        
+
         try {
             const token = getToken();
             if (token) {
@@ -1914,243 +1172,79 @@ const Profile = () => {
         } catch (error) {
             console.log("Backend not available, updating locally");
         }
-        
+
         setAddresses(updatedAddresses);
         localStorage.setItem(`addresses_${user.email}`, JSON.stringify(updatedAddresses));
         toast.success("Default address updated (local)");
     };
 
-    const removeFromFavorites = (productId) => {
-        const updatedFavorites = favorites.filter(item => item.id !== productId);
-        setFavorites(updatedFavorites);
-        
-        const favoriteIds = updatedFavorites.map(p => p.id);
-        localStorage.setItem(`favorites_${user.email}`, JSON.stringify(favoriteIds));
-        
-        window.dispatchEvent(new CustomEvent('favoritesUpdated', { 
-            detail: { email: user.email, favorites: updatedFavorites } 
-        }));
-        window.dispatchEvent(new Event('storage'));
-        
-        toast.success("Removed from favorites");
-    };
+    // ============================================================
+    // Order Functions
+    // ============================================================
+    const getHiddenOrdersKey = (email = user?.email) => email ? `hidden_orders_${email}` : "";
 
-    const addToCartFromFavorites = (product) => {
-        addToCart({
-            id: product.id,
-            name: product.name,
-            price: product.price,
-            image: product.image,
-            category: product.category,
-            quantity: 1,
-            size: product.sizes?.[0] || "One Size",
-            color: product.colors?.[0] || "Default"
-        });
-        toast.success(`${product.name} added to cart!`);
-    };
-
-    const getHiddenOrdersKey = (email = user?.email) =>
-        email
-            ? `hidden_orders_${email}`
-            : "";
-
-    const persistHiddenOrders = (
-        ids,
-        email = user?.email
-    ) => {
-        const unique =
-            [...new Set(
-                ids.map(String)
-            )];
-
+    const persistHiddenOrders = (ids, email = user?.email) => {
+        const unique = [...new Set(ids.map(String))];
         setHiddenOrderIds(unique);
-
         if (email) {
-            localStorage.setItem(
-                getHiddenOrdersKey(email),
-                JSON.stringify(unique)
-            );
+            localStorage.setItem(getHiddenOrdersKey(email), JSON.stringify(unique));
         }
+    };
+
+    const getOrderIdentifier = (order = {}) => order.id || order._id || order.orderId || "";
+
+    const getItemIdentifier = (item = {}) => item.id || item._id || item.productId || "";
+
+    const getOrderItems = (order = {}) => Array.isArray(order.itemsList) ? order.itemsList : Array.isArray(order.items) ? order.items : [];
+
+    const getOrderPaymentMethod = (order = {}) => String(order.paymentMethod || order.payment?.method || order.paymentType || "");
+
+    const isCashOrder = (order = {}) => {
+        const method = getOrderPaymentMethod(order).toLowerCase();
+        return method.includes("cash") || method.includes("cod");
     };
 
     const deleteOrderFromHistory = async (order) => {
-        const orderId =
-            getOrderIdentifier(order);
-
-        if (!orderId) {
-            toast.error(
-                "Unable to identify this order."
-            );
-            return;
-        }
-
-        if (
-            !window.confirm(
-                `Remove order #${orderId} from your order history?`
-            )
-        ) {
-            return;
-        }
+        const orderId = getOrderIdentifier(order);
+        if (!orderId) { toast.error("Unable to identify this order."); return; }
+        if (!window.confirm(`Remove order #${orderId} from your order history?`)) return;
 
         let serviceDeleted = false;
-
         try {
-            if (
-                typeof orderService.deleteOrder ===
-                "function"
-            ) {
-                await orderService.deleteOrder(
-                    orderId
-                );
-
+            if (typeof orderService.deleteOrder === "function") {
+                await orderService.deleteOrder(orderId);
                 serviceDeleted = true;
             }
         } catch (error) {
-            console.warn(
-                "Permanent order deletion is not available; hiding from customer history instead:",
-                error
-            );
+            console.warn("Permanent order deletion is not available; hiding from customer history instead:", error);
         }
 
-        persistHiddenOrders([
-            ...hiddenOrderIds,
-            String(orderId)
-        ]);
-
-        setOrders(current =>
-            current.filter(
-                item =>
-                    String(
-                        getOrderIdentifier(
-                            item
-                        )
-                    ) !==
-                    String(orderId)
-            )
-        );
-
-        toast.success(
-            serviceDeleted
-                ? "Order deleted."
-                : "Order removed from your order history."
-        );
+        persistHiddenOrders([...hiddenOrderIds, String(orderId)]);
+        setOrders(current => current.filter(item => String(getOrderIdentifier(item)) !== String(orderId)));
+        toast.success(serviceDeleted ? "Order deleted." : "Order removed from your order history.");
     };
 
     const clearOrderHistory = async () => {
-        const visibleIds =
-            orders
-                .map(order =>
-                    getOrderIdentifier(order)
-                )
-                .filter(Boolean)
-                .map(String)
-                .filter(
-                    id =>
-                        !hiddenOrderIds.includes(
-                            id
-                        )
-                );
-
-        if (
-            visibleIds.length === 0
-        ) {
-            toast.info(
-                "Your order history is already clear."
-            );
-            return;
-        }
-
-        if (
-            !window.confirm(
-                "Clear all orders from your order history? This will remove them from your Profile view."
-            )
-        ) {
-            return;
-        }
-
-        persistHiddenOrders([
-            ...hiddenOrderIds,
-            ...visibleIds
-        ]);
-
+        const visibleIds = orders.map(order => getOrderIdentifier(order)).filter(Boolean).map(String).filter(id => !hiddenOrderIds.includes(id));
+        if (visibleIds.length === 0) { toast.info("Your order history is already clear."); return; }
+        if (!window.confirm("Clear all orders from your order history? This will remove them from your Profile view.")) return;
+        persistHiddenOrders([...hiddenOrderIds, ...visibleIds]);
         setOrders([]);
-
-        toast.success(
-            "Order history cleared."
-        );
+        toast.success("Order history cleared.");
     };
 
     const getReturnForOrder = (order) => {
-        const orderId =
-            String(
-                getOrderIdentifier(
-                    order
-                )
-            );
-
-        return returnRequests
-            .filter(
-                request =>
-                    String(
-                        request.orderId
-                    ) ===
-                    orderId
-            )
-            .sort(
-                (a, b) =>
-                    new Date(
-                        b.updatedAt ||
-                        b.refundCompletedAt ||
-                        b.date ||
-                        0
-                    ) -
-                    new Date(
-                        a.updatedAt ||
-                        a.refundCompletedAt ||
-                        a.date ||
-                        0
-                    )
-            )[0] || null;
+        const orderId = String(getOrderIdentifier(order));
+        return returnRequests.filter(request => String(request.orderId) === orderId)
+            .sort((a, b) => new Date(b.updatedAt || b.refundCompletedAt || b.date || 0) - new Date(a.updatedAt || a.refundCompletedAt || a.date || 0))[0] || null;
     };
 
     const getEffectiveOrderStatus = (order) => {
-        const returnRequest =
-            getReturnForOrder(order);
-
-        if (
-            returnRequest?.status ===
-            "refunded"
-        ) {
-            return "refunded";
-        }
-
-        if (
-            returnRequest?.status ===
-            "refund_processing"
-        ) {
-            return "refund_processing";
-        }
-
-        if (
-            [
-                "picked_up",
-                "verified",
-                "pickup_scheduled",
-                "pending_pickup"
-            ].includes(
-                returnRequest?.status
-            )
-        ) {
-            return "return_in_progress";
-        }
-
-        return (
-            order.refundStatus ||
-            order.status ||
-            order.orderStatus ||
-            order.deliveryStatus ||
-            "pending"
-        );
+        const returnRequest = getReturnForOrder(order);
+        if (returnRequest?.status === "refunded") return "refunded";
+        if (returnRequest?.status === "refund_processing") return "refund_processing";
+        if (["picked_up", "verified", "pickup_scheduled", "pending_pickup"].includes(returnRequest?.status)) return "return_in_progress";
+        return order.refundStatus || order.status || order.orderStatus || order.deliveryStatus || "pending";
     };
 
     const cancelOrder = async (orderId) => {
@@ -2173,36 +1267,9 @@ const Profile = () => {
         }
     };
 
-    const getOrderIdentifier = (order = {}) =>
-        order.id || order._id || order.orderId || "";
-
-    const getItemIdentifier = (item = {}) =>
-        item.id || item._id || item.productId || "";
-
-    const getOrderItems = (order = {}) =>
-        Array.isArray(order.itemsList)
-            ? order.itemsList
-            : Array.isArray(order.items)
-                ? order.items
-                : [];
-
-    const getOrderPaymentMethod = (order = {}) =>
-        String(
-            order.paymentMethod ||
-            order.payment?.method ||
-            order.paymentType ||
-            ""
-        );
-
-    const isCashOrder = (order = {}) => {
-        const method = getOrderPaymentMethod(order).toLowerCase();
-
-        return (
-            method.includes("cash") ||
-            method.includes("cod")
-        );
-    };
-
+    // ============================================================
+    // Return Functions
+    // ============================================================
     const resetReturnForm = () => {
         setSelectedItemForReturn(null);
         setReturnReason("");
@@ -2221,51 +1288,19 @@ const Profile = () => {
         const productId = getItemIdentifier(item);
 
         if (!orderId || !productId) {
-            toast.error(
-                "Unable to identify this order item. Please refresh and try again."
-            );
+            toast.error("Unable to identify this order item. Please refresh and try again.");
             return;
         }
 
         if (hasReturnRequestForItem(orderId, productId)) {
-            toast.info(
-                "A return request already exists for this item."
-            );
+            toast.info("A return request already exists for this item.");
             setActiveTab("returns");
             navigate("/profile?tab=returns");
             return;
         }
 
         if (!canReturnOrder(order)) {
-            console.warn(
-                "Return blocked because delivered state was not detected:",
-                {
-                    id:
-                        order.id ||
-                        order._id ||
-                        order.orderId,
-                    status:
-                        order.status,
-                    orderStatus:
-                        order.orderStatus,
-                    deliveryStatus:
-                        order.deliveryStatus,
-                    fulfillmentStatus:
-                        order.fulfillmentStatus,
-                    shippingStatus:
-                        order.shippingStatus,
-                    trackingStatus:
-                        order.trackingStatus,
-                    delivered:
-                        order.delivered,
-                    deliveredAt:
-                        order.deliveredAt
-                }
-            );
-
-            toast.error(
-                "This order is not marked as delivered in the saved order data yet. Refresh your orders and try again."
-            );
+            toast.error("This order is not marked as delivered in the saved order data yet. Refresh your orders and try again.");
             return;
         }
 
@@ -2277,25 +1312,13 @@ const Profile = () => {
             productName: item.name || item.productName || "Product",
             productImage: item.image || "",
             order,
-            paymentMethod:
-                getOrderPaymentMethod(order) ||
-                (cashOrder
-                    ? "Cash on Delivery"
-                    : "Online Payment"),
+            paymentMethod: getOrderPaymentMethod(order) || (cashOrder ? "Cash on Delivery" : "Online Payment"),
             isCashOrder: cashOrder
         });
 
         setReturnReason("");
         setReturnComment("");
-
-        // COD customers can choose bank transfer or shop collection.
-        // Online payments use the original payment method automatically.
-        setReturnMethod(
-            cashOrder
-                ? "bank_transfer"
-                : "original_payment"
-        );
-
+        setReturnMethod(cashOrder ? "bank_transfer" : "original_payment");
         setBankName("");
         setAccountNumber("");
         setAccountHolderName("");
@@ -2304,477 +1327,164 @@ const Profile = () => {
         setShopPickupTime("");
     };
 
-    const persistReturnForAdmin = async (
-        returnRequest
-    ) => {
-        const indexedSaved =
-            await putReturnRecord(
-                returnRequest
-            );
-
-        let current = [];
-
-        try {
-            const existing =
-                JSON.parse(
-                    localStorage.getItem(
-                        "return_requests"
-                    ) || "[]"
-                );
-
-            current =
-                Array.isArray(existing)
-                    ? existing
-                    : [];
-        } catch {
-            current = [];
-        }
-
-        const filtered =
-            current.filter(
-                request =>
-                    String(
-                        request.id ||
-                        request._id
-                    ) !==
-                    String(
-                        returnRequest.id
-                    )
-            );
-
-        const updated = [
-            returnRequest,
-            ...filtered
-        ];
-
-        const localSaved =
-            saveCompactReturnsToLocalStorage(
-                updated
-            );
-
-        return (
-            indexedSaved ||
-            localSaved
-        );
-    };
-
     const submitReturnRequest = async () => {
-        if (!selectedItemForReturn) {
-            toast.error(
-                "Please select a product to return."
-            );
+        if (!selectedItemForReturn) { toast.error("Please select a product to return."); return; }
+        if (!returnReason) { toast.error("Please select a reason for return."); return; }
+        if (returnMethod === "bank_transfer" && (!bankName.trim() || !accountNumber.trim() || !accountHolderName.trim())) {
+            toast.error("Please fill in the account holder, bank name and account number.");
             return;
         }
-
-        if (!returnReason) {
-            toast.error(
-                "Please select a reason for return."
-            );
-            return;
-        }
-
-        if (
-            returnMethod === "bank_transfer" &&
-            (
-                !bankName.trim() ||
-                !accountNumber.trim() ||
-                !accountHolderName.trim()
-            )
-        ) {
-            toast.error(
-                "Please fill in the account holder, bank name and account number."
-            );
-            return;
-        }
-
-        if (
-            returnMethod === "shop_pickup" &&
-            (
-                !shopPickupDate ||
-                !shopPickupTime
-            )
-        ) {
-            toast.error(
-                "Please choose your shop collection date and time."
-            );
+        if (returnMethod === "shop_pickup" && (!shopPickupDate || !shopPickupTime)) {
+            toast.error("Please choose your shop collection date and time.");
             return;
         }
 
         setIsSubmittingReturn(true);
 
         try {
-            const order = orders.find(currentOrder => {
-                const currentId =
-                    getOrderIdentifier(currentOrder);
+            const order = orders.find(currentOrder => String(getOrderIdentifier(currentOrder)) === String(selectedItemForReturn.orderId));
+            if (!order) throw new Error("The original order could not be found.");
 
-                return (
-                    String(currentId) ===
-                    String(
-                        selectedItemForReturn.orderId
-                    )
-                );
-            });
+            const product = getOrderItems(order).find(currentItem => String(getItemIdentifier(currentItem)) === String(selectedItemForReturn.productId));
+            if (!product) throw new Error("The selected product could not be found in this order.");
 
-            if (!order) {
-                throw new Error(
-                    "The original order could not be found."
-                );
+            if (!canReturnOrder(order)) throw new Error("This order has not been delivered yet.");
+            if (hasReturnRequestForItem(selectedItemForReturn.orderId, selectedItemForReturn.productId)) {
+                throw new Error("A return request already exists for this product.");
             }
 
-            const product = getOrderItems(order).find(
-                currentItem =>
-                    String(
-                        getItemIdentifier(
-                            currentItem
-                        )
-                    ) ===
-                    String(
-                        selectedItemForReturn.productId
-                    )
-            );
-
-            if (!product) {
-                throw new Error(
-                    "The selected product could not be found in this order."
-                );
-            }
-
-            if (!canReturnOrder(order)) {
-                throw new Error(
-                    "This order has not been delivered yet."
-                );
-            }
-
-            if (
-                hasReturnRequestForItem(
-                    selectedItemForReturn.orderId,
-                    selectedItemForReturn.productId
-                )
-            ) {
-                throw new Error(
-                    "A return request already exists for this product."
-                );
-            }
-
-            const siteSettings = JSON.parse(
-                localStorage.getItem(
-                    "site_settings"
-                ) || "{}"
-            );
-
-            const taxRate =
-                Number.parseFloat(
-                    product.taxRate ??
-                    siteSettings.taxRate
-                ) || 0;
-
-            const productPrice =
-                Number.parseFloat(
-                    product.price
-                ) || 0;
-
-            const productQuantity =
-                Number.parseInt(
-                    product.quantity,
-                    10
-                ) || 1;
-
-            const subtotal =
-                productPrice *
-                productQuantity;
-
-            const taxAmount =
-                subtotal *
-                (taxRate / 100);
-
-            // Refund the returned product + its recorded tax.
-            // Shipping is not added here unless you later explicitly support
-            // refundable per-item shipping.
-            const refundAmount =
-                subtotal +
-                taxAmount;
+            const siteSettings = JSON.parse(localStorage.getItem("site_settings") || "{}");
+            const taxRate = Number.parseFloat(product.taxRate ?? siteSettings.taxRate) || 0;
+            const productPrice = Number.parseFloat(product.price) || 0;
+            const productQuantity = Number.parseInt(product.quantity, 10) || 1;
+            const subtotal = productPrice * productQuantity;
+            const taxAmount = subtotal * (taxRate / 100);
+            const refundAmount = subtotal + taxAmount;
 
             let refundMethodDetails;
-
-            if (
-                returnMethod ===
-                "bank_transfer"
-            ) {
+            if (returnMethod === "bank_transfer") {
                 refundMethodDetails = {
                     method: "Bank Transfer",
                     type: "bank_transfer",
                     bankName: bankName.trim(),
-                    accountNumber:
-                        accountNumber.trim(),
-                    accountHolderName:
-                        accountHolderName.trim(),
-                    bankBranch:
-                        bankBranch.trim() ||
-                        "N/A",
-                    processingTime:
-                        "Up to 7 days"
+                    accountNumber: accountNumber.trim(),
+                    accountHolderName: accountHolderName.trim(),
+                    bankBranch: bankBranch.trim() || "N/A",
+                    processingTime: "Up to 7 days"
                 };
-            } else if (
-                returnMethod ===
-                "shop_pickup"
-            ) {
+            } else if (returnMethod === "shop_pickup") {
                 refundMethodDetails = {
-                    method:
-                        "Collect Refund From Shop",
-                    type:
-                        "shop_pickup",
-                    pickupDate:
-                        shopPickupDate,
-                    pickupTime:
-                        shopPickupTime,
-                    processingTime:
-                        "After return approval"
+                    method: "Collect Refund From Shop",
+                    type: "shop_pickup",
+                    pickupDate: shopPickupDate,
+                    pickupTime: shopPickupTime,
+                    processingTime: "After return approval"
                 };
             } else {
                 refundMethodDetails = {
-                    method:
-                        "Original Payment Method",
-                    type:
-                        "original_payment",
-                    originalPaymentMethod:
-                        getOrderPaymentMethod(
-                            order
-                        ) ||
-                        "Online Payment",
-                    processingTime:
-                        "Up to 7 days"
+                    method: "Original Payment Method",
+                    type: "original_payment",
+                    originalPaymentMethod: getOrderPaymentMethod(order) || "Online Payment",
+                    processingTime: "Up to 7 days"
                 };
             }
 
-            const now =
-                new Date().toISOString();
-
-            const expectedRefundDate =
-                new Date();
-
-            expectedRefundDate.setDate(
-                expectedRefundDate.getDate() +
-                7
-            );
+            const now = new Date().toISOString();
+            const expectedRefundDate = new Date();
+            expectedRefundDate.setDate(expectedRefundDate.getDate() + 7);
 
             const returnRequest = {
                 id: `RET-${Date.now()}`,
-                orderId:
-                    selectedItemForReturn.orderId,
-                productId:
-                    selectedItemForReturn.productId,
-                productName:
-                    selectedItemForReturn.productName,
-                productImage:
-                    product.image ||
-                    selectedItemForReturn.productImage ||
-                    "",
+                orderId: selectedItemForReturn.orderId,
+                productId: selectedItemForReturn.productId,
+                productName: selectedItemForReturn.productName,
+                productImage: product.image || selectedItemForReturn.productImage || "",
                 productPrice,
                 productQuantity,
                 subtotal,
                 taxAmount,
                 taxRate,
                 refundAmount,
-                reason:
-                    returnReason,
-                comment:
-                    returnComment.trim(),
-                status:
-                    "pending_pickup",
-                date:
-                    now,
-                createdAt:
-                    now,
-                updatedAt:
-                    now,
-                userEmail:
-                    user.email,
-                userName:
-                    [
-                        user.firstName,
-                        user.lastName
-                    ]
-                        .filter(Boolean)
-                        .join(" ") ||
-                    user.name ||
-                    "Customer",
-                customerPhone:
-                    user.phone ||
-                    user.phoneNumber ||
-                    "",
-                pickupAddress:
-                    user.address ||
-                    order.shippingAddress ||
-                    "",
-                originalPaymentMethod:
-                    getOrderPaymentMethod(order) ||
-                    "N/A",
-                refundMethod:
-                    refundMethodDetails,
-                refundProcessingDays:
-                    7,
-                refundExpectedBy:
-                    expectedRefundDate.toISOString(),
-                trackingHistory: [
-                    {
-                        stage:
-                            "pending_pickup",
-                        timestamp:
-                            now,
-                        message:
-                            "Return request submitted and waiting for admin review."
-                    }
-                ]
+                reason: returnReason,
+                comment: returnComment.trim(),
+                status: "pending_pickup",
+                date: now,
+                createdAt: now,
+                updatedAt: now,
+                userEmail: user.email,
+                userName: [user.firstName, user.lastName].filter(Boolean).join(" ") || user.name || "Customer",
+                customerPhone: user.phone || user.phoneNumber || "",
+                pickupAddress: user.address || order.shippingAddress || "",
+                originalPaymentMethod: getOrderPaymentMethod(order) || "N/A",
+                refundMethod: refundMethodDetails,
+                refundProcessingDays: 7,
+                refundExpectedBy: expectedRefundDate.toISOString(),
+                trackingHistory: [{ stage: "pending_pickup", timestamp: now, message: "Return request submitted and waiting for admin review." }]
             };
 
             let serviceSaved = false;
-
             try {
-                serviceSaved =
-                    Boolean(
-                        await orderService.saveReturnRequest(
-                            returnRequest
-                        )
-                    );
+                serviceSaved = Boolean(await orderService.saveReturnRequest(returnRequest));
             } catch (serviceError) {
-                console.warn(
-                    "orderService return save failed; using shared local fallback:",
-                    serviceError
-                );
+                console.warn("orderService return save failed; using shared local fallback:", serviceError);
             }
 
-            const localSaved =
-                await persistReturnForAdmin(
-                    returnRequest
-                );
+            const localSaved = await putReturnRecord(returnRequest) && saveCompactReturnsToLocalStorage([...returnRequests, returnRequest]);
 
-            if (
-                !serviceSaved &&
-                !localSaved
-            ) {
-                throw new Error(
-                    "The return request could not be saved."
-                );
-            }
+            if (!serviceSaved && !localSaved) throw new Error("The return request could not be saved.");
 
             setReturnRequests(prev => {
-                const withoutDuplicate =
-                    prev.filter(
-                        request =>
-                            String(
-                                request.id ||
-                                request._id
-                            ) !==
-                            String(
-                                returnRequest.id
-                            )
-                    );
-
-                return [
-                    returnRequest,
-                    ...withoutDuplicate
-                ];
+                const withoutDuplicate = prev.filter(request => String(request.id || request._id) !== String(returnRequest.id));
+                return [returnRequest, ...withoutDuplicate];
             });
 
-            window.dispatchEvent(
-                new CustomEvent(
-                    "returnsUpdated",
-                    {
-                        detail: {
-                            email:
-                                user.email,
-                            returnRequest
-                        }
-                    }
-                )
-            );
+            window.dispatchEvent(new CustomEvent("returnsUpdated", { detail: { email: user.email, returnRequest } }));
+            window.dispatchEvent(new Event("storage"));
 
-            window.dispatchEvent(
-                new Event("storage")
-            );
-
-            toast.success(
-                `Return request submitted successfully. Refund: ${currencySymbol}${refundAmount.toFixed(
-                    2
-                )}. Processing may take up to 7 days after approval.`
-            );
+            toast.success(`Return request submitted successfully. Refund: ${currencySymbol}${refundAmount.toFixed(2)}. Processing may take up to 7 days after approval.`);
 
             resetReturnForm();
             setActiveTab("returns");
-
-            navigate(
-                "/profile?tab=returns"
-            );
+            navigate("/profile?tab=returns");
         } catch (error) {
-            console.error(
-                "Error submitting return:",
-                error
-            );
-
-            toast.error(
-                error?.message ||
-                "Failed to submit return request. Please try again."
-            );
+            console.error("Error submitting return:", error);
+            toast.error(error?.message || "Failed to submit return request. Please try again.");
         } finally {
             setIsSubmittingReturn(false);
         }
     };
 
+    // ============================================================
+    // UI Helper Functions
+    // ============================================================
     const getOrderStatusBadge = (status) => {
-        const normalized =
-            String(status || "")
-                .toLowerCase()
-                .replace(/\s+/g, "_");
-
+        const normalized = String(status || "").toLowerCase().replace(/\s+/g, "_");
         const badges = {
             pending: "bg-yellow-100 text-yellow-800",
             processing: "bg-blue-100 text-blue-800",
             shipped: "bg-purple-100 text-purple-800",
             delivered: "bg-green-100 text-green-800",
             cancelled: "bg-red-100 text-red-800",
-            return_in_progress:
-                "bg-orange-100 text-orange-800",
-            refund_processing:
-                "bg-amber-100 text-amber-800",
-            refunded:
-                "bg-emerald-100 text-emerald-800"
+            return_in_progress: "bg-orange-100 text-orange-800",
+            refund_processing: "bg-amber-100 text-amber-800",
+            refunded: "bg-emerald-100 text-emerald-800"
         };
-
-        return (
-            badges[normalized] ||
-            "bg-gray-100 text-gray-800"
-        );
+        return badges[normalized] || "bg-gray-100 text-gray-800";
     };
 
     const getOrderStatusLabel = (status) => {
-        const normalized =
-            String(status || "")
-                .toLowerCase()
-                .replace(/\s+/g, "_");
-
+        const normalized = String(status || "").toLowerCase().replace(/\s+/g, "_");
         const labels = {
-            pending:
-                "Pending",
-            processing:
-                "Processing",
-            shipped:
-                "Shipped",
-            delivered:
-                "Delivered",
-            cancelled:
-                "Cancelled",
-            return_in_progress:
-                "Return In Progress",
-            refund_processing:
-                "Refund Processing",
-            refunded:
-                "Refunded"
+            pending: "Pending",
+            processing: "Processing",
+            shipped: "Shipped",
+            delivered: "Delivered",
+            cancelled: "Cancelled",
+            return_in_progress: "Return In Progress",
+            refund_processing: "Refund Processing",
+            refunded: "Refunded"
         };
-
-        return (
-            labels[normalized] ||
-            String(status || "Pending")
-        );
+        return labels[normalized] || String(status || "Pending");
     };
 
     const getReturnStatusBadge = (status) => {
@@ -2801,9 +1511,12 @@ const Profile = () => {
         return `${currencySymbol}${numPrice.toFixed(2)}`;
     };
 
-    const formatDate = (dateString) => new Date(dateString).toLocaleDateString();
-    const formatDateTime = (dateString) => new Date(dateString).toLocaleString();
+    const formatDate = (dateString) => dateString ? new Date(dateString).toLocaleDateString() : 'N/A';
+    const formatDateTime = (dateString) => dateString ? new Date(dateString).toLocaleString() : 'N/A';
 
+    // ============================================================
+    // Filter Orders
+    // ============================================================
     const filteredOrders = orders.filter(order => {
         if (orderFilter !== "all" && (order.status || order.orderStatus) !== orderFilter) return false;
         if (searchOrder && !order.id?.toLowerCase().includes(searchOrder.toLowerCase())) return false;
@@ -2821,6 +1534,9 @@ const Profile = () => {
             ? notifications.filter(n => n.read)
             : notifications;
 
+    // ============================================================
+    // Stats
+    // ============================================================
     const stats = {
         totalSpent: orders.reduce((sum, o) => sum + (o.total || 0), 0),
         totalOrders: orders.length,
@@ -2830,7 +1546,9 @@ const Profile = () => {
         savedItems: favorites.length
     };
 
-    // Sidebar navigation with responsive design
+    // ============================================================
+    // Sidebar Navigation
+    // ============================================================
     const sidebarNav = [
         { id: "overview", label: "My Profile", icon: FiUser, color: "text-blue-500", badge: 0 },
         { id: "orders", label: "Orders", icon: FiShoppingBag, color: "text-purple-500", badge: orders.length },
@@ -2843,7 +1561,6 @@ const Profile = () => {
         { id: "settings", label: "Settings", icon: FiSettings, color: "text-gray-500", badge: 0 }
     ];
 
-    // Site menu options
     const siteMenuItems = [
         { label: "Home", path: "/", icon: FiHome },
         { label: "Shop", path: "/collections/all", icon: FiShoppingBag },
@@ -2854,19 +1571,9 @@ const Profile = () => {
         { label: "Contact", path: "/contact", icon: FiMail }
     ];
 
-    if (loading) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
-                    <p className="mt-4 text-gray-600" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Loading your profile...</p>
-                </div>
-            </div>
-        );
-    }
-
-    if (!user) return null;
-
+    // ============================================================
+    // Coupon UI Helpers
+    // ============================================================
     const cardAccent = (type) => {
         if (type === "free_shipping") return "from-emerald-950 to-emerald-700";
         if (type === "fixed") return "from-[#7a4b14] to-[#d3a24f]";
@@ -2883,11 +1590,9 @@ const Profile = () => {
 
     const getCouponBackgroundStyle = (coupon) => {
         if (!coupon?.backgroundImage) return undefined;
-        const isValidImage = typeof coupon.backgroundImage === 'string' && 
-                           (coupon.backgroundImage.startsWith('data:') || 
-                            coupon.backgroundImage.startsWith('http'));
+        const isValidImage = typeof coupon.backgroundImage === 'string' &&
+            (coupon.backgroundImage.startsWith('data:') || coupon.backgroundImage.startsWith('http'));
         if (!isValidImage) return undefined;
-        
         const overlay = Math.min(90, Math.max(0, Number(coupon.backgroundOverlay) || 55)) / 100;
         return {
             backgroundImage: `linear-gradient(rgba(10, 8, 5, ${overlay}), rgba(10, 8, 5, ${overlay})), url("${coupon.backgroundImage}")`,
@@ -2897,6 +1602,25 @@ const Profile = () => {
         };
     };
 
+    // ============================================================
+    // Loading State
+    // ============================================================
+    if (loading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
+                    <p className="mt-4 text-gray-600" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Loading your profile...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!user) return null;
+
+    // ============================================================
+    // Main Render
+    // ============================================================
     return (
         <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900 text-white' : 'bg-[#fbfaf8] text-gray-950'}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
             <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8">
@@ -2923,8 +1647,7 @@ const Profile = () => {
                                         </button>
                                     );
                                 })}
-                                
-                                {/* Site Menu Section */}
+
                                 <div className="mt-4 pt-4 border-t border-[#ece5db]">
                                     <p className="px-4 py-2 text-xs font-semibold tracking-wide text-[#a86f25]">SITE MENU</p>
                                     {siteMenuItems.map((item) => {
@@ -2942,7 +1665,7 @@ const Profile = () => {
                                         );
                                     })}
                                 </div>
-                                
+
                                 <div className="my-3 border-t border-[#ece5db]" />
                                 <button onClick={handleLogout} className="flex w-full items-center gap-3 rounded-md px-4 py-3 text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-600 dark:text-gray-200" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                     <FiLogOut size={19} /> Logout
@@ -2988,9 +1711,7 @@ const Profile = () => {
                                                         setActiveTab(item.id);
                                                         setIsMobileMenuOpen(false);
                                                     }}
-                                                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl mb-1 transition-all ${
-                                                        activeTab === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' : 'text-gray-700 dark:text-gray-300'
-                                                    }`}
+                                                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl mb-1 transition-all ${activeTab === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' : 'text-gray-700 dark:text-gray-300'}`}
                                                     style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                 >
                                                     <div className="flex items-center gap-3">
@@ -3006,7 +1727,7 @@ const Profile = () => {
                                             );
                                         })}
                                     </div>
-                                    
+
                                     <div className="border-t dark:border-gray-700 pt-4">
                                         <p className="text-xs font-semibold tracking-wide text-[#a86f25] mb-2">SITE MENU</p>
                                         {siteMenuItems.map((item) => {
@@ -3025,7 +1746,7 @@ const Profile = () => {
                                             );
                                         })}
                                     </div>
-                                    
+
                                     <div className="border-t dark:border-gray-700 my-4 pt-4">
                                         <button
                                             onClick={handleLogout}
@@ -3174,7 +1895,7 @@ const Profile = () => {
                                 <h2 className="text-xl sm:text-2xl font-bold mb-6 flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                     <FiShoppingBag className="text-blue-600" /> My Orders ({orders.length})
                                 </h2>
-                                
+
                                 <div className="flex flex-wrap gap-3 sm:gap-4 mb-6 pb-4 border-b dark:border-gray-700">
                                     <div className="flex-1 min-w-[180px] sm:min-w-[200px]">
                                         <div className="relative">
@@ -3225,33 +1946,12 @@ const Profile = () => {
                                 ) : (
                                     <div className="space-y-4">
                                         {filteredOrders.map((order) => {
-                                            const orderStatus =
-                                                getEffectiveOrderStatus(
-                                                    order
-                                                );
+                                            const orderStatus = getEffectiveOrderStatus(order);
+                                            const isRefunded = orderStatus === "refunded";
+                                            const isReturnInProgress = orderStatus === "return_in_progress" || orderStatus === "refund_processing";
+                                            const isDelivered = !isRefunded && !isReturnInProgress && isOrderDelivered(order);
+                                            const isCancelled = normalizeOrderStatus(orderStatus) === "cancelled";
 
-                                            const isRefunded =
-                                                orderStatus ===
-                                                "refunded";
-
-                                            const isReturnInProgress =
-                                                orderStatus ===
-                                                    "return_in_progress" ||
-                                                orderStatus ===
-                                                    "refund_processing";
-
-                                            const isDelivered =
-                                                !isRefunded &&
-                                                !isReturnInProgress &&
-                                                isOrderDelivered(
-                                                    order
-                                                );
-
-                                            const isCancelled =
-                                                normalizeOrderStatus(
-                                                    orderStatus
-                                                ) === "cancelled";
-                                            
                                             return (
                                                 <div key={order.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-xl p-4 sm:p-5 hover:shadow-lg transition-all">
                                                     <div className="flex flex-wrap justify-between items-start mb-4">
@@ -3268,7 +1968,7 @@ const Profile = () => {
                                                             <p className="text-lg sm:text-xl font-bold text-blue-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(order.total)}</p>
                                                         </div>
                                                     </div>
-                                                    
+
                                                     <div className="space-y-2">
                                                         {getOrderItems(order).slice(0, 2).map((item, idx) => (
                                                             <div key={idx} className="flex items-center gap-2 sm:gap-3 p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
@@ -3283,7 +1983,7 @@ const Profile = () => {
                                                             <p className="text-[10px] sm:text-xs text-gray-500 text-center" style={{ fontFamily: "'Times New Roman', Times, serif" }}>+{order.itemsList.length - 2} more items</p>
                                                         )}
                                                     </div>
-                                                    
+
                                                     <div className="pt-4 border-t mt-4">
                                                         <div className="flex flex-wrap gap-2">
                                                             {!isDelivered && !isCancelled && (
@@ -3292,8 +1992,7 @@ const Profile = () => {
                                                                     className="inline-flex items-center gap-2 rounded-xl bg-black px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-[#b98237]"
                                                                     style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                                 >
-                                                                    <FiTruck />
-                                                                    Track Order
+                                                                    <FiTruck /> Track Order
                                                                 </button>
                                                             )}
 
@@ -3303,8 +2002,7 @@ const Profile = () => {
                                                                     className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-green-700"
                                                                     style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                                 >
-                                                                    <FiCheckCircle />
-                                                                    Delivery Complete
+                                                                    <FiCheckCircle /> Delivery Complete
                                                                 </button>
                                                             )}
 
@@ -3314,8 +2012,7 @@ const Profile = () => {
                                                                 style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                                 onClick={() => window.scrollTo(0, 0)}
                                                             >
-                                                                <FiEye />
-                                                                View Details
+                                                                <FiEye /> View Details
                                                             </Link>
 
                                                             {isDelivered && !isRefunded && !isReturnInProgress && (
@@ -3324,8 +2021,7 @@ const Profile = () => {
                                                                     className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-amber-700"
                                                                     style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                                 >
-                                                                    <FiStar />
-                                                                    Write a Review
+                                                                    <FiStar /> Write a Review
                                                                 </button>
                                                             )}
 
@@ -3335,8 +2031,7 @@ const Profile = () => {
                                                                 className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-gray-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-gray-600 dark:text-gray-300"
                                                                 style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                             >
-                                                                <FiTrash2 />
-                                                                Delete
+                                                                <FiTrash2 /> Delete
                                                             </button>
 
                                                             {!isCancelled && !isDelivered && !isRefunded && !isReturnInProgress && (
@@ -3346,10 +2041,7 @@ const Profile = () => {
                                                                     className="inline-flex items-center gap-2 rounded-xl border border-red-300 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
                                                                     style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                                 >
-                                                                    <FiX />
-                                                                    {cancellingOrderId === order.id
-                                                                        ? "Cancelling..."
-                                                                        : "Cancel Order"}
+                                                                    <FiX /> {cancellingOrderId === order.id ? "Cancelling..." : "Cancel Order"}
                                                                 </button>
                                                             )}
                                                         </div>
@@ -3360,26 +2052,10 @@ const Profile = () => {
                                                                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
                                                                         <FiCreditCard />
                                                                     </div>
-
                                                                     <div>
-                                                                        <p className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
-                                                                            Order Refunded
-                                                                        </p>
-
-                                                                        <p className="mt-1 text-xs leading-5 text-emerald-700 dark:text-emerald-400">
-                                                                            The return has been completed and the refund has been processed. Open Returns & Refunds for the complete refund timeline.
-                                                                        </p>
-
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => {
-                                                                                setActiveTab("returns");
-                                                                                navigate("/profile?tab=returns");
-                                                                            }}
-                                                                            className="mt-3 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white"
-                                                                        >
-                                                                            View Refund Details
-                                                                        </button>
+                                                                        <p className="text-sm font-bold text-emerald-800 dark:text-emerald-300">Order Refunded</p>
+                                                                        <p className="mt-1 text-xs leading-5 text-emerald-700 dark:text-emerald-400">The return has been completed and the refund has been processed. Open Returns & Refunds for the complete refund timeline.</p>
+                                                                        <button onClick={() => { setActiveTab("returns"); navigate("/profile?tab=returns"); }} className="mt-3 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white">View Refund Details</button>
                                                                     </div>
                                                                 </div>
                                                             </div>
@@ -3389,17 +2065,9 @@ const Profile = () => {
                                                             <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-3 sm:p-4 dark:border-orange-900/30 dark:bg-orange-900/10">
                                                                 <div className="flex items-start gap-3">
                                                                     <FiRefreshCw className="mt-0.5 shrink-0 text-orange-600" />
-
                                                                     <div>
-                                                                        <p className="text-sm font-bold text-orange-800 dark:text-orange-300">
-                                                                            {orderStatus === "refund_processing"
-                                                                                ? "Refund Processing"
-                                                                                : "Return In Progress"}
-                                                                        </p>
-
-                                                                        <p className="mt-1 text-xs leading-5 text-orange-700 dark:text-orange-400">
-                                                                            This order has an active return. Open Returns & Refunds to see pickup, verification and refund updates.
-                                                                        </p>
+                                                                        <p className="text-sm font-bold text-orange-800 dark:text-orange-300">{orderStatus === "refund_processing" ? "Refund Processing" : "Return In Progress"}</p>
+                                                                        <p className="mt-1 text-xs leading-5 text-orange-700 dark:text-orange-400">This order has an active return. Open Returns & Refunds to see pickup, verification and refund updates.</p>
                                                                     </div>
                                                                 </div>
                                                             </div>
@@ -3412,69 +2080,36 @@ const Profile = () => {
                                                                         <FiCheckCircle />
                                                                     </div>
                                                                     <div>
-                                                                        <p className="text-xs sm:text-sm font-bold text-green-800 dark:text-green-300" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                                            Order Delivered!
-                                                                        </p>
-                                                                        <p className="text-[10px] sm:text-xs text-green-700 dark:text-green-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                                            You can now request a return for eligible items.
-                                                                        </p>
+                                                                        <p className="text-xs sm:text-sm font-bold text-green-800 dark:text-green-300" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Order Delivered!</p>
+                                                                        <p className="text-[10px] sm:text-xs text-green-700 dark:text-green-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>You can now request a return for eligible items.</p>
                                                                     </div>
                                                                 </div>
-
                                                                 <div className="space-y-3">
                                                                     {getOrderItems(order).map((item, itemIndex) => {
-                                                                        const alreadyReturned =
-                                                                            hasReturnRequestForItem(
-                                                                                getOrderIdentifier(order),
-                                                                                getItemIdentifier(item)
-                                                                            );
-
+                                                                        const alreadyReturned = hasReturnRequestForItem(getOrderIdentifier(order), getItemIdentifier(item));
                                                                         return (
-                                                                            <div
-                                                                                key={`${getOrderIdentifier(order)}-${getItemIdentifier(item)}-${itemIndex}`}
-                                                                                className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between dark:border-gray-600 dark:bg-gray-800"
-                                                                            >
+                                                                            <div key={`${getOrderIdentifier(order)}-${getItemIdentifier(item)}-${itemIndex}`} className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between dark:border-gray-600 dark:bg-gray-800">
                                                                                 <div className="flex min-w-0 items-center gap-3">
                                                                                     {item.image ? (
-                                                                                        <img
-                                                                                            src={item.image}
-                                                                                            alt={item.name}
-                                                                                            className="h-12 w-12 sm:h-14 sm:w-14 shrink-0 rounded-lg object-cover"
-                                                                                        />
+                                                                                        <img src={item.image} alt={item.name} className="h-12 w-12 sm:h-14 sm:w-14 shrink-0 rounded-lg object-cover" />
                                                                                     ) : (
                                                                                         <div className="flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
                                                                                             <FiPackage className="text-gray-400" />
                                                                                         </div>
                                                                                     )}
-
                                                                                     <div className="min-w-0">
-                                                                                        <p className="truncate text-xs sm:text-sm font-semibold" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                                                            {item.name}
-                                                                                        </p>
-                                                                                        <p className="mt-1 text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                                                            Qty {item.quantity || 1}
-                                                                                            {item.size ? ` · ${item.size}` : ""}
-                                                                                            {item.color ? ` · ${item.color}` : ""}
-                                                                                        </p>
+                                                                                        <p className="truncate text-xs sm:text-sm font-semibold" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.name}</p>
+                                                                                        <p className="mt-1 text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Qty {item.quantity || 1}{item.size ? ` · ${item.size}` : ""}{item.color ? ` · ${item.color}` : ""}</p>
                                                                                     </div>
                                                                                 </div>
-
                                                                                 <div className="flex flex-wrap gap-2">
                                                                                     <button
-                                                                                        onClick={() =>
-                                                                                            openReturnForItem(
-                                                                                                order,
-                                                                                                item
-                                                                                            )
-                                                                                        }
+                                                                                        onClick={() => openReturnForItem(order, item)}
                                                                                         disabled={alreadyReturned}
                                                                                         className="inline-flex items-center gap-1.5 rounded-lg border border-orange-300 px-2 sm:px-3 py-1.5 sm:py-2 text-[10px] sm:text-xs font-bold text-orange-700 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
                                                                                         style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                                                     >
-                                                                                        <FiCornerDownLeft />
-                                                                                        {alreadyReturned
-                                                                                            ? "Return Requested"
-                                                                                            : "Return Item"}
+                                                                                        <FiCornerDownLeft /> {alreadyReturned ? "Return Requested" : "Return Item"}
                                                                                     </button>
                                                                                 </div>
                                                                             </div>
@@ -3504,11 +2139,9 @@ const Profile = () => {
                                     <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                         <FiShield className="text-orange-600" /> Returns & Refunds ({returnRequests.length})
                                     </h2>
-                                    <span className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                        Refunds take up to 7 business days
-                                    </span>
+                                    <span className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Refunds take up to 7 business days</span>
                                 </div>
-                                
+
                                 {returnRequests.length === 0 ? (
                                     <div className="text-center py-12 sm:py-16">
                                         <FiShield className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
@@ -3518,8 +2151,8 @@ const Profile = () => {
                                 ) : (
                                     <div className="space-y-4 sm:space-y-6">
                                         {returnRequests.map((returnReq) => (
-                                            <div 
-                                                key={returnReq.id} 
+                                            <div
+                                                key={returnReq.id}
                                                 className="border-2 rounded-xl p-4 sm:p-5 cursor-pointer hover:shadow-lg transition-all"
                                                 onClick={() => setSelectedReturnRequest(returnReq)}
                                             >
@@ -3532,9 +2165,7 @@ const Profile = () => {
                                                             <p className="font-medium text-sm sm:text-base truncate" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{returnReq.productName}</p>
                                                             <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Return ID: #{returnReq.id}</p>
                                                             {returnReq.refundMethod && (
-                                                                <p className="text-[10px] sm:text-xs text-green-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                                    Refund: {returnReq.refundMethod.method}
-                                                                </p>
+                                                                <p className="text-[10px] sm:text-xs text-green-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Refund: {returnReq.refundMethod.method}</p>
                                                             )}
                                                         </div>
                                                     </div>
@@ -3553,7 +2184,7 @@ const Profile = () => {
                                                         )}
                                                     </div>
                                                 </div>
-                                                
+
                                                 <div className="mt-4">
                                                     <div className="flex justify-between text-[10px] sm:text-xs text-gray-500 mb-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                         <span>Requested</span>
@@ -3563,13 +2194,13 @@ const Profile = () => {
                                                         <span>Refunded</span>
                                                     </div>
                                                     <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                                        <div 
+                                                        <div
                                                             className="h-full bg-gradient-to-r from-yellow-500 via-blue-500 to-green-500 rounded-full transition-all duration-500"
                                                             style={{ width: `${returnStages[returnReq.status]?.progress || 0}%` }}
                                                         ></div>
                                                     </div>
                                                 </div>
-                                                
+
                                                 <div className="mt-3 text-[10px] sm:text-xs text-gray-500 flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                     <FiInfo size={12} />
                                                     <span>Click to view full tracking history and refund details</span>
@@ -3581,7 +2212,9 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* Wishlist Tab */}
+                        {/* ============================================================
+                        WISHLIST TAB - FIXED with centralized favorites
+                        ============================================================ */}
                         {activeTab === "wishlist" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
@@ -3594,6 +2227,18 @@ const Profile = () => {
                                         <FiHeart className="text-red-500" /> My Wishlist ({favorites.length})
                                     </h2>
                                     <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => {
+                                                if (user?.email) {
+                                                    refreshFavorites(true);
+                                                    toast.success("Wishlist refreshed");
+                                                }
+                                            }} 
+                                            className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-all"
+                                            title="Refresh Wishlist"
+                                        >
+                                            <FiRefreshCw size={16} />
+                                        </button>
                                         <button onClick={() => setWishlistView("grid")} className={`p-2 rounded-lg ${wishlistView === "grid" ? "bg-blue-100 text-blue-600" : "bg-gray-100"}`}>
                                             <FiGrid size={18} />
                                         </button>
@@ -3602,10 +2247,12 @@ const Profile = () => {
                                         </button>
                                     </div>
                                 </div>
+
                                 {favorites.length === 0 ? (
                                     <div className="text-center py-12 sm:py-16">
                                         <FiHeart className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
                                         <p className="text-gray-500 text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Your wishlist is empty</p>
+                                        <p className="text-xs sm:text-sm text-gray-400 mt-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Products you add to favorites will appear here</p>
                                         <Link to="/collections/all" className="inline-block mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition-all" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                             Explore Products →
                                         </Link>
@@ -3615,13 +2262,16 @@ const Profile = () => {
                                         {favorites.map((product) => (
                                             <div key={product.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-2xl p-4 hover:shadow-xl transition-all group">
                                                 <div className="relative">
-                                                    <img 
-                                                        src={product.image || '/images/no-image.svg'} 
-                                                        alt={product.name} 
+                                                    <img
+                                                        src={product.image || '/images/no-image.svg'}
+                                                        alt={product.name}
                                                         className="w-full h-48 object-cover rounded-xl mb-3 group-hover:scale-105 transition-transform duration-300"
                                                         onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                     />
-                                                    <button onClick={() => removeFromFavorites(product.id)} className="absolute top-2 right-2 bg-white rounded-full p-2 shadow-md hover:scale-110 transition-transform">
+                                                    <button 
+                                                        onClick={() => removeFromFavorites(product.id)} 
+                                                        className="absolute top-2 right-2 bg-white rounded-full p-2 shadow-md hover:scale-110 transition-transform"
+                                                    >
                                                         <FiTrash2 size={16} className="text-red-500" />
                                                     </button>
                                                 </div>
@@ -3629,11 +2279,23 @@ const Profile = () => {
                                                 <p className="text-gray-500 text-xs sm:text-sm mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.brand || "Zamed"}</p>
                                                 <p className="text-blue-600 font-bold text-base sm:text-xl mt-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(product.price)}</p>
                                                 <div className="flex gap-3 mt-4">
-                                                    <button onClick={() => addToCartFromFavorites(product)} className="flex-1 bg-gray-900 text-white py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-medium hover:bg-gray-800 transition-all" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                    <button 
+                                                        onClick={() => {
+                                                            // Find the product in favorites list
+                                                            const fullProduct = favorites.find(p => String(p.id) === String(product.id));
+                                                            if (fullProduct) {
+                                                                addToCartFromFavorites(fullProduct);
+                                                            } else {
+                                                                toast.error("Product not found");
+                                                            }
+                                                        }} 
+                                                        className="flex-1 bg-gray-900 text-white py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-medium hover:bg-gray-800 transition-all" 
+                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                    >
                                                         Add to Cart
                                                     </button>
-                                                    <Link 
-                                                        to={`/product/${product.id}`} 
+                                                    <Link
+                                                        to={`/product/${product.id}`}
                                                         className="px-3 sm:px-5 py-2 sm:py-2.5 border-2 border-gray-300 text-gray-700 rounded-xl text-xs sm:text-sm font-medium hover:border-blue-600 hover:text-blue-600 transition-all"
                                                         style={{ fontFamily: "'Times New Roman', Times, serif" }}
                                                         onClick={() => window.scrollTo(0, 0)}
@@ -3648,9 +2310,9 @@ const Profile = () => {
                                     <div className="space-y-3">
                                         {favorites.map((product) => (
                                             <div key={product.id} className="flex items-center gap-4 p-4 border rounded-xl hover:shadow-md transition-all">
-                                                <img 
-                                                    src={product.image || '/images/no-image.svg'} 
-                                                    alt={product.name} 
+                                                <img
+                                                    src={product.image || '/images/no-image.svg'}
+                                                    alt={product.name}
                                                     className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-lg"
                                                     onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                 />
@@ -3660,10 +2322,17 @@ const Profile = () => {
                                                     <p className="text-blue-600 font-bold text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(product.price)}</p>
                                                 </div>
                                                 <div className="flex gap-2">
-                                                    <button onClick={() => addToCartFromFavorites(product)} className="px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-900 text-white rounded-lg text-xs sm:text-sm hover:bg-gray-800" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                    <button 
+                                                        onClick={() => {
+                                                            const fullProduct = favorites.find(p => String(p.id) === String(product.id));
+                                                            if (fullProduct) addToCartFromFavorites(fullProduct);
+                                                        }} 
+                                                        className="px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-900 text-white rounded-lg text-xs sm:text-sm hover:bg-gray-800" 
+                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                    >
                                                         Add to Cart
                                                     </button>
-                                                    <Link 
+                                                    <Link
                                                         to={`/product/${product.id}`}
                                                         onClick={() => window.scrollTo(0, 0)}
                                                         className="px-3 sm:px-4 py-1.5 sm:py-2 border border-gray-300 text-gray-700 rounded-lg text-xs sm:text-sm hover:border-blue-600 hover:text-blue-600 transition-all"
@@ -3671,7 +2340,10 @@ const Profile = () => {
                                                     >
                                                         View
                                                     </Link>
-                                                    <button onClick={() => removeFromFavorites(product.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg">
+                                                    <button 
+                                                        onClick={() => removeFromFavorites(product.id)} 
+                                                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
+                                                    >
                                                         <FiTrash2 size={18} />
                                                     </button>
                                                 </div>
@@ -3737,11 +2409,7 @@ const Profile = () => {
                                                                     <h3 className="mt-2 font-serif text-xl sm:text-2xl lg:text-3xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{getDiscountLabel(coupon)}</h3>
                                                                     <p className="mt-1 text-sm text-white/65 line-clamp-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{coupon.title || coupon.description}</p>
                                                                 </div>
-                                                                <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase ${
-                                                                    isActive ? "bg-emerald-400/20 text-emerald-300" :
-                                                                    isExpired ? "bg-red-400/20 text-red-300" :
-                                                                    "bg-white/10 text-white/60"
-                                                                }`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase ${isActive ? "bg-emerald-400/20 text-emerald-300" : isExpired ? "bg-red-400/20 text-red-300" : "bg-white/10 text-white/60"}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
                                                                     {isActive ? "Active" : isExpired ? "Expired" : "Used"}
                                                                 </span>
                                                             </div>
@@ -3811,13 +2479,48 @@ const Profile = () => {
 
                         {/* Notifications Tab */}
                         {activeTab === "notifications" && (
-                            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800"
+                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                            >
                                 <div className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-end sm:justify-between dark:border-gray-700">
                                     <div><h2 className="text-2xl font-bold">Notifications</h2><p className="mt-1 text-sm text-gray-500">Open any notification to view the related order, return, offer, product, security page or support section.</p></div>
-                                    <div className="flex flex-wrap gap-2">{[["all",`All (${notifications.length})`],["unread",`Unread (${notifications.filter(n=>!n.read).length})`],["read",`Read (${notifications.filter(n=>n.read).length})`]].map(([v,l])=><button key={v} onClick={()=>setNotificationFilter(v)} className={`rounded-full px-4 py-2 text-xs font-bold ${notificationFilter===v?"bg-black text-white":"bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"}`}>{l}</button>)}</div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {[["all", `All (${notifications.length})`], ["unread", `Unread (${notifications.filter(n => !n.read).length})`], ["read", `Read (${notifications.filter(n => n.read).length})`]].map(([v, l]) =>
+                                            <button key={v} onClick={() => setNotificationFilter(v)} className={`rounded-full px-4 py-2 text-xs font-bold ${notificationFilter === v ? "bg-black text-white" : "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"}`}>{l}</button>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="mt-4 flex justify-end gap-2">{notifications.some(n=>!n.read)&&<button onClick={markAllNotificationsAsRead} className="rounded-xl bg-black px-4 py-2 text-xs font-bold text-white">Mark all as read</button>}{notifications.some(n=>n.read)&&<button onClick={clearReadNotifications} className="rounded-xl border px-4 py-2 text-xs font-bold text-red-600">Clear read</button>}</div>
-                                <div className="mt-5 space-y-3">{filteredNotifications.length===0?<div className="py-14 text-center text-gray-500"><FiBell className="mx-auto mb-3 h-12 w-12 text-gray-300" />No {notificationFilter==="all"?"":notificationFilter} notifications</div>:filteredNotifications.map(notif=><div key={getNotificationId(notif)} className={`rounded-2xl border p-4 ${notif.read?"bg-gray-50 dark:bg-gray-700/30":"border-amber-300 bg-amber-50/70 dark:bg-amber-900/10"}`}><div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="font-bold">{notif.title}</p>{!notif.read&&<span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">UNREAD</span>}</div><p className="mt-1 text-sm text-gray-500">{notif.message}</p><p className="mt-2 text-xs text-gray-400">{formatDateTime(notif.date||notif.createdAt||new Date())}</p></div><div className="flex gap-2"><button onClick={()=>viewNotificationDetails(notif)} className="rounded-xl bg-black px-4 py-2.5 text-xs font-bold text-white">View details</button><button onClick={()=>notif.read?markNotificationAsUnread(getNotificationId(notif)):markNotificationAsRead(getNotificationId(notif))} className="rounded-xl border px-3 py-2.5 text-xs font-bold">{notif.read?"Mark unread":"Mark read"}</button></div></div></div>)}</div>
+                                <div className="mt-4 flex justify-end gap-2">
+                                    {notifications.some(n => !n.read) && <button onClick={markAllNotificationsAsRead} className="rounded-xl bg-black px-4 py-2 text-xs font-bold text-white">Mark all as read</button>}
+                                    {notifications.some(n => n.read) && <button onClick={clearReadNotifications} className="rounded-xl border px-4 py-2 text-xs font-bold text-red-600">Clear read</button>}
+                                </div>
+                                <div className="mt-5 space-y-3">
+                                    {filteredNotifications.length === 0 ? (
+                                        <div className="py-14 text-center text-gray-500"><FiBell className="mx-auto mb-3 h-12 w-12 text-gray-300" />No {notificationFilter === "all" ? "" : notificationFilter} notifications</div>
+                                    ) : (
+                                        filteredNotifications.map(notif => (
+                                            <div key={getNotificationId(notif)} className={`rounded-2xl border p-4 ${notif.read ? "bg-gray-50 dark:bg-gray-700/30" : "border-amber-300 bg-amber-50/70 dark:bg-amber-900/10"}`}>
+                                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <p className="font-bold">{notif.title}</p>
+                                                            {!notif.read && <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">UNREAD</span>}
+                                                        </div>
+                                                        <p className="mt-1 text-sm text-gray-500">{notif.message}</p>
+                                                        <p className="mt-2 text-xs text-gray-400">{formatDateTime(notif.date || notif.createdAt || new Date())}</p>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => viewNotificationDetails(notif)} className="rounded-xl bg-black px-4 py-2.5 text-xs font-bold text-white">View details</button>
+                                                        <button onClick={() => notif.read ? markNotificationAsUnread(getNotificationId(notif)) : markNotificationAsRead(getNotificationId(notif))} className="rounded-xl border px-3 py-2.5 text-xs font-bold">{notif.read ? "Mark unread" : "Mark read"}</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
                             </motion.div>
                         )}
 
@@ -3837,7 +2540,7 @@ const Profile = () => {
                                         <FiPlus size={14} /> Add New
                                     </button>
                                 </div>
-                                
+
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     {addresses.map((address) => (
                                         <div key={address.id} className={`border-2 rounded-xl p-4 ${address.isDefault ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700'}`}>
@@ -3865,7 +2568,7 @@ const Profile = () => {
                                         </div>
                                     ))}
                                 </div>
-                                
+
                                 {addresses.length === 0 && (
                                     <div className="text-center py-12">
                                         <FiMapPin className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -3877,21 +2580,62 @@ const Profile = () => {
 
                         {/* Security Tab */}
                         {activeTab === "security" && (
-                            <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800" style={{fontFamily:"'Times New Roman', Times, serif"}}>
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800"
+                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                            >
                                 <h2 className="text-2xl font-bold flex items-center gap-2"><FiLock /> Security</h2>
                                 <p className="mt-1 text-sm text-gray-500">Manage password, two-factor authentication, alerts and sessions.</p>
-                                <form onSubmit={handleChangePassword} className="mt-6 rounded-2xl border p-4 dark:border-gray-700"><div className="flex justify-between"><h3 className="font-bold">Change Password</h3><button type="button" onClick={()=>setShowPasswords(v=>!v)}><FiEye /></button></div><div className="mt-4 grid gap-3 lg:grid-cols-3">{[["currentPassword","Current password"],["newPassword","New password"],["confirmPassword","Confirm new password"]].map(([k,p])=><input key={k} type={showPasswords?"text":"password"} value={passwordForm[k]} onChange={e=>setPasswordForm(x=>({...x,[k]:e.target.value}))} placeholder={p} className="rounded-xl border px-4 py-3 text-sm dark:border-gray-600 dark:bg-gray-700" />)}</div><button disabled={changingPassword} className="mt-4 rounded-xl bg-black px-5 py-3 text-sm font-bold text-white">{changingPassword?"Updating...":"Update Password"}</button></form>
-                                <div className="mt-5 grid gap-4 md:grid-cols-2"><div className="rounded-2xl border p-4 dark:border-gray-700"><h3 className="font-bold">Two-Factor Authentication</h3><p className="mt-1 text-sm text-gray-500">Status: {securityPrefs.twoFactorEnabled?"Enabled":"Disabled"}</p><button onClick={toggleTwoFactor} disabled={securityActionLoading} className="mt-4 rounded-xl border px-4 py-2.5 text-sm font-bold">{securityPrefs.twoFactorEnabled?"Disable 2FA":"Enable 2FA"}</button></div><div className="rounded-2xl border p-4 dark:border-gray-700"><h3 className="font-bold">Security Alerts</h3>{[["loginAlerts","Login alerts"],["securityEmails","Security emails"]].map(([k,l])=><label key={k} className="mt-3 flex justify-between"><span>{l}</span><input type="checkbox" checked={securityPrefs[k]} onChange={e=>persistSecurityPrefs({...securityPrefs,[k]:e.target.checked})} /></label>)}</div></div>
-                                <div className="mt-5 rounded-2xl border p-4 dark:border-gray-700"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-bold">Current Session</h3><p className="text-sm text-gray-500">Browser • Active now</p></div><button onClick={logoutOtherSessions} disabled={securityActionLoading} className="rounded-xl border border-red-200 px-4 py-2.5 text-sm font-bold text-red-600">Sign out other sessions</button></div></div>
+                                <form onSubmit={handleChangePassword} className="mt-6 rounded-2xl border p-4 dark:border-gray-700">
+                                    <div className="flex justify-between"><h3 className="font-bold">Change Password</h3><button type="button" onClick={() => setShowPasswords(v => !v)}><FiEye /></button></div>
+                                    <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                                        {[["currentPassword", "Current password"], ["newPassword", "New password"], ["confirmPassword", "Confirm new password"]].map(([k, p]) =>
+                                            <input key={k} type={showPasswords ? "text" : "password"} value={passwordForm[k]} onChange={e => setPasswordForm(x => ({ ...x, [k]: e.target.value }))} placeholder={p} className="rounded-xl border px-4 py-3 text-sm dark:border-gray-600 dark:bg-gray-700" />
+                                        )}
+                                    </div>
+                                    <button disabled={changingPassword} className="mt-4 rounded-xl bg-black px-5 py-3 text-sm font-bold text-white">{changingPassword ? "Updating..." : "Update Password"}</button>
+                                </form>
+                                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                                    <div className="rounded-2xl border p-4 dark:border-gray-700"><h3 className="font-bold">Two-Factor Authentication</h3><p className="mt-1 text-sm text-gray-500">Status: {securityPrefs.twoFactorEnabled ? "Enabled" : "Disabled"}</p><button onClick={toggleTwoFactor} disabled={securityActionLoading} className="mt-4 rounded-xl border px-4 py-2.5 text-sm font-bold">{securityPrefs.twoFactorEnabled ? "Disable 2FA" : "Enable 2FA"}</button></div>
+                                    <div className="rounded-2xl border p-4 dark:border-gray-700"><h3 className="font-bold">Security Alerts</h3>
+                                        {[["loginAlerts", "Login alerts"], ["securityEmails", "Security emails"]].map(([k, l]) =>
+                                            <label key={k} className="mt-3 flex justify-between"><span>{l}</span><input type="checkbox" checked={securityPrefs[k]} onChange={e => persistSecurityPrefs({ ...securityPrefs, [k]: e.target.checked })} /></label>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="mt-5 rounded-2xl border p-4 dark:border-gray-700">
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                        <div><h3 className="font-bold">Current Session</h3><p className="text-sm text-gray-500">Browser • Active now</p></div>
+                                        <button onClick={logoutOtherSessions} disabled={securityActionLoading} className="rounded-xl border border-red-200 px-4 py-2.5 text-sm font-bold text-red-600">Sign out other sessions</button>
+                                    </div>
+                                </div>
                             </motion.div>
                         )}
 
                         {/* Settings Tab */}
                         {activeTab === "settings" && (
-                            <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} className="space-y-5" style={{fontFamily:"'Times New Roman', Times, serif"}}>
-                                <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800"><h2 className="text-2xl font-bold flex items-center gap-2"><FiSettings /> Settings</h2><p className="mt-1 text-sm text-gray-500">Manage communication and shopping preferences.</p><div className="mt-5">{[["emailNotifications","Email Notifications"],["smsAlerts","SMS Alerts"],["orderUpdates","Order Updates"],["promotionalOffers","Offers & Promotions"],["wishlistAlerts","Wishlist Alerts"]].map(([k,l])=><label key={k} className="flex items-center justify-between border-b py-4 last:border-0 dark:border-gray-700"><span className="font-bold">{l}</span><input type="checkbox" checked={accountPrefs[k]} onChange={e=>persistAccountPrefs({...accountPrefs,[k]:e.target.checked})} /></label>)}</div></section>
-                                <section className="grid gap-4 md:grid-cols-2"><div className="rounded-3xl border bg-white p-5 dark:border-gray-700 dark:bg-gray-800"><FiDownload className="text-2xl"/><h3 className="mt-3 font-bold">Download My Data</h3><button onClick={downloadAccountData} className="mt-4 rounded-xl border px-4 py-2.5 text-sm font-bold">Download Data</button></div><div className="rounded-3xl border bg-white p-5 dark:border-gray-700 dark:bg-gray-800"><FiMoon className="text-2xl"/><h3 className="mt-3 font-bold">Appearance</h3><button onClick={()=>{const next=!darkMode;setDarkMode(next);localStorage.setItem("theme",next?"dark":"light");document.documentElement.classList.toggle("dark",next);}} className="mt-4 rounded-xl bg-black px-4 py-2.5 text-sm font-bold text-white">{darkMode?"Light Mode":"Dark Mode"}</button></div></section>
-                                <section className="rounded-3xl border border-red-200 bg-red-50 p-5 dark:bg-red-900/10"><h3 className="font-bold text-red-700">Delete Account</h3><p className="mt-1 text-sm text-red-600">Type DELETE to confirm permanent deletion.</p><button onClick={handleDeleteAccount} disabled={deletingAccount} className="mt-4 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white">{deletingAccount?"Deleting...":"Delete Account"}</button></section>
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="space-y-5"
+                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                            >
+                                <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800">
+                                    <h2 className="text-2xl font-bold flex items-center gap-2"><FiSettings /> Settings</h2>
+                                    <p className="mt-1 text-sm text-gray-500">Manage communication and shopping preferences.</p>
+                                    <div className="mt-5">
+                                        {[["emailNotifications", "Email Notifications"], ["smsAlerts", "SMS Alerts"], ["orderUpdates", "Order Updates"], ["promotionalOffers", "Offers & Promotions"], ["wishlistAlerts", "Wishlist Alerts"]].map(([k, l]) =>
+                                            <label key={k} className="flex items-center justify-between border-b py-4 last:border-0 dark:border-gray-700"><span className="font-bold">{l}</span><input type="checkbox" checked={accountPrefs[k]} onChange={e => persistAccountPrefs({ ...accountPrefs, [k]: e.target.checked })} /></label>
+                                        )}
+                                    </div>
+                                </section>
+                                <section className="grid gap-4 md:grid-cols-2">
+                                    <div className="rounded-3xl border bg-white p-5 dark:border-gray-700 dark:bg-gray-800"><FiDownload className="text-2xl" /><h3 className="mt-3 font-bold">Download My Data</h3><button onClick={downloadAccountData} className="mt-4 rounded-xl border px-4 py-2.5 text-sm font-bold">Download Data</button></div>
+                                    <div className="rounded-3xl border bg-white p-5 dark:border-gray-700 dark:bg-gray-800"><FiMoon className="text-2xl" /><h3 className="mt-3 font-bold">Appearance</h3><button onClick={() => { const next = !darkMode; setDarkMode(next); localStorage.setItem("theme", next ? "dark" : "light"); document.documentElement.classList.toggle("dark", next); }} className="mt-4 rounded-xl bg-black px-4 py-2.5 text-sm font-bold text-white">{darkMode ? "Light Mode" : "Dark Mode"}</button></div>
+                                </section>
+                                <section className="rounded-3xl border border-red-200 bg-red-50 p-5 dark:bg-red-900/10"><h3 className="font-bold text-red-700">Delete Account</h3><p className="mt-1 text-sm text-red-600">Type DELETE to confirm permanent deletion.</p><button onClick={handleDeleteAccount} disabled={deletingAccount} className="mt-4 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white">{deletingAccount ? "Deleting..." : "Delete Account"}</button></section>
                             </motion.div>
                         )}
                     </div>
@@ -3906,444 +2650,114 @@ const Profile = () => {
                             exit={{ opacity: 0 }}
                             className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-3 sm:p-4 backdrop-blur-sm"
                             onMouseDown={(event) => {
-                                if (
-                                    event.target ===
-                                    event.currentTarget
-                                ) {
+                                if (event.target === event.currentTarget) {
                                     resetReturnForm();
                                 }
                             }}
                         >
                             <motion.div
-                                initial={{
-                                    opacity: 0,
-                                    y: 24,
-                                    scale: 0.97
-                                }}
-                                animate={{
-                                    opacity: 1,
-                                    y: 0,
-                                    scale: 1
-                                }}
-                                exit={{
-                                    opacity: 0,
-                                    y: 15,
-                                    scale: 0.98
-                                }}
+                                initial={{ opacity: 0, y: 24, scale: 0.97 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 15, scale: 0.98 }}
                                 className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-4 shadow-2xl sm:p-6 dark:bg-gray-800"
-                                style={{
-                                    fontFamily:
-                                        "'Times New Roman', Times, serif"
-                                }}
+                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
                             >
                                 <div className="flex items-start justify-between gap-4 border-b border-gray-100 pb-4 dark:border-gray-700">
                                     <div className="min-w-0">
-                                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-orange-600">
-                                            Returns & Refunds
-                                        </p>
-
-                                        <h2 className="mt-1 text-xl font-bold sm:text-2xl">
-                                            Return Item
-                                        </h2>
-
-                                        <p className="mt-1 truncate text-sm text-gray-500">
-                                            {
-                                                selectedItemForReturn.productName
-                                            }
-                                        </p>
+                                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-orange-600">Returns & Refunds</p>
+                                        <h2 className="mt-1 text-xl font-bold sm:text-2xl">Return Item</h2>
+                                        <p className="mt-1 truncate text-sm text-gray-500">{selectedItemForReturn.productName}</p>
                                     </div>
-
-                                    <button
-                                        type="button"
-                                        onClick={
-                                            resetReturnForm
-                                        }
-                                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300"
-                                        aria-label="Close return form"
-                                    >
-                                        <FiX />
-                                    </button>
+                                    <button type="button" onClick={resetReturnForm} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300" aria-label="Close return form"><FiX /></button>
                                 </div>
 
                                 <div className="mt-5 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-700/40">
                                     {selectedItemForReturn.productImage ? (
-                                        <img
-                                            src={
-                                                selectedItemForReturn.productImage
-                                            }
-                                            alt={
-                                                selectedItemForReturn.productName
-                                            }
-                                            className="h-16 w-16 shrink-0 rounded-xl object-cover"
-                                        />
+                                        <img src={selectedItemForReturn.productImage} alt={selectedItemForReturn.productName} className="h-16 w-16 shrink-0 rounded-xl object-cover" />
                                     ) : (
-                                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-white dark:bg-gray-700">
-                                            <FiPackage className="text-gray-400" />
-                                        </div>
+                                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-white dark:bg-gray-700"><FiPackage className="text-gray-400" /></div>
                                     )}
-
                                     <div className="min-w-0">
-                                        <p className="truncate font-bold">
-                                            {
-                                                selectedItemForReturn.productName
-                                            }
-                                        </p>
-
-                                        <p className="mt-1 text-xs text-gray-500">
-                                            Order #
-                                            {
-                                                selectedItemForReturn.orderId
-                                            }
-                                        </p>
-
-                                        <p className="mt-1 text-xs text-gray-500">
-                                            Paid by:{" "}
-                                            <strong>
-                                                {
-                                                    selectedItemForReturn.paymentMethod
-                                                }
-                                            </strong>
-                                        </p>
+                                        <p className="truncate font-bold">{selectedItemForReturn.productName}</p>
+                                        <p className="mt-1 text-xs text-gray-500">Order #{selectedItemForReturn.orderId}</p>
+                                        <p className="mt-1 text-xs text-gray-500">Paid by: <strong>{selectedItemForReturn.paymentMethod}</strong></p>
                                     </div>
                                 </div>
 
                                 <div className="mt-5 space-y-5">
                                     <div>
-                                        <label className="mb-2 block text-sm font-bold">
-                                            Reason for return
-                                        </label>
-
-                                        <select
-                                            value={
-                                                returnReason
-                                            }
-                                            onChange={event =>
-                                                setReturnReason(
-                                                    event.target.value
-                                                )
-                                            }
-                                            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700"
-                                        >
-                                            <option value="">
-                                                Select a reason
-                                            </option>
-
-                                            {returnReasons.map(
-                                                reason => (
-                                                    <option
-                                                        key={
-                                                            reason
-                                                        }
-                                                        value={
-                                                            reason
-                                                        }
-                                                    >
-                                                        {
-                                                            reason
-                                                        }
-                                                    </option>
-                                                )
-                                            )}
+                                        <label className="mb-2 block text-sm font-bold">Reason for return</label>
+                                        <select value={returnReason} onChange={event => setReturnReason(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700">
+                                            <option value="">Select a reason</option>
+                                            {returnReasons.map(reason => <option key={reason} value={reason}>{reason}</option>)}
                                         </select>
                                     </div>
 
                                     <div>
-                                        <label className="mb-2 block text-sm font-bold">
-                                            Additional details
-                                        </label>
-
-                                        <textarea
-                                            rows={3}
-                                            value={
-                                                returnComment
-                                            }
-                                            onChange={event =>
-                                                setReturnComment(
-                                                    event.target.value
-                                                )
-                                            }
-                                            placeholder="Tell us more about the return..."
-                                            className="w-full resize-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700"
-                                        />
+                                        <label className="mb-2 block text-sm font-bold">Additional details</label>
+                                        <textarea rows={3} value={returnComment} onChange={event => setReturnComment(event.target.value)} placeholder="Tell us more about the return..." className="w-full resize-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700" />
                                     </div>
 
                                     <div className="rounded-2xl border border-gray-200 p-4 dark:border-gray-600">
-                                        <div className="mb-3 flex items-center gap-2">
-                                            <FiDollarSign className="text-green-600" />
-                                            <h3 className="font-bold">
-                                                Refund method
-                                            </h3>
-                                        </div>
-
+                                        <div className="mb-3 flex items-center gap-2"><FiDollarSign className="text-green-600" /><h3 className="font-bold">Refund method</h3></div>
                                         {selectedItemForReturn.isCashOrder ? (
                                             <div className="space-y-3">
-                                                <p className="text-sm leading-6 text-gray-500">
-                                                    This order was paid by cash. Choose how you want to receive your approved refund.
-                                                </p>
-
-                                                <label
-                                                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${
-                                                        returnMethod ===
-                                                        "bank_transfer"
-                                                            ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700"
-                                                            : "border-gray-200 dark:border-gray-600"
-                                                    }`}
-                                                >
-                                                    <input
-                                                        type="radio"
-                                                        name="returnMethod"
-                                                        value="bank_transfer"
-                                                        checked={
-                                                            returnMethod ===
-                                                            "bank_transfer"
-                                                        }
-                                                        onChange={event =>
-                                                            setReturnMethod(
-                                                                event.target.value
-                                                            )
-                                                        }
-                                                        className="mt-1 accent-black"
-                                                    />
-
-                                                    <div>
-                                                        <p className="font-bold">
-                                                            Bank transfer
-                                                        </p>
-                                                        <p className="mt-1 text-xs leading-5 text-gray-500">
-                                                            Send the refund directly to your bank account. Processing can take up to 7 days after approval.
-                                                        </p>
-                                                    </div>
+                                                <p className="text-sm leading-6 text-gray-500">This order was paid by cash. Choose how you want to receive your approved refund.</p>
+                                                <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${returnMethod === "bank_transfer" ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700" : "border-gray-200 dark:border-gray-600"}`}>
+                                                    <input type="radio" name="returnMethod" value="bank_transfer" checked={returnMethod === "bank_transfer"} onChange={event => setReturnMethod(event.target.value)} className="mt-1 accent-black" />
+                                                    <div><p className="font-bold">Bank transfer</p><p className="mt-1 text-xs leading-5 text-gray-500">Send the refund directly to your bank account. Processing can take up to 7 days after approval.</p></div>
                                                 </label>
-
-                                                <label
-                                                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${
-                                                        returnMethod ===
-                                                        "shop_pickup"
-                                                            ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700"
-                                                            : "border-gray-200 dark:border-gray-600"
-                                                    }`}
-                                                >
-                                                    <input
-                                                        type="radio"
-                                                        name="returnMethod"
-                                                        value="shop_pickup"
-                                                        checked={
-                                                            returnMethod ===
-                                                            "shop_pickup"
-                                                        }
-                                                        onChange={event =>
-                                                            setReturnMethod(
-                                                                event.target.value
-                                                            )
-                                                        }
-                                                        className="mt-1 accent-black"
-                                                    />
-
-                                                    <div>
-                                                        <p className="font-bold">
-                                                            Collect refund from shop
-                                                        </p>
-                                                        <p className="mt-1 text-xs leading-5 text-gray-500">
-                                                            Choose a date and time to collect the approved refund from the Zamed shop.
-                                                        </p>
-                                                    </div>
+                                                <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${returnMethod === "shop_pickup" ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700" : "border-gray-200 dark:border-gray-600"}`}>
+                                                    <input type="radio" name="returnMethod" value="shop_pickup" checked={returnMethod === "shop_pickup"} onChange={event => setReturnMethod(event.target.value)} className="mt-1 accent-black" />
+                                                    <div><p className="font-bold">Collect refund from shop</p><p className="mt-1 text-xs leading-5 text-gray-500">Choose a date and time to collect the approved refund from the Zamed shop.</p></div>
                                                 </label>
                                             </div>
                                         ) : (
                                             <div className="rounded-xl bg-green-50 p-4 text-sm text-green-900 dark:bg-green-900/20 dark:text-green-300">
-                                                <div className="flex items-center gap-2 font-bold">
-                                                    <FiCreditCard />
-                                                    Original payment method
-                                                </div>
-
-                                                <p className="mt-1 text-xs leading-5">
-                                                    Your refund will be returned to the payment method used for this order. Processing can take up to 7 days after approval.
-                                                </p>
+                                                <div className="flex items-center gap-2 font-bold"><FiCreditCard /> Original payment method</div>
+                                                <p className="mt-1 text-xs leading-5">Your refund will be returned to the payment method used for this order. Processing can take up to 7 days after approval.</p>
                                             </div>
                                         )}
                                     </div>
 
-                                    {returnMethod ===
-                                        "bank_transfer" &&
-                                        selectedItemForReturn.isCashOrder && (
+                                    {returnMethod === "bank_transfer" && selectedItemForReturn.isCashOrder && (
                                         <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900/40 dark:bg-blue-900/10">
-                                            <h3 className="font-bold">
-                                                Bank details
-                                            </h3>
-
+                                            <h3 className="font-bold">Bank details</h3>
                                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                                <input
-                                                    type="text"
-                                                    value={
-                                                        accountHolderName
-                                                    }
-                                                    onChange={event =>
-                                                        setAccountHolderName(
-                                                            event.target.value
-                                                        )
-                                                    }
-                                                    placeholder="Account holder name"
-                                                    className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                                                />
-
-                                                <input
-                                                    type="text"
-                                                    value={
-                                                        bankName
-                                                    }
-                                                    onChange={event =>
-                                                        setBankName(
-                                                            event.target.value
-                                                        )
-                                                    }
-                                                    placeholder="Bank name"
-                                                    className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                                                />
-
-                                                <input
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    value={
-                                                        accountNumber
-                                                    }
-                                                    onChange={event =>
-                                                        setAccountNumber(
-                                                            event.target.value.replace(
-                                                                /[^0-9]/g,
-                                                                ""
-                                                            )
-                                                        )
-                                                    }
-                                                    placeholder="Account number"
-                                                    className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                                                />
-
-                                                <input
-                                                    type="text"
-                                                    value={
-                                                        bankBranch
-                                                    }
-                                                    onChange={event =>
-                                                        setBankBranch(
-                                                            event.target.value
-                                                        )
-                                                    }
-                                                    placeholder="Sort code / branch"
-                                                    className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                                                />
+                                                <input type="text" value={accountHolderName} onChange={event => setAccountHolderName(event.target.value)} placeholder="Account holder name" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+                                                <input type="text" value={bankName} onChange={event => setBankName(event.target.value)} placeholder="Bank name" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+                                                <input type="text" inputMode="numeric" value={accountNumber} onChange={event => setAccountNumber(event.target.value.replace(/[^0-9]/g, ""))} placeholder="Account number" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+                                                <input type="text" value={bankBranch} onChange={event => setBankBranch(event.target.value)} placeholder="Sort code / branch" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
                                             </div>
                                         </div>
                                     )}
 
-                                    {returnMethod ===
-                                        "shop_pickup" &&
-                                        selectedItemForReturn.isCashOrder && (
+                                    {returnMethod === "shop_pickup" && selectedItemForReturn.isCashOrder && (
                                         <div className="rounded-2xl border border-orange-200 bg-orange-50/50 p-4 dark:border-orange-900/40 dark:bg-orange-900/10">
-                                            <h3 className="font-bold">
-                                                Shop collection
-                                            </h3>
-
+                                            <h3 className="font-bold">Shop collection</h3>
                                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                                <div>
-                                                    <label className="mb-1 block text-xs font-bold">
-                                                        Collection date
-                                                    </label>
-
-                                                    <input
-                                                        type="date"
-                                                        min={
-                                                            new Date()
-                                                                .toISOString()
-                                                                .split(
-                                                                    "T"
-                                                                )[0]
-                                                        }
-                                                        value={
-                                                            shopPickupDate
-                                                        }
-                                                        onChange={event =>
-                                                            setShopPickupDate(
-                                                                event.target.value
-                                                            )
-                                                        }
-                                                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700"
-                                                    />
-                                                </div>
-
-                                                <div>
-                                                    <label className="mb-1 block text-xs font-bold">
-                                                        Collection time
-                                                    </label>
-
-                                                    <input
-                                                        type="time"
-                                                        value={
-                                                            shopPickupTime
-                                                        }
-                                                        onChange={event =>
-                                                            setShopPickupTime(
-                                                                event.target.value
-                                                            )
-                                                        }
-                                                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700"
-                                                    />
-                                                </div>
+                                                <div><label className="mb-1 block text-xs font-bold">Collection date</label><input type="date" min={new Date().toISOString().split("T")[0]} value={shopPickupDate} onChange={event => setShopPickupDate(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700" /></div>
+                                                <div><label className="mb-1 block text-xs font-bold">Collection time</label><input type="time" value={shopPickupTime} onChange={event => setShopPickupTime(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700" /></div>
                                             </div>
                                         </div>
                                     )}
 
                                     <div className="flex items-start gap-3 rounded-2xl bg-orange-50 p-4 text-sm text-orange-900 dark:bg-orange-900/20 dark:text-orange-200">
                                         <FiClock className="mt-0.5 shrink-0 text-orange-600" />
-                                        <div>
-                                            <p className="font-bold">
-                                                Refund processing
-                                            </p>
-                                            <p className="mt-1 text-xs leading-5">
-                                                After the returned product is received and approved, bank/original-payment refunds can take up to 7 days.
-                                            </p>
-                                        </div>
+                                        <div><p className="font-bold">Refund processing</p><p className="mt-1 text-xs leading-5">After the returned product is received and approved, bank/original-payment refunds can take up to 7 days.</p></div>
                                     </div>
                                 </div>
 
                                 <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row">
-                                    <button
-                                        type="button"
-                                        onClick={
-                                            resetReturnForm
-                                        }
-                                        className="flex-1 rounded-xl border border-gray-200 py-3 text-sm font-bold dark:border-gray-600"
-                                    >
-                                        Cancel
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={
-                                            submitReturnRequest
-                                        }
-                                        disabled={
-                                            isSubmittingReturn
-                                        }
-                                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-black py-3 text-sm font-bold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
-                                    >
-                                        {isSubmittingReturn ? (
-                                            <>
-                                                <FiLoader className="animate-spin" />
-                                                Submitting...
-                                            </>
-                                        ) : (
-                                            <>
-                                                <FiCornerDownLeft />
-                                                Submit Return
-                                            </>
-                                        )}
+                                    <button type="button" onClick={resetReturnForm} className="flex-1 rounded-xl border border-gray-200 py-3 text-sm font-bold dark:border-gray-600">Cancel</button>
+                                    <button type="button" onClick={submitReturnRequest} disabled={isSubmittingReturn} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-black py-3 text-sm font-bold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50">
+                                        {isSubmittingReturn ? <><FiLoader className="animate-spin" /> Submitting...</> : <><FiCornerDownLeft /> Submit Return</>}
                                     </button>
                                 </div>
                             </motion.div>
                         </motion.div>
                     )}
                 </AnimatePresence>
-
             </div>
         </div>
     );

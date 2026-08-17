@@ -1,24 +1,29 @@
 // src/components/Products/FeaturedCollection.jsx
-import { Link } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { ShoppingBag, Star, Heart, ArrowRight, ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
 import { useCart } from "../../context/CartContext";
 import { toast } from "sonner";
 import productService from "../../services/productService";
 import { getWorkingImage } from "../../utils/imageUtils";
+import { loadProductImages } from "../../utils/imageLoader";
+import useFavorites from "../../hooks/useFavorites";
 
 const FeaturedCollection = () => {
+    const navigate = useNavigate();
     const [featuredProducts, setFeaturedProducts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [currencySymbol, setCurrencySymbol] = useState("$");
     const [selectedColor, setSelectedColor] = useState({});
     const [displayImage, setDisplayImage] = useState({});
-    const [favorites, setFavorites] = useState([]);
-    const [user, setUser] = useState(null);
+    const [colorImages, setColorImages] = useState({});
     const [currentIndex, setCurrentIndex] = useState(0);
     const [isTransitioning, setIsTransitioning] = useState(false);
     const [showFullImage, setShowFullImage] = useState(false);
     const [fullImageUrl, setFullImageUrl] = useState("");
+    const [hoveredProduct, setHoveredProduct] = useState(null);
+    const [hoverInterval, setHoverInterval] = useState({});
+    const [hoverColorIndex, setHoverColorIndex] = useState({});
     const [settings, setSettings] = useState({
         showProductRatings: true,
         showProductColors: true,
@@ -26,20 +31,28 @@ const FeaturedCollection = () => {
         showProductBrand: true
     });
     const { addToCart } = useCart();
+    const fallbackProductImage = getWorkingImage(0);
 
-    // Load user favorites
+    // ============================================================
+    // Use centralized favorites hook
+    // ============================================================
+    const { 
+        favoriteIds,
+        version,
+        toggleFavorite, 
+        isFavorited, 
+        refreshFavorites 
+    } = useFavorites();
+
+    // Force re-render when favorites change
+    const favoritesKey = useRef(0);
+    
     useEffect(() => {
-        const userData = localStorage.getItem('user');
-        if (userData) {
-            const parsedUser = JSON.parse(userData);
-            setUser(parsedUser);
-            const userFavorites = JSON.parse(localStorage.getItem(`favorites_${parsedUser.email}`) || '[]');
-            setFavorites(userFavorites);
-        }
-    }, []);
+        favoritesKey.current += 1;
+    }, [version]);
 
     // Load settings
-    useEffect(() => {
+    const loadSettings = useCallback(() => {
         const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
         setSettings({
             showProductRatings: siteSettings.showProductRatings !== undefined ? siteSettings.showProductRatings : true,
@@ -50,7 +63,51 @@ const FeaturedCollection = () => {
     }, []);
 
     // Load featured products
+    const loadFeaturedProducts = useCallback(async () => {
+        setLoading(true);
+        try {
+            const products = productService.getAllProducts();
+            const featured = products.filter(p => p.isFeatured === true);
+            
+            const productsWithImages = [];
+            const imageState = {};
+            const colorImageState = {};
+            const colorState = {};
+            
+            for (const product of featured) {
+                const loadedProduct = await loadProductImages(product);
+                productsWithImages.push(loadedProduct);
+                
+                imageState[product.id] = loadedProduct.image || fallbackProductImage;
+                colorImageState[product.id] = loadedProduct.colorImages || {};
+                
+                if (product.colors && product.colors.length > 0) {
+                    colorState[product.id] = product.colors[0];
+                } else {
+                    colorState[product.id] = null;
+                }
+            }
+            
+            setFeaturedProducts(productsWithImages);
+            setDisplayImage(imageState);
+            setColorImages(colorImageState);
+            setSelectedColor(colorState);
+            setCurrentIndex(0);
+            
+        } catch (error) {
+            console.error('Error loading featured products:', error);
+        } finally {
+            setLoading(false);
+        }
+    }, [fallbackProductImage]);
+
+    // Reload when favorites version changes
     useEffect(() => {
+        // This will re-render the component when favorites change
+    }, [version]);
+
+    useEffect(() => {
+        loadSettings();
         loadFeaturedProducts();
         
         const handleProductsUpdate = () => {
@@ -64,45 +121,130 @@ const FeaturedCollection = () => {
         window.addEventListener('productsUpdated', handleProductsUpdate);
         window.addEventListener('storage', handleProductsUpdate);
         
+        // Refresh favorites on mount
+        refreshFavorites(true);
+        
         return () => {
             window.removeEventListener('productsUpdated', handleProductsUpdate);
             window.removeEventListener('storage', handleProductsUpdate);
         };
-    }, []);
+    }, [loadFeaturedProducts, loadSettings, refreshFavorites]);
 
-    const loadFeaturedProducts = () => {
-        setLoading(true);
-        const products = productService.getAllProducts();
-        const featured = products.filter(p => p.isFeatured === true);
-        setFeaturedProducts(featured);
+    // Listen for favorites updates from other components
+    useEffect(() => {
+        const handleFavoritesUpdate = () => {
+            refreshFavorites(true);
+            favoritesKey.current += 1;
+        };
+
+        window.addEventListener('favoritesUpdated', handleFavoritesUpdate);
+        window.addEventListener('wishlistUpdated', handleFavoritesUpdate);
+        window.addEventListener('whitelistUpdated', handleFavoritesUpdate);
+        window.addEventListener('storage', handleFavoritesUpdate);
+
+        return () => {
+            window.removeEventListener('favoritesUpdated', handleFavoritesUpdate);
+            window.removeEventListener('wishlistUpdated', handleFavoritesUpdate);
+            window.removeEventListener('whitelistUpdated', handleFavoritesUpdate);
+            window.removeEventListener('storage', handleFavoritesUpdate);
+        };
+    }, [refreshFavorites]);
+
+    // ============================================================
+    // Hover cycling through color images
+    // ============================================================
+    const startHoverCycle = (productId) => {
+        stopHoverCycle(productId);
         
-        // Initialize color and image states for each product
-        const colorState = {};
-        const imageState = {};
-        featured.forEach(product => {
-            if (product.colors && product.colors.length > 0) {
-                colorState[product.id] = product.colors[0];
-                imageState[product.id] = product.colorImages?.[product.colors[0]] || product.image;
-            } else {
-                colorState[product.id] = null;
-                imageState[product.id] = product.image;
+        const product = featuredProducts.find(p => p.id === productId);
+        if (!product || !product.colors || product.colors.length <= 1) return;
+        
+        const colorList = product.colors;
+        const currentIndex = hoverColorIndex[productId] || 0;
+        const nextIndex = (currentIndex + 1) % colorList.length;
+        
+        const interval = setInterval(() => {
+            setHoverColorIndex(prev => {
+                const currentIdx = prev[productId] || 0;
+                const nextIdx = (currentIdx + 1) % colorList.length;
+                
+                const colorName = colorList[nextIdx];
+                const colorImgMap = colorImages[productId] || {};
+                const newImage = colorImgMap[colorName] || displayImage[productId] || fallbackProductImage;
+                
+                setDisplayImage(prevImages => ({
+                    ...prevImages,
+                    [productId]: newImage
+                }));
+                
+                setSelectedColor(prevColors => ({
+                    ...prevColors,
+                    [productId]: colorName
+                }));
+                
+                return { ...prev, [productId]: nextIdx };
+            });
+        }, 1150);
+        
+        setHoverInterval(prev => ({ ...prev, [productId]: interval }));
+    };
+
+    const stopHoverCycle = (productId) => {
+        if (hoverInterval && hoverInterval[productId]) {
+            clearInterval(hoverInterval[productId]);
+            setHoverInterval(prev => {
+                const newState = { ...prev };
+                delete newState[productId];
+                return newState;
+            });
+        }
+    };
+
+    const handleMouseEnter = (productId) => {
+        setHoveredProduct(productId);
+        setHoverColorIndex(prev => ({ ...prev, [productId]: 0 }));
+        startHoverCycle(productId);
+    };
+
+    const handleMouseLeave = (productId) => {
+        setHoveredProduct(null);
+        stopHoverCycle(productId);
+        
+        const product = featuredProducts.find(p => p.id === productId);
+        if (product) {
+            const originalColor = selectedColor[productId] || product.colors?.[0];
+            if (originalColor) {
+                const colorImgMap = colorImages[productId] || {};
+                const originalImage = colorImgMap[originalColor] || product.image || fallbackProductImage;
+                setDisplayImage(prev => ({
+                    ...prev,
+                    [productId]: originalImage
+                }));
+                setSelectedColor(prev => ({
+                    ...prev,
+                    [productId]: originalColor
+                }));
             }
-        });
-        setSelectedColor(colorState);
-        setDisplayImage(imageState);
-        setCurrentIndex(0);
-        setLoading(false);
+        }
     };
 
     const handleColorClick = (product, color, e) => {
         e.stopPropagation();
+        
+        stopHoverCycle(product.id);
+        setHoveredProduct(null);
+        
         setSelectedColor(prev => ({
             ...prev,
             [product.id]: color
         }));
+        
+        const colorImgMap = colorImages[product.id] || {};
+        const newImage = colorImgMap[color] || displayImage[product.id] || fallbackProductImage;
+        
         setDisplayImage(prev => ({
             ...prev,
-            [product.id]: product.colorImages?.[color] || product.image
+            [product.id]: newImage
         }));
     };
 
@@ -111,7 +253,7 @@ const FeaturedCollection = () => {
         e.stopPropagation();
         
         const productColor = selectedColor[product.id] || product.colors?.[0] || "Default";
-        const productImage = displayImage[product.id] || product.image;
+        const productImage = displayImage[product.id] || product.image || fallbackProductImage;
         
         addToCart({
             id: product.id,
@@ -128,33 +270,24 @@ const FeaturedCollection = () => {
     };
 
     const handleProductClick = (productId) => {
-        window.location.href = `/product/${productId}`;
+        navigate(`/product/${productId}`);
         setTimeout(() => {
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }, 100);
     };
 
-    const toggleFavorite = (product, e) => {
+    // ============================================================
+    // Handle favorite toggle using centralized hook
+    // ============================================================
+    const handleToggleFavorite = (product, e) => {
         e.stopPropagation();
-        
-        if (!user) {
-            toast.error("Please login to add to favorites");
-            return;
-        }
-        
-        const isInFavorites = favorites.some(item => item.id === product.id);
-        let updatedFavorites;
-        
-        if (isInFavorites) {
-            updatedFavorites = favorites.filter(item => item.id !== product.id);
-            toast.info(`${product.name} removed from favorites`);
+        const result = toggleFavorite(product);
+        if (!result.success) {
+            toast.error(result.message);
+            navigate('/login');
         } else {
-            updatedFavorites = [...favorites, product];
-            toast.success(`${product.name} added to favorites`);
+            toast.success(result.isFavorite ? `${product.name} added to favorites` : `${product.name} removed from favorites`);
         }
-        
-        setFavorites(updatedFavorites);
-        localStorage.setItem(`favorites_${user.email}`, JSON.stringify(updatedFavorites));
     };
 
     const openFullImage = (imageUrl, e) => {
@@ -193,13 +326,11 @@ const FeaturedCollection = () => {
     // Auto-play
     useEffect(() => {
         if (featuredProducts.length <= 1) return;
-        
         const interval = setInterval(() => {
             if (!isTransitioning) {
                 goToNext();
             }
         }, 5000);
-        
         return () => clearInterval(interval);
     }, [featuredProducts.length, isTransitioning]);
 
@@ -210,21 +341,19 @@ const FeaturedCollection = () => {
             if (e.key === 'ArrowRight') goToNext();
             if (e.key === 'Escape') closeFullImage();
         };
-        
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [featuredProducts.length]);
 
-    // Helper function to get valid image URL
-    const fallbackProductImage = getWorkingImage(0);
-
     const getValidImageUrl = (image) => {
         if (!image) return fallbackProductImage;
         if (image.startsWith('data:') || image.startsWith('http')) return image;
+        if (image.startsWith('db://')) {
+            return fallbackProductImage;
+        }
         return fallbackProductImage;
     };
 
-    // Helper function to safely get tags array
     const getTagsArray = (tags) => {
         if (!tags) return [];
         if (Array.isArray(tags)) return tags;
@@ -234,7 +363,6 @@ const FeaturedCollection = () => {
         return [];
     };
 
-    // SHOW LOADING
     if (loading) {
         return (
             <div className="py-16 bg-gray-50">
@@ -245,11 +373,9 @@ const FeaturedCollection = () => {
         );
     }
 
-    // SHOW ALWAYS - Even with no products
     return (
-        <div className="py-16 bg-gray-50">
+        <div className="py-16 bg-gradient-to-b from-gray-100 to-gray-50">
             <div className="container mx-auto px-4">
-                {/* Section Title */}
                 <div className="text-center mb-10">
                     <h2 className="text-2xl sm:text-3xl font-light text-gray-800">Featured Collection</h2>
                     <p className="text-gray-400 text-sm mt-2">Our hand-picked selection just for you</p>
@@ -257,7 +383,6 @@ const FeaturedCollection = () => {
                 </div>
 
                 {featuredProducts.length === 0 ? (
-                    // Placeholder when no featured products
                     <div className="text-center py-12 bg-white rounded-2xl shadow-sm border border-gray-100">
                         <div className="flex justify-center mb-4">
                             <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
@@ -268,19 +393,9 @@ const FeaturedCollection = () => {
                         <p className="text-gray-400 text-sm max-w-md mx-auto">
                             Mark products as featured in the admin panel to display them here.
                         </p>
-                        {localStorage.getItem('admin') && (
-                            <Link 
-                                to="/admin/products" 
-                                className="inline-flex items-center gap-2 mt-4 px-6 py-2.5 bg-black text-white rounded-full text-sm font-medium hover:bg-gray-800 transition-colors"
-                            >
-                                Go to Admin <ArrowRight size={16} />
-                            </Link>
-                        )}
                     </div>
                 ) : (
-                    // Featured Products Slider
                     <div className="relative max-w-6xl mx-auto">
-                        {/* Navigation Arrows */}
                         {featuredProducts.length > 1 && (
                             <>
                                 <button
@@ -300,51 +415,50 @@ const FeaturedCollection = () => {
                             </>
                         )}
 
-                        {/* Slide Counter */}
                         {featuredProducts.length > 1 && (
                             <div className="absolute top-4 right-4 z-20 bg-black/70 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full">
                                 {currentIndex + 1} / {featuredProducts.length}
                             </div>
                         )}
 
-                        {/* Carousel Container */}
-                        <div className="overflow-hidden rounded-2xl bg-white shadow-lg">
+                        <div className="overflow-hidden rounded-2xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.25)] transform perspective-1000">
                             <div 
                                 className="flex transition-transform duration-500 ease-in-out"
-                                style={{ 
-                                    transform: `translateX(-${currentIndex * 100}%)`,
-                                }}
+                                style={{ transform: `translateX(-${currentIndex * 100}%)` }}
+                                key={`featured-slider-${version}`} // Force re-render when version changes
                             >
                                 {featuredProducts.map((featuredProduct, index) => {
-                                    const isFavorite = favorites.some(item => item.id === featuredProduct.id);
+                                    const isFavorite = isFavorited(featuredProduct.id);
                                     const productRating = featuredProduct.rating || 0;
                                     const productReviews = featuredProduct.reviews || 0;
                                     const currentColor = selectedColor[featuredProduct.id] || featuredProduct.colors?.[0] || null;
-                                    const currentImage = displayImage[featuredProduct.id] || featuredProduct.image;
+                                    const currentImage = displayImage[featuredProduct.id] || featuredProduct.image || fallbackProductImage;
                                     const tagsArray = getTagsArray(featuredProduct.tags);
+                                    const colorImageMap = colorImages[featuredProduct.id] || {};
+                                    const isHovered = hoveredProduct === featuredProduct.id;
 
                                     return (
                                         <div 
                                             key={featuredProduct.id}
                                             className="min-w-full cursor-pointer"
+                                            onMouseEnter={() => handleMouseEnter(featuredProduct.id)}
+                                            onMouseLeave={() => handleMouseLeave(featuredProduct.id)}
                                             onClick={() => handleProductClick(featuredProduct.id)}
                                         >
-                                            <div className="bg-white rounded-2xl overflow-hidden">
+                                            <div className="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-500 transform hover:-translate-y-1">
                                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-0">
-                                                    {/* Image Section - Fixed Size with Full View */}
-                                                    <div className="relative overflow-hidden bg-gray-100">
-                                                        <div className="aspect-square w-full max-h-[500px]">
+                                                    <div className="relative overflow-hidden bg-white">
+                                                        <div className="aspect-square w-full max-h-[500px] p-4 flex items-center justify-center">
                                                             <img 
                                                                 src={getValidImageUrl(currentImage)} 
                                                                 alt={featuredProduct.name} 
                                                                 className="w-full h-full object-contain transition-transform duration-700 hover:scale-105"
                                                                 onError={(e) => {
-                                                                    e.target.src = '/images/no-image.svg';
+                                                                    e.target.src = fallbackProductImage;
                                                                 }}
                                                             />
                                                         </div>
                                                         
-                                                        {/* Full Image View Button */}
                                                         <button
                                                             onClick={(e) => openFullImage(getValidImageUrl(currentImage), e)}
                                                             className="absolute bottom-4 left-4 p-2 bg-white/90 backdrop-blur-sm rounded-full shadow-md hover:scale-110 transition-all duration-300 z-10"
@@ -354,21 +468,56 @@ const FeaturedCollection = () => {
                                                         </button>
                                                         
                                                         {settings.showSaleBadge && featuredProduct.originalPrice && (
-                                                            <div className="absolute top-4 left-4 bg-red-500 text-white px-3 py-1 rounded-lg text-xs font-bold z-10">
+                                                            <div className="absolute top-4 left-4 bg-red-500 text-white px-3 py-1 rounded-lg text-xs font-bold z-10 shadow-lg">
                                                                 {Math.round(((featuredProduct.originalPrice - featuredProduct.price) / featuredProduct.originalPrice) * 100)}% OFF
                                                             </div>
                                                         )}
                                                         
                                                         <button
-                                                            onClick={(e) => toggleFavorite(featuredProduct, e)}
+                                                            onClick={(e) => handleToggleFavorite(featuredProduct, e)}
                                                             className="absolute top-4 right-4 p-2 bg-white/90 backdrop-blur-sm rounded-full shadow-md hover:scale-110 transition-all duration-300 z-10"
                                                         >
                                                             <Heart size={18} className={isFavorite ? "text-red-500 fill-current" : "text-gray-600"} />
                                                         </button>
+
+                                                        {settings.showProductColors && featuredProduct.colors && featuredProduct.colors.length > 1 && (
+                                                            <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex gap-1.5 bg-white/80 backdrop-blur-sm px-2 py-1 rounded-full shadow-sm">
+                                                                {featuredProduct.colors.slice(0, 6).map((color, idx) => {
+                                                                    const isActive = currentColor === color;
+                                                                    const colorHex = 
+                                                                        color === "White" ? "#f5f5f5" :
+                                                                        color === "Black" ? "#1a1a1a" :
+                                                                        color === "Red" ? "#dc2626" :
+                                                                        color === "Blue" ? "#3b82f6" :
+                                                                        color === "Green" ? "#22c55e" :
+                                                                        color === "Yellow" ? "#eab308" :
+                                                                        color === "Purple" ? "#a855f7" :
+                                                                        color === "Pink" ? "#ec4899" :
+                                                                        color === "Gray" ? "#9ca3af" :
+                                                                        color === "Navy" ? "#1e3a8a" :
+                                                                        color === "Orange" ? "#f97316" :
+                                                                        color === "Brown" ? "#78350f" :
+                                                                        color === "Teal" ? "#008080" :
+                                                                        color === "Maroon" ? "#800000" :
+                                                                        "#cccccc";
+                                                                    
+                                                                    return (
+                                                                        <span
+                                                                            key={idx}
+                                                                            className={`w-3 h-3 rounded-full border ${isActive ? 'border-black ring-1 ring-black' : 'border-gray-300'}`}
+                                                                            style={{ backgroundColor: colorHex }}
+                                                                            title={color}
+                                                                        />
+                                                                    );
+                                                                })}
+                                                                {featuredProduct.colors.length > 6 && (
+                                                                    <span className="text-[8px] font-bold text-gray-500 px-1">+{featuredProduct.colors.length - 6}</span>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     
-                                                    {/* Content Section - Full Product Details */}
-                                                    <div className="p-4 sm:p-6 md:p-8 flex flex-col justify-between">
+                                                    <div className="p-6 sm:p-8 md:p-10 flex flex-col justify-between bg-gray-50/80">
                                                         <div>
                                                             {settings.showProductBrand && featuredProduct.brand && (
                                                                 <span className="inline-block text-xs text-gray-500 uppercase tracking-wider mb-2">
@@ -376,7 +525,7 @@ const FeaturedCollection = () => {
                                                                 </span>
                                                             )}
                                                             
-                                                            <span className="inline-block px-3 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-full mb-3 w-fit">
+                                                            <span className="inline-block px-3 py-1 bg-gray-200 text-gray-600 text-xs font-medium rounded-full mb-3 w-fit">
                                                                 FEATURED
                                                             </span>
                                                             
@@ -395,14 +544,12 @@ const FeaturedCollection = () => {
                                                                 )}
                                                             </div>
                                                             
-                                                            {/* Description */}
                                                             {featuredProduct.description && (
                                                                 <p className="text-gray-600 text-sm mb-4 leading-relaxed line-clamp-3">
                                                                     {featuredProduct.description}
                                                                 </p>
                                                             )}
                                                             
-                                                            {/* Rating */}
                                                             {settings.showProductRatings && (
                                                                 <div className="flex items-center gap-2 mb-4">
                                                                     <div className="flex items-center">
@@ -424,9 +571,8 @@ const FeaturedCollection = () => {
                                                                 </div>
                                                             )}
                                                             
-                                                            {/* Product Details - Material, Care Instructions, etc. */}
                                                             {(featuredProduct.material || featuredProduct.careInstructions || tagsArray.length > 0) && (
-                                                                <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                                                                <div className="mb-4 p-3 bg-white rounded-lg shadow-sm">
                                                                     {featuredProduct.material && (
                                                                         <div className="flex flex-wrap items-center gap-2 text-sm">
                                                                             <span className="font-medium text-gray-700">Material:</span>
@@ -442,7 +588,7 @@ const FeaturedCollection = () => {
                                                                     {tagsArray.length > 0 && (
                                                                         <div className="flex flex-wrap gap-1 mt-2">
                                                                             {tagsArray.map((tag, idx) => (
-                                                                                <span key={idx} className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">
+                                                                                <span key={idx} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                                                                                     #{tag}
                                                                                 </span>
                                                                             ))}
@@ -451,14 +597,29 @@ const FeaturedCollection = () => {
                                                                 </div>
                                                             )}
                                                             
-                                                            {/* Colors */}
                                                             {settings.showProductColors && featuredProduct.colors && featuredProduct.colors.length > 0 && (
                                                                 <div className="mb-4">
                                                                     <p className="text-gray-500 text-sm mb-2">Available Colors:</p>
                                                                     <div className="flex gap-2 sm:gap-3 flex-wrap">
                                                                         {featuredProduct.colors.slice(0, 8).map((color, idx) => {
-                                                                            const colorImage = featuredProduct.colorImages?.[color] || featuredProduct.image;
+                                                                            const colorImage = colorImageMap[color] || fallbackProductImage;
                                                                             const isSelected = currentColor === color;
+                                                                            const colorHex = 
+                                                                                color === "White" ? "#f5f5f5" :
+                                                                                color === "Black" ? "#1a1a1a" :
+                                                                                color === "Red" ? "#dc2626" :
+                                                                                color === "Blue" ? "#3b82f6" :
+                                                                                color === "Green" ? "#22c55e" :
+                                                                                color === "Yellow" ? "#eab308" :
+                                                                                color === "Purple" ? "#a855f7" :
+                                                                                color === "Pink" ? "#ec4899" :
+                                                                                color === "Gray" ? "#9ca3af" :
+                                                                                color === "Navy" ? "#1e3a8a" :
+                                                                                color === "Orange" ? "#f97316" :
+                                                                                color === "Brown" ? "#78350f" :
+                                                                                color === "Teal" ? "#008080" :
+                                                                                color === "Maroon" ? "#800000" :
+                                                                                "#cccccc";
                                                                             
                                                                             return (
                                                                                 <div
@@ -470,22 +631,26 @@ const FeaturedCollection = () => {
                                                                                     }}
                                                                                 >
                                                                                     <div 
-                                                                                        className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer hover:scale-110 transition-all duration-200 ${
-                                                                                            isSelected ? 'border-black ring-2 ring-gray-400' : 'border-gray-200'
+                                                                                        className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer hover:scale-110 transition-all duration-200 shadow-sm ${
+                                                                                            isSelected ? 'border-black ring-2 ring-black ring-offset-2' : 'border-gray-200 hover:border-gray-400'
                                                                                         }`}
+                                                                                        style={{ backgroundColor: colorHex }}
                                                                                     >
-                                                                                        <img 
-                                                                                            src={getValidImageUrl(colorImage)} 
-                                                                                            alt={color}
-                                                                                            className="w-full h-full object-cover"
-                                                                                            onError={(e) => {
-                                                                                                e.target.src = '/images/no-image.svg';
-                                                                                            }}
-                                                                                        />
+                                                                                        {colorImage && colorImage !== fallbackProductImage && (
+                                                                                            <img 
+                                                                                                src={getValidImageUrl(colorImage)} 
+                                                                                                alt={color}
+                                                                                                className="w-full h-full object-cover"
+                                                                                                onError={(e) => {
+                                                                                                    e.target.src = fallbackProductImage;
+                                                                                                }}
+                                                                                            />
+                                                                                        )}
                                                                                     </div>
                                                                                     {isSelected && (
                                                                                         <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-black rounded-full"></div>
                                                                                     )}
+                                                                                    <p className="text-[10px] text-center text-gray-500 mt-1">{color}</p>
                                                                                 </div>
                                                                             );
                                                                         })}
@@ -494,18 +659,17 @@ const FeaturedCollection = () => {
                                                             )}
                                                         </div>
                                                         
-                                                        {/* Action Buttons */}
                                                         <div className="flex flex-col sm:flex-row gap-3 mt-4">
                                                             <Link 
                                                                 to={`/product/${featuredProduct.id}`}
-                                                                className="flex-1 px-4 sm:px-6 py-2.5 sm:py-3 bg-black text-white rounded-full text-sm font-medium hover:bg-gray-800 transition-all duration-300 hover:scale-105 text-center"
+                                                                className="flex-1 px-4 sm:px-6 py-2.5 sm:py-3 bg-black text-white rounded-full text-sm font-medium hover:bg-gray-800 transition-all duration-300 hover:scale-105 text-center shadow-md hover:shadow-lg"
                                                                 onClick={(e) => e.stopPropagation()}
                                                             >
                                                                 View Details
                                                             </Link>
                                                             <button
                                                                 onClick={(e) => handleAddToCart(featuredProduct, e)}
-                                                                className="flex-1 px-4 sm:px-6 py-2.5 sm:py-3 border border-gray-300 text-gray-700 rounded-full text-sm font-medium hover:bg-gray-50 hover:border-gray-400 transition-all duration-300 flex items-center justify-center gap-2"
+                                                                className="flex-1 px-4 sm:px-6 py-2.5 sm:py-3 border-2 border-gray-300 text-gray-700 rounded-full text-sm font-medium hover:bg-gray-100 hover:border-gray-500 transition-all duration-300 flex items-center justify-center gap-2 hover:scale-105"
                                                             >
                                                                 <ShoppingBag size={16} /> Add to Cart
                                                             </button>
@@ -519,7 +683,6 @@ const FeaturedCollection = () => {
                             </div>
                         </div>
 
-                        {/* Dots Indicator */}
                         {featuredProducts.length > 1 && (
                             <div className="flex justify-center gap-2 mt-6">
                                 {featuredProducts.map((_, index) => (
@@ -528,7 +691,7 @@ const FeaturedCollection = () => {
                                         onClick={() => goToSlide(index)}
                                         className={`transition-all duration-300 rounded-full ${
                                             index === currentIndex
-                                                ? 'w-8 sm:w-10 h-2.5 bg-black'
+                                                ? 'w-8 sm:w-10 h-2.5 bg-black shadow-md'
                                                 : 'w-2 h-2 sm:w-2.5 sm:h-2.5 bg-gray-300 hover:bg-gray-400'
                                         }`}
                                         aria-label={`Go to slide ${index + 1}`}
@@ -537,7 +700,6 @@ const FeaturedCollection = () => {
                             </div>
                         )}
 
-                        {/* Slide Number Indicator - Mobile friendly */}
                         {featuredProducts.length > 1 && (
                             <div className="text-center mt-3 text-xs text-gray-400">
                                 Swipe or use arrows to navigate
@@ -547,17 +709,15 @@ const FeaturedCollection = () => {
                 )}
             </div>
 
-            {/* Full Image Modal */}
             {showFullImage && (
                 <div 
                     className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4"
                     onClick={closeFullImage}
                 >
                     <div 
-                        className="relative max-w-5xl w-full max-h-[90vh] bg-white rounded-2xl overflow-hidden"
+                        className="relative max-w-5xl w-full max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        {/* Close Button */}
                         <button
                             onClick={closeFullImage}
                             className="absolute top-4 right-4 z-10 p-2 bg-black/50 hover:bg-black/70 text-white rounded-full transition-all duration-300"
@@ -567,19 +727,17 @@ const FeaturedCollection = () => {
                             </svg>
                         </button>
 
-                        {/* Full Image */}
-                        <div className="flex items-center justify-center p-4 min-h-[300px] max-h-[90vh]">
+                        <div className="flex items-center justify-center p-4 min-h-[300px] max-h-[90vh] bg-white">
                             <img 
                                 src={fullImageUrl} 
                                 alt="Product full view" 
                                 className="max-w-full max-h-[85vh] object-contain"
                                 onError={(e) => {
-                                    e.target.src = '/images/no-image.svg';
+                                    e.target.src = fallbackProductImage;
                                 }}
                             />
                         </div>
 
-                        {/* Footer */}
                         <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/70 to-transparent text-white text-center">
                             <p className="text-sm">Click anywhere outside or press ESC to close</p>
                         </div>

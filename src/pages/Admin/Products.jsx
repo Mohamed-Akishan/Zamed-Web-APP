@@ -6,7 +6,7 @@ import {
     FiChevronLeft, FiChevronRight, FiDownload, FiCopy, FiEye,
     FiAlertCircle, FiCheckCircle, FiClock, FiTag, FiDollarSign,
     FiList as FiListIcon, FiHash, FiRefreshCw, FiTruck, FiShield,
-    FiPercent
+    FiPercent, FiPlusCircle
 } from "react-icons/fi";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -37,7 +37,13 @@ const Products = () => {
     const [darkMode, setDarkMode] = useState(false);
     const [loading, setLoading] = useState(true);
     const [imageError, setImageError] = useState({});
+    const [customBrandInput, setCustomBrandInput] = useState("");
+    const [showCustomBrandInput, setShowCustomBrandInput] = useState(false);
     
+    // ============================================================
+    // FIX: Add ref to prevent double submission
+    // ============================================================
+    const isSubmittingRef = useRef(false);
     const fileInputRef = useRef(null);
     const colorImageInputRef = useRef({});
     const [newBrand, setNewBrand] = useState("");
@@ -52,16 +58,124 @@ const Products = () => {
         taxRate: 0, isTaxFree: false, deliveryDays: "3-5", returnPolicy: "30-day easy returns"
     });
 
+    // ============================================================
+    // FIX: Expanded Color Palette - More Colors
+    // ============================================================
+    const allColors = [
+        // Basic Colors
+        { name: "Black", hex: "#1a1a1a" },
+        { name: "White", hex: "#f5f5f5" },
+        { name: "Red", hex: "#dc2626" },
+        { name: "Blue", hex: "#3b82f6" },
+        { name: "Green", hex: "#22c55e" },
+        { name: "Yellow", hex: "#eab308" },
+        { name: "Orange", hex: "#f97316" },
+        { name: "Purple", hex: "#a855f7" },
+        { name: "Pink", hex: "#ec4899" },
+        { name: "Brown", hex: "#78350f" },
+        { name: "Gray", hex: "#9ca3af" },
+        { name: "Navy", hex: "#1e3a8a" },
+        
+        // Extended Colors
+        { name: "Teal", hex: "#008080" },
+        { name: "Maroon", hex: "#800000" },
+        { name: "Olive", hex: "#808000" },
+        { name: "Coral", hex: "#ff7f50" },
+        { name: "Lavender", hex: "#e6e6fa" },
+        { name: "Mint", hex: "#98ff98" },
+        { name: "Khaki", hex: "#c3b091" },
+        { name: "Beige", hex: "#f5e6d3" },
+        { name: "Turquoise", hex: "#40e0d0" },
+        { name: "Magenta", hex: "#ff00ff" },
+        { name: "Cyan", hex: "#00ffff" },
+        { name: "Gold", hex: "#ffd700" },
+        { name: "Silver", hex: "#c0c0c0" },
+        { name: "Bronze", hex: "#cd7f32" },
+        { name: "Charcoal", hex: "#36454f" },
+        { name: "Ivory", hex: "#fffff0" },
+        { name: "Cream", hex: "#fffdd0" },
+        { name: "Mauve", hex: "#e0b0ff" },
+        { name: "Terracotta", hex: "#e2725b" },
+        { name: "Mustard", hex: "#e1ad01" },
+        { name: "Sage", hex: "#9eae8d" },
+        { name: "Dusty Rose", hex: "#dca3a3" },
+        { name: "Slate", hex: "#708090" },
+        { name: "Burgundy", hex: "#800020" },
+        { name: "Forest Green", hex: "#228b22" },
+        { name: "Sky Blue", hex: "#87ceeb" },
+        { name: "Royal Blue", hex: "#4169e1" },
+        { name: "Crimson", hex: "#dc143c" },
+        { name: "Salmon", hex: "#fa8072" },
+        { name: "Tan", hex: "#d2b48c" },
+        { name: "Peach", hex: "#ffdab9" }
+    ];
+
+    // ============================================================
+    // FIX: Expanded Brands with ability to add custom brands
+    // ============================================================
+    const defaultBrands = [
+        "Zamed Premium",
+        "UrbanStyle", 
+        "PremiumWear",
+        "FashionCo",
+        "Elite Collection",
+        "StreetWear",
+        "LuxuryLine",
+        "EcoFashion",
+        "ModernFit",
+        "ClassicWear",
+        "DesignerHub",
+        "TrendSetter",
+        "UrbanEdge",
+        "PureCotton",
+        "EthnicWear",
+        "ActiveGear",
+        "VintageVibes",
+        "Minimalist",
+        "BoldFashion",
+        "ArtisanCraft"
+    ];
+    const [brands, setBrands] = useState(defaultBrands);
+
+    // Compress image helper
+    const compressImage = (base64String, maxWidth = 1200, quality = 0.85) => {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    if (width > maxWidth) {
+                        height = (height * maxWidth) / width;
+                        width = maxWidth;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    const compressed = canvas.toDataURL('image/jpeg', quality);
+                    resolve(compressed);
+                } catch (error) {
+                    reject(error);
+                }
+            };
+            img.onerror = () => reject(new Error('Failed to load image'));
+            img.src = base64String;
+        });
+    };
+
     // Load currency symbol and settings
     useEffect(() => {
         const loadCurrency = () => {
             const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
             const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
             setCurrencySymbol(symbols[siteSettings.currency] || "$");
-            
-            // Currency loading must NOT overwrite a product currently
-            // being edited. Product-specific values are loaded in handleEdit().
-            // Site defaults are applied only when opening a NEW product form.
         };
         loadCurrency();
         
@@ -106,31 +220,77 @@ const Products = () => {
     ];
     
     const allSizes = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL", "One Size"];
-    const allColors = ["Black", "White", "Red", "Blue", "Green", "Yellow", "Purple", "Pink", "Gray", "Brown", "Navy", "Orange", "Beige", "Maroon", "Teal", "Coral", "Lavender", "Mint", "Khaki"];
-    
-    const defaultBrands = ["Zamed Premium", "UrbanStyle", "PremiumWear", "FashionCo", "Elite Collection"];
-    const [brands, setBrands] = useState(defaultBrands);
+
+    // ============================================================
+    // FIX: Get color swatch with expanded color map
+    // ============================================================
+    const getColorSwatch = (colorName) => {
+        const colorMap = {
+            'Black': '#1a1a1a', 'White': '#f5f5f5', 'Red': '#dc2626', 'Blue': '#3b82f6',
+            'Green': '#22c55e', 'Gray': '#9ca3af', 'Brown': '#78350f', 'Navy': '#1e3a8a',
+            'Pink': '#ec4899', 'Purple': '#a855f7', 'Yellow': '#eab308', 'Orange': '#f97316',
+            'Beige': '#f5e6d3', 'Maroon': '#800000', 'Teal': '#008080', 'Khaki': '#c3b091',
+            'Coral': '#ff7f50', 'Lavender': '#e6e6fa', 'Mint': '#98ff98', 'Olive': '#808000',
+            'Turquoise': '#40e0d0', 'Magenta': '#ff00ff', 'Cyan': '#00ffff', 'Gold': '#ffd700',
+            'Silver': '#c0c0c0', 'Bronze': '#cd7f32', 'Charcoal': '#36454f', 'Ivory': '#fffff0',
+            'Cream': '#fffdd0', 'Mauve': '#e0b0ff', 'Terracotta': '#e2725b', 'Mustard': '#e1ad01',
+            'Sage': '#9eae8d', 'Dusty Rose': '#dca3a3', 'Slate': '#708090', 'Burgundy': '#800020',
+            'Forest Green': '#228b22', 'Sky Blue': '#87ceeb', 'Royal Blue': '#4169e1',
+            'Crimson': '#dc143c', 'Salmon': '#fa8072', 'Tan': '#d2b48c', 'Peach': '#ffdab9'
+        };
+        return colorMap[colorName] || '#cccccc';
+    };
+
+    const getColorNameFromHex = (hex) => {
+        const colorMap = {
+            '#1a1a1a': 'Black', '#f5f5f5': 'White', '#dc2626': 'Red', '#3b82f6': 'Blue',
+            '#22c55e': 'Green', '#9ca3af': 'Gray', '#78350f': 'Brown', '#1e3a8a': 'Navy',
+            '#ec4899': 'Pink', '#a855f7': 'Purple', '#eab308': 'Yellow', '#f97316': 'Orange',
+            '#f5e6d3': 'Beige', '#800000': 'Maroon', '#008080': 'Teal', '#c3b091': 'Khaki',
+            '#ff7f50': 'Coral', '#e6e6fa': 'Lavender', '#98ff98': 'Mint', '#808000': 'Olive',
+            '#40e0d0': 'Turquoise', '#ff00ff': 'Magenta', '#00ffff': 'Cyan', '#ffd700': 'Gold',
+            '#c0c0c0': 'Silver', '#cd7f32': 'Bronze', '#36454f': 'Charcoal', '#fffff0': 'Ivory',
+            '#fffdd0': 'Cream', '#e0b0ff': 'Mauve', '#e2725b': 'Terracotta', '#e1ad01': 'Mustard',
+            '#9eae8d': 'Sage', '#dca3a3': 'Dusty Rose', '#708090': 'Slate', '#800020': 'Burgundy',
+            '#228b22': 'Forest Green', '#87ceeb': 'Sky Blue', '#4169e1': 'Royal Blue',
+            '#dc143c': 'Crimson', '#fa8072': 'Salmon', '#d2b48c': 'Tan', '#ffdab9': 'Peach'
+        };
+        return colorMap[hex] || hex;
+    };
+
+    // ============================================================
+    // FIX: Add new brand
+    // ============================================================
+    const addNewBrand = () => {
+        const trimmed = newBrand.trim();
+        if (!trimmed) {
+            toast.error("Please enter a brand name");
+            return;
+        }
+        if (brands.includes(trimmed)) {
+            toast.warning("Brand already exists");
+            return;
+        }
+        const updatedBrands = [...brands, trimmed];
+        setBrands(updatedBrands);
+        setFormData({ ...formData, brand: trimmed });
+        setNewBrand("");
+        setShowNewBrandInput(false);
+        toast.success(`Brand "${trimmed}" added!`);
+    };
 
     const getSiteProductDefaults = () => {
         try {
             const siteSettings = JSON.parse(
                 localStorage.getItem("site_settings") || "{}"
             );
-
             return {
-                shippingFee:
-                    siteSettings.shippingFee ?? 5,
-                freeShippingThreshold:
-                    siteSettings.freeShippingThreshold ?? 100,
-                taxRate:
-                    siteSettings.taxRate ?? 10
+                shippingFee: siteSettings.shippingFee ?? 5,
+                freeShippingThreshold: siteSettings.freeShippingThreshold ?? 100,
+                taxRate: siteSettings.taxRate ?? 10
             };
         } catch {
-            return {
-                shippingFee: 5,
-                freeShippingThreshold: 100,
-                taxRate: 10
-            };
+            return { shippingFee: 5, freeShippingThreshold: 100, taxRate: 10 };
         }
     };
 
@@ -139,35 +299,18 @@ const Products = () => {
 
         const addProducts = (list = []) => {
             if (!Array.isArray(list)) return;
-
             list.forEach((product) => {
                 if (!product?.id) return;
-
                 const key = String(product.id);
                 const existing = byId.get(key);
-
                 if (!existing) {
                     byId.set(key, product);
                     return;
                 }
-
-                const existingTime = new Date(
-                    existing.updatedAt ||
-                    existing.createdAt ||
-                    0
-                ).getTime();
-
-                const productTime = new Date(
-                    product.updatedAt ||
-                    product.createdAt ||
-                    0
-                ).getTime();
-
+                const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+                const productTime = new Date(product.updatedAt || product.createdAt || 0).getTime();
                 if (productTime >= existingTime) {
-                    byId.set(key, {
-                        ...existing,
-                        ...product
-                    });
+                    byId.set(key, { ...existing, ...product });
                 }
             });
         };
@@ -175,48 +318,30 @@ const Products = () => {
         try {
             addProducts(productService.getAllProducts() || []);
         } catch (error) {
-            console.warn(
-                "Unable to read productService products:",
-                error
-            );
+            console.warn("Unable to read productService products:", error);
         }
 
-        ["shop_products", "admin_products", "products"].forEach(
-            (key) => {
-                try {
-                    addProducts(
-                        JSON.parse(
-                            localStorage.getItem(key) || "[]"
-                        )
-                    );
-                } catch (error) {
-                    console.warn(
-                        `Unable to read ${key}:`,
-                        error
-                    );
-                }
+        ["shop_products", "admin_products", "products"].forEach((key) => {
+            try {
+                addProducts(JSON.parse(localStorage.getItem(key) || "[]"));
+            } catch (error) {
+                console.warn(`Unable to read ${key}:`, error);
             }
-        );
+        });
 
         return [...byId.values()];
     };
 
     const normaliseArrayField = (value) => {
         if (Array.isArray(value)) return value;
-
         if (typeof value === "string") {
-            return value
-                .split(",")
-                .map(item => item.trim())
-                .filter(Boolean);
+            return value.split(",").map(item => item.trim()).filter(Boolean);
         }
-
         return [];
     };
 
     const useLatestProductValues = (product = {}) => {
         const defaults = getSiteProductDefaults();
-
         return {
             name: product.name ?? "",
             price: product.price ?? "",
@@ -229,43 +354,21 @@ const Products = () => {
             description: product.description ?? "",
             brand: product.brand ?? "",
             rating: product.rating ?? 4.5,
-            reviews:
-                Array.isArray(product.reviews)
-                    ? product.reviews.length
-                    : product.reviews ?? 0,
+            reviews: Array.isArray(product.reviews) ? product.reviews.length : product.reviews ?? 0,
             isFeatured: Boolean(product.isFeatured),
             isNewArrival: Boolean(product.isNewArrival),
             tags: normaliseArrayField(product.tags),
             weight: product.weight ?? "",
             material: product.material ?? "",
-            careInstructions:
-                product.careInstructions ??
-                product.care ??
-                "",
-            details:
-                product.details ??
-                product.productDetails ??
-                "",
-            shipping:
-                product.shipping ??
-                product.shippingInformation ??
-                "",
-            shippingFee:
-                product.shippingFee ??
-                defaults.shippingFee,
-            freeShippingThreshold:
-                product.freeShippingThreshold ??
-                defaults.freeShippingThreshold,
-            taxRate:
-                product.taxRate ??
-                defaults.taxRate,
+            careInstructions: product.careInstructions ?? product.care ?? "",
+            details: product.details ?? product.productDetails ?? "",
+            shipping: product.shipping ?? product.shippingInformation ?? "",
+            shippingFee: product.shippingFee ?? defaults.shippingFee,
+            freeShippingThreshold: product.freeShippingThreshold ?? defaults.freeShippingThreshold,
+            taxRate: product.taxRate ?? defaults.taxRate,
             isTaxFree: Boolean(product.isTaxFree),
-            deliveryDays:
-                product.deliveryDays ??
-                "3-5",
-            returnPolicy:
-                product.returnPolicy ??
-                "30-day easy returns"
+            deliveryDays: product.deliveryDays ?? "3-5",
+            returnPolicy: product.returnPolicy ?? "30-day easy returns"
         };
     };
 
@@ -285,36 +388,20 @@ const Products = () => {
         filterProducts();
     }, [products, searchTerm, selectedCategory, selectedGender, selectedStatus]);
 
-    const loadProducts = async ({
-        showToast = false
-    } = {}) => {
+    const loadProducts = async ({ showToast = false } = {}) => {
         setLoading(true);
-
         try {
-            const latestProducts =
-                getFreshStoredProducts();
-
+            const latestProducts = getFreshStoredProducts();
             setProducts(latestProducts);
-
             if (showToast) {
-                toast.success(
-                    `Products refreshed · ${latestProducts.length} loaded`
-                );
+                toast.success(`Products refreshed · ${latestProducts.length} loaded`);
             }
-
             return latestProducts;
         } catch (error) {
-            console.error(
-                "Error loading products:",
-                error
-            );
-
+            console.error("Error loading products:", error);
             if (showToast) {
-                toast.error(
-                    "Unable to refresh products"
-                );
+                toast.error("Unable to refresh products");
             }
-
             return [];
         } finally {
             setLoading(false);
@@ -322,40 +409,25 @@ const Products = () => {
     };
 
     const handleRefreshProducts = async () => {
-        // Clear any stale table-image error states as well.
         setImageError({});
-
-        const latest = await loadProducts({
-            showToast: true
-        });
-
-        window.dispatchEvent(
-            new CustomEvent("productsRefreshed", {
-                detail: {
-                    count: latest.length
-                }
-            })
-        );
+        const latest = await loadProducts({ showToast: true });
+        window.dispatchEvent(new CustomEvent("productsRefreshed", { detail: { count: latest.length } }));
     };
 
     const filterProducts = () => {
         let filtered = [...products];
-        
         if (searchTerm) {
             filtered = filtered.filter(p => 
                 p.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 p.brand?.toLowerCase().includes(searchTerm.toLowerCase())
             );
         }
-        
         if (selectedCategory !== "all") {
             filtered = filtered.filter(p => p.category === selectedCategory);
         }
-        
         if (selectedGender !== "all") {
             filtered = filtered.filter(p => p.gender === selectedGender);
         }
-        
         if (selectedStatus !== "all") {
             if (selectedStatus === "featured") filtered = filtered.filter(p => p.isFeatured);
             else if (selectedStatus === "new") filtered = filtered.filter(p => p.isNewArrival);
@@ -363,148 +435,39 @@ const Products = () => {
             else if (selectedStatus === "outOfStock") filtered = filtered.filter(p => p.stock === 0);
             else if (selectedStatus === "taxFree") filtered = filtered.filter(p => p.isTaxFree);
         }
-        
         setFilteredProducts(filtered);
         setCurrentPage(1);
     };
 
-    // High-quality product image optimisation.
-    // The old implementation reduced every upload to 400px / 50% JPEG,
-    // which permanently destroyed detail before the image reached the storefront.
-    const compressImage = (
-        base64String,
-        maxWidth = 2200,
-        quality = 0.92
-    ) => {
-        return new Promise((resolve, reject) => {
-            const img = new Image();
-
-            img.onload = () => {
-                try {
-                    const naturalWidth = img.naturalWidth || img.width;
-                    const naturalHeight = img.naturalHeight || img.height;
-
-                    // Never upscale. Only reduce very large source files.
-                    const scale = Math.min(
-                        1,
-                        maxWidth / naturalWidth
-                    );
-
-                    const width = Math.max(
-                        1,
-                        Math.round(naturalWidth * scale)
-                    );
-
-                    const height = Math.max(
-                        1,
-                        Math.round(naturalHeight * scale)
-                    );
-
-                    const canvas = document.createElement("canvas");
-                    canvas.width = width;
-                    canvas.height = height;
-
-                    const ctx = canvas.getContext("2d", {
-                        alpha: true
-                    });
-
-                    ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = "high";
-
-                    ctx.drawImage(
-                        img,
-                        0,
-                        0,
-                        width,
-                        height
-                    );
-
-                    // WebP gives significantly better quality per byte than
-                    // the previous low-quality JPEG conversion.
-                    const optimised =
-                        canvas.toDataURL(
-                            "image/webp",
-                            quality
-                        );
-
-                    resolve(optimised);
-                } catch (error) {
-                    reject(error);
-                }
-            };
-
-            img.onerror = () =>
-                reject(
-                    new Error(
-                        "Unable to process this product image."
-                    )
-                );
-
-            img.src = base64String;
-        });
-    };
-
-    const handleImageSelect = async (
-        e,
-        type = "main",
-        colorName = null
-    ) => {
+    const handleImageSelect = async (e, type = "main", colorName = null) => {
         const file = e.target.files?.[0];
-
         if (!file) return;
 
-        const allowedTypes = [
-            "image/jpeg",
-            "image/jpg",
-            "image/png",
-            "image/webp"
-        ];
-
+        const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
         if (!allowedTypes.includes(file.type)) {
-            toast.error(
-                "Please upload JPG, PNG or WebP."
-            );
+            toast.error("Please upload JPG, PNG or WebP.");
             e.target.value = "";
             return;
         }
 
         if (file.size > 25 * 1024 * 1024) {
-            toast.error(
-                "Product image must be smaller than 25MB."
-            );
+            toast.error("Product image must be smaller than 25MB.");
             e.target.value = "";
             return;
         }
 
-        const toastId = toast.loading(
-            "Loading original-quality image..."
-        );
-
+        const toastId = toast.loading("Loading image...");
         const reader = new FileReader();
-
         reader.onload = () => {
-            // IMPORTANT:
-            // Do NOT compress here. ImageCropper receives the original source.
             setCropImage(reader.result);
             setCropType(type);
             setCroppingColor(colorName);
-
-            toast.success(
-                "Original image loaded. Crop when ready.",
-                { id: toastId }
-            );
+            toast.success("Image loaded. Crop when ready.", { id: toastId });
         };
-
         reader.onerror = () => {
-            toast.error(
-                "Unable to read this image.",
-                { id: toastId }
-            );
+            toast.error("Unable to read this image.", { id: toastId });
         };
-
         reader.readAsDataURL(file);
-
-        // Allow selecting the same file again later.
         e.target.value = "";
     };
 
@@ -527,42 +490,52 @@ const Products = () => {
         setImageError(prev => ({ ...prev, [key]: true }));
     };
 
+    // ============================================================
+    // handleSubmit - prevents double submission
+    // ============================================================
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (isSubmitting) return;
+        
+        if (isSubmittingRef.current) {
+            console.log('⚠️ Submission already in progress, skipping...');
+            return;
+        }
+        
+        if (isSubmitting) {
+            console.log('⚠️ Already submitting, skipping...');
+            return;
+        }
         
         if (!formData.name || !formData.price || !formData.category || !formData.gender) {
             toast.error("Please fill all required fields");
             return;
         }
         
+        isSubmittingRef.current = true;
         setIsSubmitting(true);
         
         try {
+            let finalImage = selectedImage || (editingProduct ? editingProduct.image : null);
+            if (finalImage && finalImage.startsWith('data:image') && finalImage.length > 500000) {
+                try {
+                    finalImage = await compressImage(finalImage, 1200, 0.85);
+                } catch (e) {
+                    console.warn('Image compression failed:', e);
+                }
+            }
+            
             const colorImagesObj = {};
             if (formData.colors && formData.colors.length > 0) {
                 formData.colors.forEach(color => {
-                    if (colorImages[color]) colorImagesObj[color] = colorImages[color];
+                    if (colorImages[color]) {
+                        colorImagesObj[color] = colorImages[color];
+                    }
                 });
             }
             
-            const existingProduct =
-                editingProduct
-                    ? (
-                        getFreshStoredProducts().find(
-                            item =>
-                                String(item.id) ===
-                                String(editingProduct.id)
-                        ) || editingProduct
-                    )
-                    : {};
-
             const productData = {
-                ...existingProduct,
-                id:
-                    editingProduct
-                        ? editingProduct.id
-                        : Date.now().toString(),
+                ...(editingProduct || {}),
+                id: editingProduct ? editingProduct.id : Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9),
                 name: formData.name.trim(),
                 price: parseFloat(formData.price),
                 originalPrice: formData.originalPrice ? parseFloat(formData.originalPrice) : null,
@@ -570,56 +543,25 @@ const Products = () => {
                 gender: formData.gender,
                 sizes: formData.sizes || [],
                 colors: formData.colors || [],
-                stock:
-                    formData.stock === "" || formData.stock === null
-                        ? 0
-                        : Number.parseInt(formData.stock, 10) || 0,
+                stock: Number(formData.stock) || 0,
                 description: formData.description || "",
                 brand: formData.brand || "Zamed Premium",
-                image: selectedImage || (editingProduct ? editingProduct.image : null),
+                image: finalImage,
                 colorImages: colorImagesObj,
-                rating:
-                    formData.rating === ""
-                        ? 0
-                        : Number.parseFloat(formData.rating) || 0,
-                reviews:
-                    Array.isArray(existingProduct.reviews)
-                        ? existingProduct.reviews
-                        : (
-                            formData.reviews === ""
-                                ? 0
-                                : Number.parseInt(
-                                    formData.reviews,
-                                    10
-                                ) || 0
-                        ),
+                rating: formData.rating || 0,
+                reviews: editingProduct?.reviews || 0,
                 isFeatured: formData.isFeatured || false,
                 isNewArrival: formData.isNewArrival || false,
-                inStock:
-                    Number(formData.stock) > 0,
+                inStock: Number(formData.stock) > 0,
                 tags: formData.tags || [],
                 weight: formData.weight || "",
                 material: formData.material || "",
                 careInstructions: formData.careInstructions || "",
                 details: formData.details || "",
                 shipping: formData.shipping || "",
-                // Shipping & payment details
-                shippingFee:
-                    formData.shippingFee === ""
-                        ? 0
-                        : Number.parseFloat(formData.shippingFee) || 0,
-                freeShippingThreshold:
-                    formData.freeShippingThreshold === ""
-                        ? 0
-                        : Number.parseFloat(formData.freeShippingThreshold) || 0,
-                taxRate:
-                    formData.isTaxFree
-                        ? 0
-                        : (
-                            formData.taxRate === ""
-                                ? 0
-                                : Number.parseFloat(formData.taxRate) || 0
-                        ),
+                shippingFee: parseFloat(formData.shippingFee) || 0,
+                freeShippingThreshold: parseFloat(formData.freeShippingThreshold) || 0,
+                taxRate: formData.isTaxFree ? 0 : parseFloat(formData.taxRate) || 0,
                 isTaxFree: formData.isTaxFree || false,
                 deliveryDays: formData.deliveryDays || "3-5",
                 returnPolicy: formData.returnPolicy || "30-day easy returns",
@@ -636,17 +578,20 @@ const Products = () => {
             }
             
             handleCloseModal();
-            setTimeout(() => loadProducts(), 500);
             
-            // Dispatch event for real-time updates
+            setTimeout(() => {
+                loadProducts();
+            }, 300);
+            
             window.dispatchEvent(new CustomEvent('productsUpdated'));
             window.dispatchEvent(new Event('storage'));
             
         } catch (error) {
             console.error("Error saving product:", error);
-            toast.error("Failed to save product");
+            toast.error("Failed to save product: " + error.message);
         } finally {
             setIsSubmitting(false);
+            isSubmittingRef.current = false;
         }
     };
 
@@ -659,70 +604,26 @@ const Products = () => {
     };
 
     const handleEdit = (product) => {
-        // Always retrieve the newest stored version instead of relying on
-        // the possibly stale product object rendered in the table.
-        const latestProduct =
-            getFreshStoredProducts().find(
-                item =>
-                    String(item.id) ===
-                    String(product.id)
-            ) || product;
+        const latestProduct = getFreshStoredProducts().find(
+            item => String(item.id) === String(product.id)
+        ) || product;
 
         setEditingProduct(latestProduct);
-
-        setSelectedGenderCategory(
-            latestProduct.gender || "men"
-        );
-
-        const hydratedForm =
-            useLatestProductValues(latestProduct);
-
+        setSelectedGenderCategory(latestProduct.gender || "men");
+        const hydratedForm = useLatestProductValues(latestProduct);
         setFormData(hydratedForm);
-
-        const mainImage =
-            latestProduct.image ||
-            latestProduct.mainImage ||
-            latestProduct.thumbnail ||
-            null;
-
+        const mainImage = latestProduct.image || latestProduct.mainImage || latestProduct.thumbnail || null;
         setImagePreview(mainImage);
         setSelectedImage(mainImage);
-
-        setColorImages({
-            ...(latestProduct.colorImages || {})
-        });
-
+        setColorImages({ ...(latestProduct.colorImages || {}) });
         setImageError({});
         setShowNewBrandInput(false);
         setNewBrand("");
         setShowModal(true);
-
-        // Useful while testing — confirms the fields Admin actually loaded.
-        console.log(
-            "✏️ Editing latest product:",
-            {
-                id: latestProduct.id,
-                name: latestProduct.name,
-                description:
-                    latestProduct.description,
-                details:
-                    latestProduct.details,
-                material:
-                    latestProduct.material,
-                careInstructions:
-                    latestProduct.careInstructions,
-                shipping:
-                    latestProduct.shipping,
-                deliveryDays:
-                    latestProduct.deliveryDays
-            }
-        );
     };
 
     const handleOpenAddProduct = () => {
-        const defaults =
-            getSiteProductDefaults();
-
+        const defaults = getSiteProductDefaults();
         setEditingProduct(null);
         setSelectedGenderCategory("men");
         setSelectedImage(null);
@@ -731,40 +632,16 @@ const Products = () => {
         setImageError({});
         setShowNewBrandInput(false);
         setNewBrand("");
-
         setFormData({
-            name: "",
-            price: "",
-            originalPrice: "",
-            category: "",
-            gender: "",
-            sizes: [],
-            colors: [],
-            stock: 0,
-            description: "",
-            brand: "",
-            rating: 4.5,
-            reviews: 0,
-            isFeatured: false,
-            isNewArrival: false,
-            tags: [],
-            weight: "",
-            material: "",
-            careInstructions: "",
-            details: "",
-            shipping: "",
-            shippingFee:
-                defaults.shippingFee,
-            freeShippingThreshold:
-                defaults.freeShippingThreshold,
-            taxRate:
-                defaults.taxRate,
-            isTaxFree: false,
-            deliveryDays: "3-5",
-            returnPolicy:
-                "30-day easy returns"
+            name: "", price: "", originalPrice: "", category: "", gender: "",
+            sizes: [], colors: [], stock: 0, description: "", brand: "",
+            rating: 4.5, reviews: 0, isFeatured: false, isNewArrival: false,
+            tags: [], weight: "", material: "", careInstructions: "",
+            details: "", shipping: "", shippingFee: defaults.shippingFee,
+            freeShippingThreshold: defaults.freeShippingThreshold,
+            taxRate: defaults.taxRate, isTaxFree: false,
+            deliveryDays: "3-5", returnPolicy: "30-day easy returns"
         });
-
         setShowModal(true);
     };
 
@@ -797,6 +674,7 @@ const Products = () => {
             taxRate: 10, isTaxFree: false, deliveryDays: "3-5", returnPolicy: "30-day easy returns"
         });
         setIsSubmitting(false);
+        isSubmittingRef.current = false;
     };
 
     const toggleSize = (size) => setFormData(prev => ({
@@ -825,17 +703,6 @@ const Products = () => {
         loadProducts();
     };
 
-    const getColorSwatch = (color) => {
-        const map = {
-            'Black': '#1a1a1a', 'White': '#f5f5f5', 'Red': '#dc2626', 'Blue': '#3b82f6',
-            'Green': '#22c55e', 'Gray': '#9ca3af', 'Brown': '#78350f', 'Navy': '#1e3a8a',
-            'Pink': '#ec4899', 'Purple': '#a855f7', 'Yellow': '#eab308', 'Orange': '#f97316',
-            'Beige': '#f5e6d3', 'Maroon': '#800000', 'Teal': '#008080', 'Khaki': '#c3b091',
-            'Coral': '#ff7f50', 'Lavender': '#e6e6fa', 'Mint': '#98ff98'
-        };
-        return map[color] || '#cccccc';
-    };
-
     const handleGenderChange = (gender) => {
         setSelectedGenderCategory(gender);
         setFormData({ ...formData, gender: gender, category: "" });
@@ -846,7 +713,6 @@ const Products = () => {
             toast.error("No products to export");
             return;
         }
-        
         const exportData = filteredProducts.map(p => ({
             ID: p.id, Name: p.name, Price: p.price, Category: p.category,
             Gender: p.gender, Brand: p.brand, Stock: p.stock, Featured: p.isFeatured,
@@ -858,10 +724,8 @@ const Products = () => {
             "Return Policy": p.returnPolicy || "30-day easy returns",
             Created: p.createdAt
         }));
-        
         const headers = Object.keys(exportData[0]);
         const csvRows = [headers.join(',')];
-        
         for (const row of exportData) {
             const values = headers.map(header => {
                 const value = row[header];
@@ -869,7 +733,6 @@ const Products = () => {
             });
             csvRows.push(values.join(','));
         }
-        
         const csv = csvRows.join('\n');
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
@@ -887,7 +750,6 @@ const Products = () => {
     const paginatedProducts = filteredProducts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
     const uniqueCategories = [...new Set(products.map(p => p.category).filter(Boolean))];
 
-    // Get image with fallback
     const getProductImage = (product, colorName = null) => {
         if (colorName && product.colorImages && product.colorImages[colorName]) {
             return product.colorImages[colorName];
@@ -987,7 +849,7 @@ const Products = () => {
                 <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-12 text-center">
                     <FiPackage className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                     <h3 className="text-lg font-semibold dark:text-white">No products found</h3>
-                    <button onClick={() => setShowModal(true)} className="mt-4 text-blue-600 hover:text-blue-700">+ Add your first product</button>
+                    <button onClick={handleOpenAddProduct} className="mt-4 text-blue-600 hover:text-blue-700">+ Add your first product</button>
                 </div>
             ) : viewMode === "grid" ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -1149,7 +1011,7 @@ const Products = () => {
                 </div>
             )}
 
-            {/* Add/Edit Product Modal with Shipping & Payment */}
+            {/* Add/Edit Product Modal */}
             <AnimatePresence>
                 {showModal && (
                     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
@@ -1202,8 +1064,60 @@ const Products = () => {
                                 {/* Category */}
                                 <div><label className="block text-sm font-medium mb-1 dark:text-white">Category *</label><select required value={formData.category} onChange={(e) => setFormData({...formData, category: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700"><option value="">Select Category</option>{getAllCategories().map(cat => <option key={cat} value={cat}>{cat}</option>)}</select></div>
 
-                                {/* Brand */}
-                                <div><label className="block text-sm font-medium mb-1 dark:text-white">Brand</label><select value={formData.brand} onChange={(e) => setFormData({...formData, brand: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700"><option value="">Select Brand</option>{brands.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
+                                {/* Brand - FIXED with Add New Brand option */}
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Brand</label>
+                                    <div className="flex gap-2">
+                                        <select 
+                                            value={formData.brand} 
+                                            onChange={(e) => {
+                                                if (e.target.value === "__ADD_NEW__") {
+                                                    setShowNewBrandInput(true);
+                                                    setFormData({...formData, brand: ""});
+                                                } else {
+                                                    setFormData({...formData, brand: e.target.value});
+                                                }
+                                            }} 
+                                            className="flex-1 px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                        >
+                                            <option value="">Select Brand</option>
+                                            {brands.map(b => <option key={b} value={b}>{b}</option>)}
+                                            <option value="__ADD_NEW__" className="text-blue-600 font-bold">+ Add New Brand</option>
+                                        </select>
+                                        {showNewBrandInput && (
+                                            <div className="flex gap-2 flex-1">
+                                                <input 
+                                                    type="text" 
+                                                    value={newBrand} 
+                                                    onChange={(e) => setNewBrand(e.target.value)} 
+                                                    placeholder="Enter new brand name..." 
+                                                    className="flex-1 px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                                    autoFocus
+                                                />
+                                                <button 
+                                                    type="button" 
+                                                    onClick={addNewBrand} 
+                                                    className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-1"
+                                                >
+                                                    <FiPlusCircle size={16} /> Add
+                                                </button>
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => {
+                                                        setShowNewBrandInput(false);
+                                                        setNewBrand("");
+                                                    }} 
+                                                    className="px-3 py-2 bg-gray-400 text-white rounded-lg hover:bg-gray-500"
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {!showNewBrandInput && formData.brand && (
+                                        <p className="text-xs text-gray-400 mt-1">Selected: <span className="font-medium text-blue-600">{formData.brand}</span></p>
+                                    )}
+                                </div>
 
                                 {/* Stock */}
                                 <div><label className="block text-sm font-medium mb-1 dark:text-white">Stock *</label><input type="number" required value={formData.stock} onChange={(e) => setFormData({...formData, stock: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" /></div>
@@ -1211,8 +1125,76 @@ const Products = () => {
                                 {/* Sizes */}
                                 <div><label className="block text-sm font-medium mb-1 dark:text-white">Available Sizes</label><div className="flex flex-wrap gap-2 p-3 border rounded-lg bg-gray-50 dark:bg-gray-700">{allSizes.map(size => (<button key={size} type="button" onClick={() => toggleSize(size)} className={`px-3 py-1.5 rounded-lg text-sm transition-all ${formData.sizes.includes(size) ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-600 border hover:bg-gray-100'}`}>{size}</button>))}</div></div>
 
-                                {/* Colors */}
-                                <div><label className="block text-sm font-medium mb-1 dark:text-white">Colors & Images</label><div className="flex flex-wrap gap-3 p-3 border rounded-lg bg-gray-50 dark:bg-gray-700 max-h-60 overflow-y-auto">{allColors.map(color => (<div key={color} className="flex flex-col items-center gap-1"><button type="button" onClick={() => toggleColor(color)} className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 ${formData.colors.includes(color) ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-600 border'}`}><div className="w-4 h-4 rounded-full" style={{ backgroundColor: getColorSwatch(color) }} />{color}</button>{formData.colors.includes(color) && (<div className="flex flex-col items-center">{colorImages[color] ? (<div className="relative group"><img src={colorImages[color]} alt={color} className="w-12 h-12 object-cover rounded-lg border-2 border-blue-400" /><button type="button" onClick={() => { setCropImage(colorImages[color]); setCropType('color'); setCroppingColor(color); }} className="absolute -top-1 -right-1 bg-purple-500 text-white rounded-full p-0.5"><FiCrop size={10} /></button></div>) : (<button type="button" onClick={() => colorImageInputRef.current[color]?.click()} className="w-12 h-12 border-2 border-dashed rounded-lg flex items-center justify-center hover:border-blue-500"><FiImage size={16} className="text-gray-400" /></button>)}<input type="file" ref={el => colorImageInputRef.current[color] = el} onChange={(e) => handleImageSelect(e, 'color', color)} accept="image/*" className="hidden" /></div>)}</div>))}</div></div>
+                                {/* Colors - FIXED with expanded colors */}
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Colors & Images</label>
+                                    <div className="flex flex-wrap gap-3 p-3 border rounded-lg bg-gray-50 dark:bg-gray-700 max-h-60 overflow-y-auto">
+                                        {allColors.map((color) => (
+                                            <div key={color.name} className="flex flex-col items-center gap-1">
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => toggleColor(color.name)} 
+                                                    className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-all ${
+                                                        formData.colors.includes(color.name) 
+                                                            ? 'bg-blue-600 text-white' 
+                                                            : 'bg-white dark:bg-gray-600 border hover:bg-gray-100'
+                                                    }`}
+                                                >
+                                                    <div className="w-4 h-4 rounded-full border border-gray-300" style={{ backgroundColor: color.hex }} />
+                                                    {color.name}
+                                                </button>
+                                                {formData.colors.includes(color.name) && (
+                                                    <div className="flex flex-col items-center">
+                                                        {colorImages[color.name] ? (
+                                                            <div className="relative group">
+                                                                <img 
+                                                                    src={colorImages[color.name]} 
+                                                                    alt={color.name} 
+                                                                    className="w-12 h-12 object-cover rounded-lg border-2 border-blue-400" 
+                                                                />
+                                                                <button 
+                                                                    type="button" 
+                                                                    onClick={() => { setCropImage(colorImages[color.name]); setCropType('color'); setCroppingColor(color.name); }} 
+                                                                    className="absolute -top-1 -right-1 bg-purple-500 text-white rounded-full p-0.5 hover:bg-purple-600"
+                                                                >
+                                                                    <FiCrop size={10} />
+                                                                </button>
+                                                                <button 
+                                                                    type="button" 
+                                                                    onClick={() => {
+                                                                        setColorImages(prev => {
+                                                                            const newImages = { ...prev };
+                                                                            delete newImages[color.name];
+                                                                            return newImages;
+                                                                        });
+                                                                    }} 
+                                                                    className="absolute -bottom-1 -right-1 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600"
+                                                                >
+                                                                    <FiX size={10} />
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <button 
+                                                                type="button" 
+                                                                onClick={() => colorImageInputRef.current[color.name]?.click()} 
+                                                                className="w-12 h-12 border-2 border-dashed rounded-lg flex items-center justify-center hover:border-blue-500 transition-colors"
+                                                            >
+                                                                <FiImage size={16} className="text-gray-400" />
+                                                            </button>
+                                                        )}
+                                                        <input 
+                                                            type="file" 
+                                                            ref={el => colorImageInputRef.current[color.name] = el} 
+                                                            onChange={(e) => handleImageSelect(e, 'color', color.name)} 
+                                                            accept="image/*" 
+                                                            className="hidden" 
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
 
                                 {/* Description */}
                                 <div className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-700"><label className="block text-md font-semibold mb-2 dark:text-white">📝 Description</label><textarea id="field-description" rows="4" value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700" placeholder="Enter product description" /></div>
@@ -1232,7 +1214,6 @@ const Products = () => {
                                         <FiTruck className="text-blue-600" /> Shipping & Payment Details
                                     </h3>
                                     
-                                    {/* Tax Free Toggle in Shipping Section */}
                                     <div className="mb-4 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
                                         <label className="flex items-center justify-between cursor-pointer">
                                             <div>
@@ -1301,7 +1282,14 @@ const Products = () => {
 
                                 {/* Buttons */}
                                 <div className="flex gap-3 pt-4 sticky bottom-0 bg-white dark:bg-gray-800 border-t pt-4 -mb-6 mt-4">
-                                    <button type="submit" disabled={isSubmitting} className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 disabled:opacity-50"><FiSave size={18} /> {isSubmitting ? "Saving..." : (editingProduct ? "Update Product" : "Add Product")}</button>
+                                    <button 
+                                        type="submit" 
+                                        disabled={isSubmitting || isSubmittingRef.current} 
+                                        className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <FiSave size={18} /> 
+                                        {isSubmitting || isSubmittingRef.current ? "Saving..." : (editingProduct ? "Update Product" : "Add Product")}
+                                    </button>
                                     <button type="button" onClick={handleCloseModal} className="flex-1 bg-gray-500 text-white py-3 rounded-lg hover:bg-gray-600">Cancel</button>
                                 </div>
                             </form>
@@ -1314,11 +1302,7 @@ const Products = () => {
             {cropImage && (
                 <ImageCropper
                     image={cropImage}
-                    cropType={
-                        cropType === "color"
-                            ? "productColor"
-                            : "product"
-                    }
+                    cropType={cropType === "color" ? "productColor" : "product"}
                     onCropComplete={handleCropComplete}
                     onClose={() => {
                         setCropImage(null);

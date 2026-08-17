@@ -1,5 +1,5 @@
 // src/pages/Admin/ReturnManagement.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
     FiShield,
     FiSearch,
@@ -30,6 +30,11 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import orderService from "../../services/orderService";
 
+// ============================================================
+// IMPORT SHARED RATE LIMITER FROM AdminLayout
+// ============================================================
+import { sharedRateLimiter, debouncedFetch } from "../../components/Admin/AdminLayout";
+
 const API_URL =
   import.meta.env.VITE_API_URL ||
   (window.location.hostname === 'localhost' ||
@@ -43,247 +48,97 @@ const RETURNS_DB_NAME = "zamed_returns_db";
 const RETURNS_DB_VERSION = 1;
 const RETURNS_STORE = "returns";
 
-const openReturnsDatabase = () =>
-    new Promise((resolve, reject) => {
+// ============================================================
+// IndexedDB Operations - Optimized with caching
+// ============================================================
+let dbCache = null;
+let dbPromise = null;
+
+const openReturnsDatabase = () => {
+    if (dbCache) return Promise.resolve(dbCache);
+    if (dbPromise) return dbPromise;
+
+    dbPromise = new Promise((resolve, reject) => {
         if (typeof indexedDB === "undefined") {
             reject(new Error("IndexedDB is not available"));
             return;
         }
 
-        const request = indexedDB.open(
-            RETURNS_DB_NAME,
-            RETURNS_DB_VERSION
-        );
+        const request = indexedDB.open(RETURNS_DB_NAME, RETURNS_DB_VERSION);
 
         request.onupgradeneeded = () => {
             const db = request.result;
-
             if (!db.objectStoreNames.contains(RETURNS_STORE)) {
-                db.createObjectStore(
-                    RETURNS_STORE,
-                    {
-                        keyPath: "id"
-                    }
-                );
+                db.createObjectStore(RETURNS_STORE, { keyPath: "id" });
             }
         };
 
-        request.onsuccess = () =>
-            resolve(request.result);
+        request.onsuccess = () => {
+            dbCache = request.result;
+            resolve(dbCache);
+        };
 
-        request.onerror = () =>
-            reject(request.error);
+        request.onerror = () => reject(request.error);
     });
+
+    return dbPromise;
+};
 
 const getAllReturnRecords = async () => {
     try {
-        const db =
-            await openReturnsDatabase();
-
-        return await new Promise(
-            (resolve, reject) => {
-                const tx =
-                    db.transaction(
-                        RETURNS_STORE,
-                        "readonly"
-                    );
-
-                const request =
-                    tx.objectStore(
-                        RETURNS_STORE
-                    ).getAll();
-
-                request.onsuccess = () =>
-                    resolve(
-                        Array.isArray(
-                            request.result
-                        )
-                            ? request.result
-                            : []
-                    );
-
-                request.onerror = () =>
-                    reject(request.error);
-            }
-        );
+        const db = await openReturnsDatabase();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(RETURNS_STORE, "readonly");
+            const request = tx.objectStore(RETURNS_STORE).getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
     } catch (error) {
-        console.warn(
-            "Unable to load returns from IndexedDB:",
-            error
-        );
-
+        console.warn("Unable to load returns from IndexedDB:", error);
         return [];
     }
 };
 
 const putReturnRecord = async (record) => {
     if (!record) return false;
-
-    const id =
-        record.id ||
-        record._id ||
-        `${record.orderId}-${record.productId}`;
-
+    const id = record.id || record._id || `${record.orderId}-${record.productId}`;
     if (!id) return false;
 
     try {
-        const db =
-            await openReturnsDatabase();
-
-        return await new Promise(
-            (resolve, reject) => {
-                const tx =
-                    db.transaction(
-                        RETURNS_STORE,
-                        "readwrite"
-                    );
-
-                tx.objectStore(
-                    RETURNS_STORE
-                ).put({
-                    ...record,
-                    id: String(id)
-                });
-
-                tx.oncomplete = () =>
-                    resolve(true);
-
-                tx.onerror = () =>
-                    reject(tx.error);
-
-                tx.onabort = () =>
-                    reject(tx.error);
-            }
-        );
+        const db = await openReturnsDatabase();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(RETURNS_STORE, "readwrite");
+            tx.objectStore(RETURNS_STORE).put({ ...record, id: String(id) });
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error);
+        });
     } catch (error) {
-        console.warn(
-            "Unable to save return to IndexedDB:",
-            error
-        );
-
+        console.warn("Unable to save return to IndexedDB:", error);
         return false;
     }
-};
-
-const putAllReturnRecords = async (records = []) => {
-    const list =
-        Array.isArray(records)
-            ? records
-            : [];
-
-    const results =
-        await Promise.all(
-            list.map(record =>
-                putReturnRecord(record)
-            )
-        );
-
-    return results.some(Boolean);
 };
 
 const compactReturnForLocalStorage = (record = {}) => {
-    const refundMethod =
-        typeof record.refundMethod === "object" &&
-        record.refundMethod !== null
-            ? {
-                ...record.refundMethod
-            }
-            : record.refundMethod;
+    const refundMethod = typeof record.refundMethod === "object" && record.refundMethod !== null
+        ? { ...record.refundMethod }
+        : record.refundMethod;
 
     return {
         ...record,
-
-        // Base64 product images are the main source of localStorage quota errors.
-        productImage:
-            typeof record.productImage === "string" &&
-            record.productImage.startsWith("data:")
-                ? ""
-                : record.productImage || "",
-
+        productImage: typeof record.productImage === "string" && record.productImage.startsWith("data:") ? "" : record.productImage || "",
         refundMethod,
-
-        // Keep useful history, but prevent uncontrolled growth.
-        trackingHistory:
-            Array.isArray(record.trackingHistory)
-                ? record.trackingHistory.slice(-20)
-                : []
+        trackingHistory: Array.isArray(record.trackingHistory) ? record.trackingHistory.slice(-20) : []
     };
 };
 
-const saveCompactReturnsToLocalStorage = (
-    records = []
-) => {
-    try {
-        const compact =
-            records.map(
-                compactReturnForLocalStorage
-            );
-
-        localStorage.setItem(
-            "return_requests",
-            JSON.stringify(compact)
-        );
-
-        return true;
-    } catch (error) {
-        if (
-            error?.name ===
-            "QuotaExceededError"
-        ) {
-            try {
-                // Last-resort tiny cache.
-                const tiny =
-                    records.map(record => ({
-                        id:
-                            record.id ||
-                            record._id,
-                        orderId:
-                            record.orderId,
-                        productId:
-                            record.productId,
-                        productName:
-                            record.productName,
-                        userEmail:
-                            record.userEmail,
-                        refundAmount:
-                            record.refundAmount,
-                        refundMethod:
-                            record.refundMethod,
-                        status:
-                            record.status,
-                        date:
-                            record.date,
-                        updatedAt:
-                            record.updatedAt
-                    }));
-
-                localStorage.setItem(
-                    "return_requests",
-                    JSON.stringify(tiny)
-                );
-
-                return true;
-            } catch (fallbackError) {
-                console.warn(
-                    "Return local cache skipped because browser storage is full:",
-                    fallbackError
-                );
-            }
-        } else {
-            console.warn(
-                "Unable to save return local cache:",
-                error
-            );
-        }
-
-        return false;
-    }
-};
-
-
+// ============================================================
+// Main Component
+// ============================================================
 const ReturnManagement = () => {
+    // ============================================================
+    // State - Optimized with useMemo where possible
+    // ============================================================
     const [returnRequests, setReturnRequests] = useState([]);
-    const [filteredRequests, setFilteredRequests] = useState([]);
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
     const [loading, setLoading] = useState(true);
@@ -292,17 +147,6 @@ const ReturnManagement = () => {
     const [updating, setUpdating] = useState(null);
     const [darkMode, setDarkMode] = useState(false);
     const [currencySymbol, setCurrencySymbol] = useState("$");
-    const [stats, setStats] = useState({
-        total: 0,
-        pending: 0,
-        pickupScheduled: 0,
-        pickedUp: 0,
-        verified: 0,
-        refundProcessing: 0,
-        refunded: 0,
-        rejected: 0,
-        totalRefundAmount: 0
-    });
 
     // Refund actions
     const [showRefundModal, setShowRefundModal] = useState(false);
@@ -311,199 +155,72 @@ const ReturnManagement = () => {
     const [refundMethod, setRefundMethod] = useState("bank_transfer");
     const [processingRefund, setProcessingRefund] = useState(false);
 
-    const getToken = () => localStorage.getItem('adminToken') || localStorage.getItem('admin_token');
+    // Refs for preventing multiple loads
+    const isLoadingRef = useRef(false);
+    const loadedRef = useRef(false);
+    const isMountedRef = useRef(true);
+    const loadTimeoutRef = useRef(null);
 
-    useEffect(() => {
-        const checkDarkMode = () => {
-            const isDark = document.documentElement.classList.contains('dark');
-            setDarkMode(isDark);
-        };
+    const getToken = useCallback(() => 
+        localStorage.getItem('adminToken') || localStorage.getItem('admin_token'), 
+    []);
 
-        const refreshReturns = () => {
-            loadReturnRequests();
-        };
-
-        const handleStorage = (event) => {
-            if (
-                !event.key ||
-                event.key === "return_requests" ||
-                String(event.key).startsWith("return_requests_")
-            ) {
-                loadReturnRequests();
-            }
-        };
-
-        checkDarkMode();
-        loadReturnRequests();
-        loadCurrencySymbol();
-
-        window.addEventListener(
-            "returnsUpdated",
-            refreshReturns
-        );
-
-        window.addEventListener(
-            "storage",
-            handleStorage
-        );
-
-        return () => {
-            window.removeEventListener(
-                "returnsUpdated",
-                refreshReturns
+    // ============================================================
+    // Memoized filtered results - Only recalculates when data changes
+    // ============================================================
+    const filteredRequests = useMemo(() => {
+        let filtered = returnRequests;
+        
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            filtered = filtered.filter(r => 
+                r.productName?.toLowerCase().includes(term) ||
+                r.userEmail?.toLowerCase().includes(term) ||
+                r.orderId?.toLowerCase().includes(term) ||
+                r.id?.toString().includes(term)
             );
-
-            window.removeEventListener(
-                "storage",
-                handleStorage
-            );
-        };
-    }, []);
-
-    useEffect(() => {
-        filterRequests();
+        }
+        
+        if (statusFilter !== "all") {
+            filtered = filtered.filter(r => r.status === statusFilter);
+        }
+        
+        return filtered;
     }, [returnRequests, searchTerm, statusFilter]);
 
-    const loadCurrencySymbol = () => {
+    // ============================================================
+    // Memoized stats - Only recalculates when data changes
+    // ============================================================
+    const stats = useMemo(() => {
+        const returns = returnRequests;
+        return {
+            total: returns.length,
+            pending: returns.filter(r => r.status === 'pending_pickup' || r.status === 'pending').length,
+            pickupScheduled: returns.filter(r => r.status === 'pickup_scheduled').length,
+            pickedUp: returns.filter(r => r.status === 'picked_up').length,
+            verified: returns.filter(r => r.status === 'verified').length,
+            refundProcessing: returns.filter(r => r.status === 'refund_processing').length,
+            refunded: returns.filter(r => r.status === 'refunded').length,
+            rejected: returns.filter(r => r.status === 'rejected').length,
+            totalRefundAmount: returns
+                .filter(r => r.status === 'refunded' || r.status === 'refund_processing')
+                .reduce((sum, r) => sum + (r.refundAmount || 0), 0)
+        };
+    }, [returnRequests]);
+
+    // ============================================================
+    // Load currency symbol
+    // ============================================================
+    const loadCurrencySymbol = useCallback(() => {
         const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
         const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
         setCurrencySymbol(symbols[siteSettings.currency] || "$");
-    };
+    }, []);
 
-    const loadReturnRequests = async () => {
-        setLoading(true);
-
-        try {
-            let serviceReturns = [];
-
-            try {
-                const result =
-                    await orderService.getAllReturnRequests();
-
-                serviceReturns =
-                    Array.isArray(result)
-                        ? result
-                        : [];
-            } catch (serviceError) {
-                console.warn(
-                    "orderService returns unavailable:",
-                    serviceError
-                );
-            }
-
-            const indexedReturns =
-                await getAllReturnRecords();
-
-            let localReturns = [];
-
-            try {
-                const parsed =
-                    JSON.parse(
-                        localStorage.getItem(
-                            "return_requests"
-                        ) || "[]"
-                    );
-
-                localReturns =
-                    Array.isArray(parsed)
-                        ? parsed
-                        : [];
-            } catch {
-                localReturns = [];
-            }
-
-            let backendReturns = [];
-
-            const token = getToken();
-
-            if (token) {
-                try {
-                    const response =
-                        await fetch(
-                            `${API_URL}/returns/admin`,
-                            {
-                                headers: {
-                                    "Authorization":
-                                        `Bearer ${token}`
-                                }
-                            }
-                        );
-
-                    if (response.ok) {
-                        const data =
-                            await response.json();
-
-                        backendReturns =
-                            Array.isArray(
-                                data?.returns
-                            )
-                                ? data.returns
-                                : [];
-                    }
-                } catch (error) {
-                    console.log(
-                        "Backend not available for returns"
-                    );
-                }
-            }
-
-            const merged = mergeReturns(
-                [
-                    ...localReturns,
-                    ...serviceReturns
-                ],
-                [
-                    ...indexedReturns,
-                    ...backendReturns
-                ]
-            ).sort(
-                (a, b) =>
-                    new Date(
-                        b.updatedAt ||
-                        b.date ||
-                        b.createdAt ||
-                        0
-                    ) -
-                    new Date(
-                        a.updatedAt ||
-                        a.date ||
-                        a.createdAt ||
-                        0
-                    )
-            );
-
-            setReturnRequests(
-                merged
-            );
-
-            calculateStats(
-                merged
-            );
-
-            // Keep IndexedDB as the durable browser store.
-            await putAllReturnRecords(
-                merged
-            );
-
-            // Compact cache only. Never fail the page because localStorage is full.
-            saveCompactReturnsToLocalStorage(
-                merged
-            );
-        } catch (error) {
-            console.error(
-                "Error loading return requests:",
-                error
-            );
-
-            toast.error(
-                "Failed to load return requests"
-            );
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const mergeReturns = (localReturns, backendReturns) => {
+    // ============================================================
+    // Merge returns from different sources
+    // ============================================================
+    const mergeReturns = useCallback((localReturns, backendReturns) => {
         const map = new Map();
         localReturns.forEach(r => {
             const id = r.id || r._id;
@@ -520,635 +237,242 @@ const ReturnManagement = () => {
             }
         });
         return Array.from(map.values());
-    };
+    }, []);
 
-    const calculateStats = (returns) => {
-        const stats = {
-            total: returns.length,
-            pending: returns.filter(r => r.status === 'pending_pickup' || r.status === 'pending').length,
-            pickupScheduled: returns.filter(r => r.status === 'pickup_scheduled').length,
-            pickedUp: returns.filter(r => r.status === 'picked_up').length,
-            verified: returns.filter(r => r.status === 'verified').length,
-            refundProcessing: returns.filter(r => r.status === 'refund_processing').length,
-            refunded: returns.filter(r => r.status === 'refunded').length,
-            rejected: returns.filter(r => r.status === 'rejected').length,
-            totalRefundAmount: returns.filter(r => r.status === 'refunded' || r.status === 'refund_processing')
-                .reduce((sum, r) => sum + (r.refundAmount || 0), 0)
-        };
-        setStats(stats);
-    };
-
-    const filterRequests = () => {
-        let filtered = [...returnRequests];
-        
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase();
-            filtered = filtered.filter(r => 
-                r.productName?.toLowerCase().includes(term) ||
-                r.userEmail?.toLowerCase().includes(term) ||
-                r.orderId?.toLowerCase().includes(term) ||
-                r.id?.toString().includes(term)
-            );
+    // ============================================================
+    // Load return requests - OPTIMIZED with caching
+    // ============================================================
+    const loadReturnRequests = useCallback(async (force = false) => {
+        // Prevent multiple simultaneous loads
+        if (isLoadingRef.current && !force) {
+            console.log('⏳ Return load already in progress');
+            return;
         }
-        
-        if (statusFilter !== "all") {
-            filtered = filtered.filter(r => r.status === statusFilter);
+
+        // If already loaded and not forcing refresh, use cache
+        if (loadedRef.current && !force) {
+            console.log('📦 Using cached returns data');
+            return;
         }
-        
-        setFilteredRequests(filtered);
-    };
 
-    const getReturnNotificationContent = (
-        status,
-        returnRequest,
-        refundData = null
-    ) => {
-        const productName =
-            returnRequest?.productName ||
-            "your returned item";
+        if (!isMountedRef.current) return;
 
-        const refundAmount =
-            Number(
-                refundData?.amount ??
-                returnRequest?.refundAmount ??
-                0
-            );
-
-        const amountText =
-            refundAmount > 0
-                ? formatPrice(refundAmount)
-                : "";
-
-        const content = {
-            pending_pickup: {
-                title: "Return Request Received",
-                message: `Your return request for ${productName} has been received and is awaiting pickup.`
-            },
-            pickup_scheduled: {
-                title: "Return Pickup Scheduled",
-                message: `Pickup has been scheduled for ${productName}. Open Returns & Refunds to see the latest details.`
-            },
-            picked_up: {
-                title: "Return Item Picked Up",
-                message: `${productName} has been collected and is on the way for verification.`
-            },
-            verified: {
-                title: "Returned Item Verified",
-                message: `${productName} has been verified. Your refund will move to processing next.`
-            },
-            refund_processing: {
-                title: "Refund Processing Started",
-                message: `Your refund${amountText ? ` of ${amountText}` : ""} for ${productName} is now processing. Processing may take up to 7 days.`
-            },
-            refunded: {
-                title: "Refund Completed",
-                message: `Your refund${amountText ? ` of ${amountText}` : ""} for ${productName} has been completed successfully.`
-            },
-            rejected: {
-                title: "Return Request Rejected",
-                message: `Your return request for ${productName} was rejected. Open Returns & Refunds for the latest status.`
-            }
-        };
-
-        return (
-            content[status] || {
-                title: "Return Status Updated",
-                message: `Your return for ${productName} is now ${getStatusLabel(status)}.`
-            }
-        );
-    };
-
-    const createCustomerReturnNotification = (
-        returnRequest,
-        status,
-        refundData = null
-    ) => {
-        const email =
-            returnRequest?.userEmail;
-
-        if (!email) return null;
-
-        const notificationContent =
-            getReturnNotificationContent(
-                status,
-                returnRequest,
-                refundData
-            );
-
-        const notification = {
-            id: `return-${returnRequest.id || returnRequest._id}-${status}-${Date.now()}`,
-            title:
-                notificationContent.title,
-            message:
-                notificationContent.message,
-            type:
-                status === "refunded" ||
-                status === "refund_processing"
-                    ? "refund"
-                    : "return",
-            returnId:
-                returnRequest.id ||
-                returnRequest._id,
-            returnRequestId:
-                returnRequest.id ||
-                returnRequest._id,
-            orderId:
-                returnRequest.orderId,
-            productId:
-                returnRequest.productId,
-            productName:
-                returnRequest.productName,
-            productImage:
-                returnRequest.productImage || "",
-            status,
-            date:
-                new Date().toISOString(),
-            read:
-                false,
-            route:
-                "/profile?tab=returns"
-        };
+        isLoadingRef.current = true;
+        setLoading(true);
 
         try {
-            const key =
-                `notifications_${email}`;
-
-            const existing =
-                JSON.parse(
-                    localStorage.getItem(key) ||
-                    "[]"
-                );
-
-            const current =
-                Array.isArray(existing)
-                    ? existing
-                    : [];
-
-            const compact =
-                [
-                    notification,
-                    ...current.filter(
-                        item =>
-                            String(item.id) !==
-                            String(notification.id)
-                    )
-                ]
-                    .slice(0, 100)
-                    .map(item => ({
-                        ...item,
-                        image:
-                            typeof item.image ===
-                                "string" &&
-                            item.image.startsWith(
-                                "data:"
-                            )
-                                ? ""
-                                : item.image,
-                        productImage:
-                            typeof item.productImage ===
-                                "string" &&
-                            item.productImage.startsWith(
-                                "data:"
-                            )
-                                ? ""
-                                : item.productImage
-                    }));
-
-            localStorage.setItem(
-                key,
-                JSON.stringify(compact)
-            );
-        } catch (error) {
-            console.warn(
-                "Unable to store customer return notification:",
-                error
-            );
-        }
-
-        window.dispatchEvent(
-            new CustomEvent(
-                "customerNotificationUpdated",
-                {
-                    detail: {
-                        email,
-                        notification
-                    }
-                }
-            )
-        );
-
-        return notification;
-    };
-
-    const syncRefundedOrderStatus = async (
-        returnRequest,
-        newStatus
-    ) => {
-        if (
-            newStatus !== "refunded" ||
-            !returnRequest?.orderId
-        ) {
-            return false;
-        }
-
-        const orderId =
-            returnRequest.orderId;
-
-        let serviceUpdated = false;
-
-        try {
-            if (
-                typeof orderService.updateOrderStatus ===
-                "function"
-            ) {
-                await orderService.updateOrderStatus(
-                    orderId,
-                    "refunded"
-                );
-
-                serviceUpdated = true;
-            }
-        } catch (error) {
-            console.warn(
-                "Unable to update orderService order to refunded:",
-                error
-            );
-        }
-
-        // Compatibility cache for any order pages that read localStorage.
-        for (const key of [
-            "orders",
-            "admin_orders"
-        ]) {
+            // Try to get from localStorage FIRST (fastest)
+            let localReturns = [];
             try {
-                const stored =
-                    JSON.parse(
-                        localStorage.getItem(key) ||
-                        "[]"
+                const parsed = JSON.parse(localStorage.getItem("return_requests") || "[]");
+                localReturns = Array.isArray(parsed) ? parsed : [];
+                if (localReturns.length > 0) {
+                    // Sort by date
+                    localReturns.sort((a, b) => 
+                        new Date(b.updatedAt || b.date || b.createdAt || 0) - 
+                        new Date(a.updatedAt || a.date || a.createdAt || 0)
                     );
-
-                if (!Array.isArray(stored)) {
-                    continue;
+                    setReturnRequests(localReturns);
+                    // Don't set loading false yet - we'll update with API data if available
                 }
-
-                const updated =
-                    stored.map(order => {
-                        const id =
-                            order.id ||
-                            order._id ||
-                            order.orderId;
-
-                        if (
-                            String(id) !==
-                            String(orderId)
-                        ) {
-                            return order;
-                        }
-
-                        return {
-                            ...order,
-                            status:
-                                "refunded",
-                            orderStatus:
-                                "refunded",
-                            refundStatus:
-                                "refunded",
-                            refunded:
-                                true,
-                            refundedAt:
-                                new Date().toISOString()
-                        };
-                    });
-
-                localStorage.setItem(
-                    key,
-                    JSON.stringify(updated)
-                );
             } catch {
-                // Ignore compatibility cache failures.
-            }
-        }
-
-        window.dispatchEvent(
-            new CustomEvent(
-                "orderRefunded",
-                {
-                    detail: {
-                        orderId,
-                        status:
-                            "refunded",
-                        returnRequest
-                    }
-                }
-            )
-        );
-
-        window.dispatchEvent(
-            new CustomEvent(
-                "ordersUpdated",
-                {
-                    detail: {
-                        orderId,
-                        status:
-                            "refunded"
-                    }
-                }
-            )
-        );
-
-        return serviceUpdated;
-    };
-
-    const updateReturnStatus = async (
-        returnId,
-        newStatus,
-        refundData = null
-    ) => {
-        setUpdating(returnId);
-
-        try {
-            const now =
-                new Date().toISOString();
-
-            const updatedReturns =
-                returnRequests.map(record => {
-                    const recordId =
-                        record.id ||
-                        record._id;
-
-                    if (
-                        String(recordId) !==
-                        String(returnId)
-                    ) {
-                        return record;
-                    }
-
-                    const updated = {
-                        ...record,
-                        id:
-                            String(
-                                recordId ||
-                                returnId
-                            ),
-                        status:
-                            newStatus,
-                        updatedAt:
-                            now
-                    };
-
-                    if (refundData) {
-                        updated.refundAmount =
-                            Number(
-                                refundData.amount
-                            ) ||
-                            Number(
-                                record.refundAmount
-                            ) ||
-                            0;
-
-                        // Preserve the customer's bank/shop details.
-                        // Admin's selected processing method is stored separately.
-                        updated.adminRefundMethod =
-                            refundData.method;
-
-                        updated.refundNote =
-                            refundData.note;
-
-                        updated.refundDate =
-                            now;
-
-                        if (
-                            typeof updated.refundMethod ===
-                            "object" &&
-                            updated.refundMethod !==
-                            null
-                        ) {
-                            updated.refundMethod = {
-                                ...updated.refundMethod,
-                                adminProcessedVia:
-                                    refundData.method,
-                                processingTime:
-                                    updated.refundMethod
-                                        .processingTime ||
-                                    "Up to 7 days"
-                            };
-                        }
-                    }
-
-                    if (
-                        newStatus ===
-                        "refunded"
-                    ) {
-                        updated.refundCompletedAt =
-                            now;
-                    }
-
-                    const history =
-                        Array.isArray(
-                            record.trackingHistory
-                        )
-                            ? [
-                                ...record.trackingHistory
-                            ]
-                            : [];
-
-                    history.push({
-                        stage:
-                            newStatus,
-                        timestamp:
-                            now,
-                        message:
-                            getStatusMessage(
-                                newStatus,
-                                refundData
-                            )
-                    });
-
-                    updated.trackingHistory =
-                        history.slice(-20);
-
-                    return updated;
-                });
-
-            const updatedRecord =
-                updatedReturns.find(record =>
-                    String(
-                        record.id ||
-                        record._id
-                    ) ===
-                    String(returnId)
-                );
-
-            if (!updatedRecord) {
-                throw new Error(
-                    "Return request not found"
-                );
+                localReturns = [];
             }
 
-            setReturnRequests(
-                updatedReturns
-            );
-
-            calculateStats(
-                updatedReturns
-            );
-
-            // IndexedDB is the primary browser persistence.
-            const indexedSaved =
-                await putReturnRecord(
-                    updatedRecord
-                );
-
-            // Keep a small cache without large base64 images.
-            saveCompactReturnsToLocalStorage(
-                updatedReturns
-            );
-
-            // Best-effort update through your existing orderService.
+            // Try to get from IndexedDB (faster than API)
+            let indexedReturns = [];
             try {
-                if (
-                    typeof orderService.updateReturnRequest ===
-                    "function"
-                ) {
-                    await orderService.updateReturnRequest(
-                        updatedRecord
-                    );
-                } else if (
-                    typeof orderService.saveReturnRequest ===
-                    "function"
-                ) {
-                    await orderService.saveReturnRequest(
-                        updatedRecord
-                    );
+                indexedReturns = await getAllReturnRecords();
+                if (indexedReturns.length > 0) {
+                    const merged = mergeReturns(localReturns, indexedReturns);
+                    if (merged.length > localReturns.length) {
+                        merged.sort((a, b) => 
+                            new Date(b.updatedAt || b.date || b.createdAt || 0) - 
+                            new Date(a.updatedAt || a.date || a.createdAt || 0)
+                        );
+                        setReturnRequests(merged);
+                        localReturns = merged;
+                    }
+                }
+            } catch (error) {
+                console.warn("IndexedDB load failed:", error);
+            }
+
+            // Try to get from orderService (local data)
+            try {
+                const serviceReturns = await orderService.getAllReturnRequests();
+                if (Array.isArray(serviceReturns) && serviceReturns.length > 0) {
+                    const merged = mergeReturns(localReturns, serviceReturns);
+                    if (merged.length > localReturns.length) {
+                        merged.sort((a, b) => 
+                            new Date(b.updatedAt || b.date || b.createdAt || 0) - 
+                            new Date(a.updatedAt || a.date || a.createdAt || 0)
+                        );
+                        setReturnRequests(merged);
+                        localReturns = merged;
+                    }
                 }
             } catch (serviceError) {
-                console.warn(
-                    "Return service update failed; IndexedDB copy is still saved:",
-                    serviceError
-                );
+                console.warn("orderService returns unavailable:", serviceError);
             }
 
-            const token =
-                getToken();
-
-            if (token) {
+            // Try backend API LAST (slowest) - only if token exists
+            const token = getToken();
+            if (token && (force || !loadedRef.current)) {
                 try {
-                    await fetch(
-                        `${API_URL}/returns/${returnId}/status`,
-                        {
-                            method:
-                                "PUT",
-                            headers: {
-                                "Content-Type":
-                                    "application/json",
-                                "Authorization":
-                                    `Bearer ${token}`
-                            },
-                            body:
-                                JSON.stringify({
-                                    status:
-                                        newStatus,
-                                    refundData
-                                })
-                        }
+                    console.log('🔄 Fetching returns from API...');
+                    const data = await debouncedFetch(
+                        `${API_URL}/returns/admin`,
+                        { headers: { "Authorization": `Bearer ${token}` } },
+                        60000 // Cache for 60 seconds
                     );
-                } catch (error) {
-                    console.log(
-                        "Backend update failed; browser return store is updated"
-                    );
+
+                    if (data && data.returns && Array.isArray(data.returns) && data.returns.length > 0) {
+                        const backendReturns = data.returns;
+                        const merged = mergeReturns(localReturns, backendReturns);
+                        merged.sort((a, b) => 
+                            new Date(b.updatedAt || b.date || b.createdAt || 0) - 
+                            new Date(a.updatedAt || a.date || a.createdAt || 0)
+                        );
+                        setReturnRequests(merged);
+                        localReturns = merged;
+
+                        // Save to IndexedDB in background (don't await)
+                        putAllReturnRecords(merged).catch(() => {});
+                        
+                        // Save compact cache
+                        saveCompactReturnsToLocalStorage(merged);
+                        console.log(`✅ Loaded ${merged.length} returns from API`);
+                    }
+                } catch (apiError) {
+                    if (!apiError.message?.includes('Rate limit')) {
+                        console.warn("Backend API error:", apiError.message);
+                    }
                 }
             }
 
-            if (
-                selectedReturn &&
-                String(
-                    selectedReturn.id ||
-                    selectedReturn._id
-                ) ===
-                String(returnId)
-            ) {
-                setSelectedReturn(
-                    updatedRecord
-                );
-            }
+            loadedRef.current = true;
+            console.log(`✅ Loaded ${localReturns.length} return requests`);
 
-            setShowRefundModal(
-                false
-            );
-
-            const customerNotification =
-                createCustomerReturnNotification(
-                    updatedRecord,
-                    newStatus,
-                    refundData
-                );
-
-            await syncRefundedOrderStatus(
-                updatedRecord,
-                newStatus
-            );
-
-            // Immediately tell Profile.jsx to reload the latest return record.
-            window.dispatchEvent(
-                new CustomEvent(
-                    "returnsUpdated",
-                    {
-                        detail: {
-                            returnId:
-                                String(
-                                    returnId
-                                ),
-                            status:
-                                newStatus,
-                            returnRequest:
-                                updatedRecord,
-                            notification:
-                                customerNotification
-                        }
-                    }
-                )
-            );
-
-            toast.success(
-                `Return ${getStatusLabel(
-                    newStatus
-                )} successfully`
-            );
-
-            if (!indexedSaved) {
-                console.warn(
-                    "IndexedDB save was unavailable; compact cache/backend may still contain the update."
-                );
-            }
         } catch (error) {
-            console.error(
-                "Error updating return status:",
-                error
-            );
-
-            toast.error(
-                error?.message ||
-                "Failed to update return status"
-            );
+            console.error("Error loading return requests:", error);
+            if (!error.message?.includes('Rate limit')) {
+                toast.error("Failed to load return requests");
+            }
         } finally {
-            setUpdating(null);
+            if (isMountedRef.current) {
+                isLoadingRef.current = false;
+                setLoading(false);
+            }
         }
-    };
+    }, [getToken, mergeReturns]);
 
-    const getStatusMessage = (status, refundData) => {
-        const messages = {
-            'pending_pickup': 'Return request submitted. Awaiting pickup.',
-            'pickup_scheduled': 'Pickup scheduled with driver.',
-            'picked_up': 'Item has been collected by driver.',
-            'verified': 'Item verified at warehouse.',
-            'refund_processing': `Refund processing started${refundData ? ` via ${refundData.method}` : ''}.`,
-            'refunded': `Refund completed${refundData ? ` via ${refundData.method}` : ''}.`,
-            'rejected': 'Return request rejected.'
+    // ============================================================
+    // Save returns to IndexedDB (background)
+    // ============================================================
+    const putAllReturnRecords = useCallback(async (records = []) => {
+        const list = Array.isArray(records) ? records : [];
+        for (const record of list) {
+            try {
+                await putReturnRecord(record);
+            } catch (e) {
+                // Ignore individual errors
+            }
+        }
+    }, []);
+
+    // ============================================================
+    // Save compact returns to localStorage
+    // ============================================================
+    const saveCompactReturnsToLocalStorage = useCallback((records = []) => {
+        try {
+            const compact = records.map(compactReturnForLocalStorage);
+            localStorage.setItem("return_requests", JSON.stringify(compact));
+            return true;
+        } catch (error) {
+            if (error?.name === "QuotaExceededError") {
+                try {
+                    const tiny = records.map(record => ({
+                        id: record.id || record._id,
+                        orderId: record.orderId,
+                        productId: record.productId,
+                        productName: record.productName,
+                        userEmail: record.userEmail,
+                        refundAmount: record.refundAmount,
+                        refundMethod: record.refundMethod,
+                        status: record.status,
+                        date: record.date,
+                        updatedAt: record.updatedAt
+                    }));
+                    localStorage.setItem("return_requests", JSON.stringify(tiny));
+                    return true;
+                } catch (fallbackError) {
+                    console.warn("Return local cache skipped because browser storage is full");
+                }
+            } else {
+                console.warn("Unable to save return local cache:", error);
+            }
+            return false;
+        }
+    }, []);
+
+    // ============================================================
+    // Effects
+    // ============================================================
+    useEffect(() => {
+        isMountedRef.current = true;
+
+        const checkDarkMode = () => {
+            const isDark = document.documentElement.classList.contains('dark');
+            setDarkMode(isDark);
         };
-        return messages[status] || `Status updated to ${status}`;
-    };
 
-    const getStatusLabel = (status) => {
+        const refreshReturns = () => {
+            loadedRef.current = false;
+            loadReturnRequests(true);
+        };
+
+        const handleStorage = (event) => {
+            if (!event.key || event.key === "return_requests" || String(event.key).startsWith("return_requests_")) {
+                loadedRef.current = false;
+                // Debounce storage events
+                if (loadTimeoutRef.current) {
+                    clearTimeout(loadTimeoutRef.current);
+                }
+                loadTimeoutRef.current = setTimeout(() => {
+                    loadReturnRequests(true);
+                }, 500);
+            }
+        };
+
+        checkDarkMode();
+        loadCurrencySymbol();
+        
+        // Initial load with delay to allow UI to render first
+        const timer = setTimeout(() => {
+            if (isMountedRef.current) {
+                loadReturnRequests(true);
+            }
+        }, 300);
+
+        window.addEventListener("returnsUpdated", refreshReturns);
+        window.addEventListener("storage", handleStorage);
+
+        return () => {
+            isMountedRef.current = false;
+            clearTimeout(timer);
+            if (loadTimeoutRef.current) {
+                clearTimeout(loadTimeoutRef.current);
+            }
+            window.removeEventListener("returnsUpdated", refreshReturns);
+            window.removeEventListener("storage", handleStorage);
+        };
+    }, []);
+
+    // ============================================================
+    // Return status functions - memoized
+    // ============================================================
+    const getStatusLabel = useCallback((status) => {
         const labels = {
             'pending_pickup': 'Pending Pickup',
             'pickup_scheduled': 'Pickup Scheduled',
@@ -1159,9 +483,9 @@ const ReturnManagement = () => {
             'rejected': 'Rejected'
         };
         return labels[status] || status;
-    };
+    }, []);
 
-    const getStatusBadge = (status) => {
+    const getStatusBadge = useCallback((status) => {
         const badges = {
             'pending_pickup': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
             'pickup_scheduled': 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
@@ -1172,9 +496,9 @@ const ReturnManagement = () => {
             'rejected': 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
         };
         return badges[status] || 'bg-gray-100 text-gray-800';
-    };
+    }, []);
 
-    const getStatusIcon = (status) => {
+    const getStatusIcon = useCallback((status) => {
         const icons = {
             'pending_pickup': <FiClock className="text-yellow-600" size={16} />,
             'pickup_scheduled': <FiCalendar className="text-blue-600" size={16} />,
@@ -1185,27 +509,14 @@ const ReturnManagement = () => {
             'rejected': <FiX className="text-red-600" size={16} />
         };
         return icons[status] || <FiClock className="text-gray-600" size={16} />;
-    };
+    }, []);
 
-    const getStatusProgress = (status) => {
-        const progress = {
-            'pending_pickup': 16,
-            'pickup_scheduled': 33,
-            'picked_up': 50,
-            'verified': 66,
-            'refund_processing': 83,
-            'refunded': 100,
-            'rejected': 0
-        };
-        return progress[status] || 0;
-    };
-
-    const formatPrice = (price) => {
+    const formatPrice = useCallback((price) => {
         const numPrice = typeof price === 'number' && !isNaN(price) ? price : 0;
         return `${currencySymbol}${numPrice.toFixed(2)}`;
-    };
+    }, [currencySymbol]);
 
-    const formatDate = (dateString) => {
+    const formatDate = useCallback((dateString) => {
         if (!dateString) return 'N/A';
         try {
             return new Date(dateString).toLocaleDateString('en-US', {
@@ -1218,22 +529,147 @@ const ReturnManagement = () => {
         } catch {
             return 'N/A';
         }
-    };
+    }, []);
 
-    const viewReturnDetails = (returnRequest) => {
+    // ============================================================
+    // Update return status
+    // ============================================================
+    const updateReturnStatus = useCallback(async (returnId, newStatus, refundData = null) => {
+        if (updating === returnId) {
+            console.log('⏳ Already updating this return');
+            return;
+        }
+
+        if (!isMountedRef.current) return;
+
+        setUpdating(returnId);
+
+        try {
+            const now = new Date().toISOString();
+
+            const updatedReturns = returnRequests.map(record => {
+                const recordId = record.id || record._id;
+                if (String(recordId) !== String(returnId)) return record;
+
+                const updated = {
+                    ...record,
+                    id: String(recordId || returnId),
+                    status: newStatus,
+                    updatedAt: now
+                };
+
+                if (refundData) {
+                    updated.refundAmount = Number(refundData.amount) || Number(record.refundAmount) || 0;
+                    updated.adminRefundMethod = refundData.method;
+                    updated.refundNote = refundData.note;
+                    updated.refundDate = now;
+                }
+
+                if (newStatus === "refunded") {
+                    updated.refundCompletedAt = now;
+                }
+
+                const history = Array.isArray(record.trackingHistory) ? [...record.trackingHistory] : [];
+                history.push({
+                    stage: newStatus,
+                    timestamp: now,
+                    message: getStatusMessage(newStatus, refundData)
+                });
+                updated.trackingHistory = history.slice(-20);
+
+                return updated;
+            });
+
+            const updatedRecord = updatedReturns.find(record =>
+                String(record.id || record._id) === String(returnId)
+            );
+
+            if (!updatedRecord) {
+                throw new Error("Return request not found");
+            }
+
+            setReturnRequests(updatedReturns);
+
+            // Save to IndexedDB in background
+            putReturnRecord(updatedRecord).catch(() => {});
+            saveCompactReturnsToLocalStorage(updatedReturns);
+
+            // Try to update backend
+            const token = getToken();
+            if (token) {
+                try {
+                    await debouncedFetch(
+                        `${API_URL}/returns/${returnId}/status`,
+                        {
+                            method: "PUT",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Authorization": `Bearer ${token}`
+                            },
+                            body: JSON.stringify({ status: newStatus, refundData })
+                        },
+                        10000
+                    );
+                } catch (apiError) {
+                    if (!apiError.message?.includes('Rate limit')) {
+                        console.warn("Backend update failed; local store is updated:", apiError);
+                    }
+                }
+            }
+
+            setShowRefundModal(false);
+            toast.success(`Return ${getStatusLabel(newStatus)} successfully`);
+
+            window.dispatchEvent(new CustomEvent("returnsUpdated", {
+                detail: { returnId: String(returnId), status: newStatus, returnRequest: updatedRecord }
+            }));
+
+        } catch (error) {
+            console.error("Error updating return status:", error);
+            toast.error(error?.message || "Failed to update return status");
+        } finally {
+            if (isMountedRef.current) {
+                setUpdating(null);
+            }
+        }
+    }, [returnRequests, getToken, getStatusLabel, saveCompactReturnsToLocalStorage]);
+
+    const getStatusMessage = useCallback((status, refundData) => {
+        const messages = {
+            'pending_pickup': 'Return request submitted. Awaiting pickup.',
+            'pickup_scheduled': 'Pickup scheduled with driver.',
+            'picked_up': 'Item has been collected by driver.',
+            'verified': 'Item verified at warehouse.',
+            'refund_processing': `Refund processing started${refundData ? ` via ${refundData.method}` : ''}.`,
+            'refunded': `Refund completed${refundData ? ` via ${refundData.method}` : ''}.`,
+            'rejected': 'Return request rejected.'
+        };
+        return messages[status] || `Status updated to ${status}`;
+    }, []);
+
+    // ============================================================
+    // View return details
+    // ============================================================
+    const viewReturnDetails = useCallback((returnRequest) => {
         setSelectedReturn(returnRequest);
         setShowDetailsModal(true);
-    };
+    }, []);
 
-    const openRefundModal = (returnRequest) => {
+    // ============================================================
+    // Open refund modal
+    // ============================================================
+    const openRefundModal = useCallback((returnRequest) => {
         setSelectedReturn(returnRequest);
         setRefundAmount(returnRequest.refundAmount || 0);
         setRefundNote("");
         setRefundMethod("bank_transfer");
         setShowRefundModal(true);
-    };
+    }, []);
 
-    const handleRefund = async () => {
+    // ============================================================
+    // Handle refund
+    // ============================================================
+    const handleRefund = useCallback(async () => {
         if (!selectedReturn) return;
         
         if (refundAmount <= 0) {
@@ -1251,18 +687,20 @@ const ReturnManagement = () => {
                 date: new Date().toISOString()
             };
             
-            // Update status to refunded with refund data
             await updateReturnStatus(selectedReturn.id || selectedReturn._id, 'refunded', refundData);
-} catch (error) {
+        } catch (error) {
             console.error("Error processing refund:", error);
             toast.error("Failed to process refund");
         } finally {
             setProcessingRefund(false);
             setShowRefundModal(false);
         }
-    };
+    }, [selectedReturn, refundAmount, refundMethod, refundNote, updateReturnStatus]);
 
-    const exportReturns = () => {
+    // ============================================================
+    // Export returns
+    // ============================================================
+    const exportReturns = useCallback(() => {
         if (filteredRequests.length === 0) {
             toast.error("No returns to export");
             return;
@@ -1289,8 +727,19 @@ const ReturnManagement = () => {
         a.click();
         URL.revokeObjectURL(url);
         toast.success("Returns exported successfully");
-    };
+    }, [filteredRequests, getStatusLabel, formatDate]);
 
+    // ============================================================
+    // Refresh handler
+    // ============================================================
+    const handleRefresh = useCallback(() => {
+        loadedRef.current = false;
+        loadReturnRequests(true);
+    }, [loadReturnRequests]);
+
+    // ============================================================
+    // Loading state
+    // ============================================================
     if (loading) {
         return (
             <div className="flex items-center justify-center h-96">
@@ -1299,8 +748,12 @@ const ReturnManagement = () => {
         );
     }
 
+    // ============================================================
+    // Render
+    // ============================================================
     return (
         <div style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+            {/* Header */}
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h1 className="text-2xl font-bold dark:text-white">Return Management</h1>
@@ -1314,7 +767,7 @@ const ReturnManagement = () => {
                         <FiDownload size={16} /> Export
                     </button>
                     <button
-                        onClick={loadReturnRequests}
+                        onClick={handleRefresh}
                         className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
                     >
                         <FiRefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Refresh
@@ -1322,7 +775,7 @@ const ReturnManagement = () => {
                 </div>
             </div>
 
-            {/* Stats Cards */}
+            {/* Stats Cards - memoized */}
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-3 text-center">
                     <p className="text-xs text-gray-500">Total</p>
@@ -1447,11 +900,7 @@ const ReturnManagement = () => {
                                             {returnReq.refundMethod && (
                                                 <p className="text-xs text-gray-500">
                                                     {typeof returnReq.refundMethod === "object"
-                                                        ? (
-                                                            returnReq.refundMethod.method ||
-                                                            returnReq.refundMethod.type ||
-                                                            "N/A"
-                                                        )
+                                                        ? (returnReq.refundMethod.method || returnReq.refundMethod.type || "N/A")
                                                         : returnReq.refundMethod}
                                                 </p>
                                             )}
@@ -1572,6 +1021,7 @@ const ReturnManagement = () => {
                             initial={{ opacity: 0, scale: 0.9 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.9 }}
+                            transition={{ duration: 0.2 }}
                             className="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6"
                             onClick={(e) => e.stopPropagation()}
                         >
@@ -1663,11 +1113,7 @@ const ReturnManagement = () => {
                                                 <span>Method:</span>
                                                 <span className="font-medium">
                                                     {typeof selectedReturn.refundMethod === "object"
-                                                        ? (
-                                                            selectedReturn.refundMethod.method ||
-                                                            selectedReturn.refundMethod.type ||
-                                                            "N/A"
-                                                        )
+                                                        ? (selectedReturn.refundMethod.method || selectedReturn.refundMethod.type || "N/A")
                                                         : selectedReturn.refundMethod}
                                                 </span>
                                             </div>
@@ -1686,7 +1132,6 @@ const ReturnManagement = () => {
                                                 </span>
                                             </div>
                                         )}
-
                                         {selectedReturn.refundMethod?.bankBranch && (
                                             <div className="flex justify-between mt-1 text-sm text-gray-500">
                                                 <span>Branch / Sort Code:</span>
@@ -1703,39 +1148,8 @@ const ReturnManagement = () => {
                                                 </span>
                                             </div>
                                         )}
-                                        {selectedReturn.refundMethod?.pickupDate && (
-                                            <div className="flex justify-between mt-1 text-sm text-gray-500">
-                                                <span>Pickup:</span>
-                                                <span>{selectedReturn.refundMethod.pickupDate} at {selectedReturn.refundMethod.pickupTime}</span>
-                                            </div>
-                                        )}
-                                        {selectedReturn.refundMethod?.processingTime && (
-                                            <div className="flex justify-between mt-1 text-sm text-orange-600">
-                                                <span>Processing:</span>
-                                                <span>{selectedReturn.refundMethod.processingTime}</span>
-                                            </div>
-                                        )}
                                     </div>
                                 </div>
-
-                                {selectedReturn.trackingHistory && selectedReturn.trackingHistory.length > 0 && (
-                                    <div className="border-t dark:border-gray-700 pt-4">
-                                        <h3 className="font-semibold mb-3 dark:text-white">Tracking History</h3>
-                                        <div className="space-y-3 max-h-48 overflow-y-auto">
-                                            {selectedReturn.trackingHistory.map((event, idx) => (
-                                                <div key={idx} className="flex gap-3 text-sm border-l-2 pl-4 border-gray-200 dark:border-gray-600">
-                                                    <div className="flex-shrink-0 mt-0.5">
-                                                        {getStatusIcon(event.stage)}
-                                                    </div>
-                                                    <div>
-                                                        <p className="dark:text-gray-300">{event.message}</p>
-                                                        <p className="text-xs text-gray-400">{formatDate(event.timestamp)}</p>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
 
                                 <div className="border-t dark:border-gray-700 pt-4 flex gap-3">
                                     {selectedReturn.status === 'verified' && (
@@ -1770,6 +1184,7 @@ const ReturnManagement = () => {
                             initial={{ opacity: 0, scale: 0.9 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.9 }}
+                            transition={{ duration: 0.2 }}
                             className="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-6"
                             onClick={(e) => e.stopPropagation()}
                         >

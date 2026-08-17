@@ -4,7 +4,7 @@ import {
     FiStar, FiTrash2, FiCheck, FiX, FiSearch, FiRefreshCw,
     FiMessageSquare, FiUser, FiCalendar, FiFilter, FiEye,
     FiThumbsUp, FiThumbsDown, FiMail, FiFlag, FiClock,
-    FiAlertCircle, FiEdit2, FiSend
+    FiAlertCircle, FiEdit2, FiSend, FiImage
 } from "react-icons/fi";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -34,6 +34,9 @@ const Reviews = () => {
         total: 0, pending: 0, approved: 0, rejected: 0,
         averageRating: 0, totalRatings: 0
     });
+    const [selectedImages, setSelectedImages] = useState([]);
+    const [showImageModal, setShowImageModal] = useState(false);
+    const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
     const getToken = () =>
         localStorage.getItem('adminToken') ||
@@ -198,6 +201,12 @@ const Reviews = () => {
                 resolveImageValue(review.product?.images) ||
                 getProductImage(matchingProduct || {});
 
+            // Ensure review images are properly resolved
+            const reviewImages = review.images || review.photos || review.pictures || [];
+            const resolvedReviewImages = Array.isArray(reviewImages)
+                ? reviewImages.map(img => resolveImageValue(img)).filter(Boolean)
+                : [];
+
             return {
                 ...review,
                 productId:
@@ -212,7 +221,9 @@ const Reviews = () => {
                     matchingProduct?.name ||
                     matchingProduct?.title ||
                     'Product',
-                productImage: resolvedImage || null
+                productImage: resolvedImage || null,
+                // Preserve and resolve review images
+                reviewImages: resolvedReviewImages.length > 0 ? resolvedReviewImages : (review.reviewImages || [])
             };
         });
     };
@@ -230,7 +241,7 @@ const Reviews = () => {
                 <div
                     className={`${className} flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-gradient-to-br from-gray-50 to-gray-100 dark:border-gray-600 dark:from-gray-700 dark:to-gray-800`}
                 >
-                    <FiStar className="text-gray-300 dark:text-gray-500" />
+                    <FiImage className="text-gray-300 dark:text-gray-500" />
                 </div>
             );
         }
@@ -244,6 +255,54 @@ const Reviews = () => {
                 onError={() => setFailed(true)}
             />
         );
+    };
+
+    const ReviewImagesGallery = ({ images, onImageClick }) => {
+        if (!images || images.length === 0) return null;
+
+        const displayImages = images.slice(0, 3);
+
+        return (
+            <div className="flex gap-1 mt-1">
+                {displayImages.map((img, idx) => (
+                    <button
+                        key={idx}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onImageClick && onImageClick(images, idx);
+                        }}
+                        className="relative w-8 h-8 rounded border overflow-hidden hover:opacity-80 transition-opacity"
+                    >
+                        <img
+                            src={img}
+                            alt={`Review ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                                e.target.style.display = 'none';
+                            }}
+                        />
+                    </button>
+                ))}
+                {images.length > 3 && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onImageClick && onImageClick(images, 0);
+                        }}
+                        className="w-8 h-8 rounded border bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-xs font-medium text-gray-600 dark:text-gray-300"
+                    >
+                        +{images.length - 3}
+                    </button>
+                )}
+            </div>
+        );
+    };
+
+    const openImageModal = (images, index = 0) => {
+        if (!images || images.length === 0) return;
+        setSelectedImages(images);
+        setCurrentImageIndex(index);
+        setShowImageModal(true);
     };
 
     useEffect(() => {
@@ -299,6 +358,7 @@ const Reviews = () => {
         const products = getStoredProducts();
         let allReviews = [];
 
+        // Get reviews from products
         products.forEach((product) => {
             if (Array.isArray(product.reviews)) {
                 product.reviews.forEach((review) => {
@@ -316,12 +376,15 @@ const Reviews = () => {
                             'Product',
                         productImage:
                             resolveImageValue(review.productImage) ||
-                            getProductImage(product)
+                            getProductImage(product),
+                        // Preserve review images
+                        reviewImages: review.images || review.photos || review.reviewImages || []
                     });
                 });
             }
         });
 
+        // Get reviews from localStorage
         const storedReviews = JSON.parse(
             localStorage.getItem('product_reviews') || '[]'
         );
@@ -330,9 +393,21 @@ const Reviews = () => {
             allReviews = [...allReviews, ...storedReviews];
         }
 
+        // Get reviews from IndexedDB (if available)
+        try {
+            const indexedDBReviews = JSON.parse(
+                localStorage.getItem('indexeddb_reviews') || '[]'
+            );
+            if (Array.isArray(indexedDBReviews)) {
+                allReviews = [...allReviews, ...indexedDBReviews];
+            }
+        } catch (e) {
+            // Ignore
+        }
+
         allReviews = enrichReviewsWithProductImages(allReviews);
 
-        // Remove duplicates while preserving reviews without an explicit id.
+        // Remove duplicates
         const uniqueReviews = [];
         const ids = new Set();
 
@@ -681,54 +756,77 @@ const Reviews = () => {
                         <table className="w-full">
                             <thead className="bg-gray-50 dark:bg-gray-700">
                                 <tr>
-                                    <th className="px-4 py-3 text-left">Product</th>
-                                    <th className="px-4 py-3 text-left">Customer</th>
-                                    <th className="px-4 py-3 text-left">Rating</th>
-                                    <th className="px-4 py-3 text-left">Comment</th>
-                                    <th className="px-4 py-3 text-left">Date</th>
-                                    <th className="px-4 py-3 text-left">Status</th>
-                                    <th className="px-4 py-3 text-left">Actions</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Product</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Customer</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Rating</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Review Images</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Comment</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Date</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Status</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {filteredReviews.map((review) => (
-                                    <tr key={review.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
-                                        <td className="px-4 py-3">
-                                            <div className="flex items-center gap-2">
-                                                <ProductImage
-                                                    src={review.productImage}
-                                                    alt={review.productName}
-                                                    className="h-12 w-12"
-                                                />
-                                                <span className="text-sm font-medium dark:text-white">{review.productName}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <p className="font-medium dark:text-white">{review.userName || 'Anonymous'}</p>
-                                            {review.userEmail && <p className="text-xs text-gray-500">{review.userEmail}</p>}
-                                        </td>
-                                        <td className="px-4 py-3">{renderStars(review.rating)}</td>
-                                        <td className="px-4 py-3 max-w-xs"><p className="text-sm dark:text-gray-300 line-clamp-2">{review.comment}</p></td>
-                                        <td className="px-4 py-3 text-sm dark:text-gray-300">{formatDate(review.date)}</td>
-                                        <td className="px-4 py-3">
-                                            <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getStatusBadge(review.status)}`}>
-                                                {review.status}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <div className="flex gap-2">
-                                                <button onClick={() => viewReviewDetails(review)} className="text-blue-600 hover:text-blue-800" title="View Details"><FiEye size={16} /></button>
-                                                {review.status === 'pending' && (
-                                                    <>
-                                                        <button onClick={() => updateReviewStatus(review.id, 'approved')} className="text-green-600 hover:text-green-800" title="Approve"><FiCheck size={16} /></button>
-                                                        <button onClick={() => updateReviewStatus(review.id, 'rejected')} className="text-red-600 hover:text-red-800" title="Reject"><FiX size={16} /></button>
-                                                    </>
+                                {filteredReviews.map((review) => {
+                                    const hasImages = review.reviewImages && review.reviewImages.length > 0;
+                                    return (
+                                        <tr key={review.id} className="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                            <td className="px-4 py-3">
+                                                <div className="flex items-center gap-2">
+                                                    <ProductImage
+                                                        src={review.productImage}
+                                                        alt={review.productName}
+                                                        className="h-12 w-12"
+                                                    />
+                                                    <span className="text-sm font-medium dark:text-white line-clamp-1">{review.productName}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <p className="font-medium dark:text-white">{review.userName || 'Anonymous'}</p>
+                                                {review.userEmail && <p className="text-xs text-gray-500">{review.userEmail}</p>}
+                                            </td>
+                                            <td className="px-4 py-3">{renderStars(review.rating)}</td>
+                                            <td className="px-4 py-3">
+                                                {hasImages ? (
+                                                    <ReviewImagesGallery 
+                                                        images={review.reviewImages} 
+                                                        onImageClick={openImageModal}
+                                                    />
+                                                ) : (
+                                                    <span className="text-xs text-gray-400">No images</span>
                                                 )}
-                                                <button onClick={() => deleteReview(review.id)} className="text-red-600 hover:text-red-800" title="Delete"><FiTrash2 size={16} /></button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
+                                            </td>
+                                            <td className="px-4 py-3 max-w-xs"><p className="text-sm dark:text-gray-300 line-clamp-2">{review.comment}</p></td>
+                                            <td className="px-4 py-3 text-sm dark:text-gray-300">{formatDate(review.date)}</td>
+                                            <td className="px-4 py-3">
+                                                <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getStatusBadge(review.status)}`}>
+                                                    {review.status}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => viewReviewDetails(review)} className="text-blue-600 hover:text-blue-800" title="View Details"><FiEye size={16} /></button>
+                                                    {review.status === 'pending' && (
+                                                        <>
+                                                            <button onClick={() => updateReviewStatus(review.id, 'approved')} className="text-green-600 hover:text-green-800" title="Approve"><FiCheck size={16} /></button>
+                                                            <button onClick={() => updateReviewStatus(review.id, 'rejected')} className="text-red-600 hover:text-red-800" title="Reject"><FiX size={16} /></button>
+                                                        </>
+                                                    )}
+                                                    <button onClick={() => deleteReview(review.id)} className="text-red-600 hover:text-red-800" title="Delete"><FiTrash2 size={16} /></button>
+                                                    {hasImages && (
+                                                        <button 
+                                                            onClick={() => openImageModal(review.reviewImages, 0)} 
+                                                            className="text-purple-600 hover:text-purple-800" 
+                                                            title="View Images"
+                                                        >
+                                                            <FiImage size={16} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
@@ -753,6 +851,32 @@ const Reviews = () => {
                                     />
                                     <div><h3 className="font-semibold dark:text-white">{selectedReview.productName}</h3><p className="text-sm text-gray-500">Product ID: {selectedReview.productId}</p></div>
                                 </div>
+
+                                {/* Review Images */}
+                                {selectedReview.reviewImages && selectedReview.reviewImages.length > 0 && (
+                                    <div>
+                                        <p className="text-sm text-gray-500 mb-2">Review Images</p>
+                                        <div className="flex gap-2 flex-wrap">
+                                            {selectedReview.reviewImages.map((img, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    onClick={() => openImageModal(selectedReview.reviewImages, idx)}
+                                                    className="relative w-20 h-20 rounded-lg border overflow-hidden hover:opacity-80 transition-opacity"
+                                                >
+                                                    <img
+                                                        src={img}
+                                                        alt={`Review ${idx + 1}`}
+                                                        className="w-full h-full object-cover"
+                                                        onError={(e) => {
+                                                            e.target.style.display = 'none';
+                                                        }}
+                                                    />
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div><p className="text-sm text-gray-500">Customer</p><p className="font-medium dark:text-white">{selectedReview.userName || 'Anonymous'}</p>{selectedReview.userEmail && <p className="text-sm text-gray-500">{selectedReview.userEmail}</p>}</div>
                                 <div><p className="text-sm text-gray-500">Rating</p>{renderStars(selectedReview.rating)}</div>
                                 <div><p className="text-sm text-gray-500">Comment</p><p className="text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700 p-3 rounded-lg">{selectedReview.comment}</p></div>
@@ -773,6 +897,69 @@ const Reviews = () => {
                                     <button onClick={() => setShowModal(false)} className="flex-1 bg-gray-500 text-white py-2 rounded-lg">Close</button>
                                 </div>
                             </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
+            {/* Image Gallery Modal */}
+            <AnimatePresence>
+                {showImageModal && selectedImages && selectedImages.length > 0 && (
+                    <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50" onClick={() => setShowImageModal(false)}>
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.9 }}
+                            className="relative max-w-4xl w-full max-h-[90vh]"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <button
+                                onClick={() => setShowImageModal(false)}
+                                className="absolute -top-12 right-0 text-white hover:text-gray-300 transition-colors"
+                            >
+                                <FiX size={28} />
+                            </button>
+                            
+                            <div className="relative flex items-center justify-center h-full">
+                                <img
+                                    src={selectedImages[currentImageIndex]}
+                                    alt={`Review ${currentImageIndex + 1}`}
+                                    className="max-w-full max-h-[80vh] object-contain"
+                                    onError={(e) => {
+                                        e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23ddd" width="200" height="200"/%3E%3Ctext x="50%25" y="50%25" font-family="sans-serif" font-size="14" fill="%23999" text-anchor="middle" dy=".3em"%3ENo image%3C/text%3E%3C/svg%3E';
+                                    }}
+                                />
+                            </div>
+
+                            {selectedImages.length > 1 && (
+                                <>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setCurrentImageIndex(prev => (prev === 0 ? selectedImages.length - 1 : prev - 1));
+                                        }}
+                                        className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-3 rounded-full transition-colors"
+                                    >
+                                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                                        </svg>
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setCurrentImageIndex(prev => (prev === selectedImages.length - 1 ? 0 : prev + 1));
+                                        }}
+                                        className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-3 rounded-full transition-colors"
+                                    >
+                                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                        </svg>
+                                    </button>
+                                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white px-3 py-1 rounded-full text-sm">
+                                        {currentImageIndex + 1} / {selectedImages.length}
+                                    </div>
+                                </>
+                            )}
                         </motion.div>
                     </div>
                 )}

@@ -25,6 +25,11 @@ import { loadProductImages, loadProductsImages } from "../../utils/imageLoader";
 import { getWorkingImage } from "../../utils/imageUtils";
 import ProductReviews from "./ProductReviews";
 
+// ============================================================
+// FIX: Use the existing imageLoader instead of custom functions
+// ============================================================
+const fallbackProductImage = getWorkingImage(0);
+
 const ProductDetails = () => {
     const { id } = useParams();
     const navigate = useNavigate();
@@ -214,42 +219,49 @@ const ProductDetails = () => {
         return text.split('\n').filter(line => line.trim());
     };
 
+    // ============================================================
+    // FIX: Use loadProductImages from imageLoader.js
+    // ============================================================
     const loadProduct = async () => {
         setLoading(true);
         try {
+            // Get all products from productService
             const allProducts = productService.getAllProducts();
-            const loadedProducts = await loadProductsImages(allProducts);
-            const foundProduct = loadedProducts.find(
-                item =>
-                    String(item.id) === String(id)
+            
+            // Find the product
+            const foundProduct = allProducts.find(
+                item => String(item.id) === String(id)
             );
             
             if (foundProduct) {
-                setProduct(foundProduct);
-                setCurrentImage(
-                    foundProduct.image ||
-                    foundProduct.mainImage ||
-                    foundProduct.thumbnail ||
-                    ""
-                );
+                // ✅ Use loadProductImages from imageLoader.js
+                const loadedProduct = await loadProductImages(foundProduct);
                 
-                if (settings.showProductSizes && foundProduct.sizes && foundProduct.sizes.length > 0) {
-                    setSelectedSize(foundProduct.sizes[0]);
+                setProduct(loadedProduct);
+                setCurrentImage(loadedProduct.image || fallbackProductImage);
+                
+                if (settings.showProductSizes && loadedProduct.sizes && loadedProduct.sizes.length > 0) {
+                    setSelectedSize(loadedProduct.sizes[0]);
                 }
-                if (settings.showProductColors && foundProduct.colors && foundProduct.colors.length > 0) {
-                    setSelectedColor(foundProduct.colors[0]);
-                    if (foundProduct.colorImages && foundProduct.colorImages[foundProduct.colors[0]]) {
-                        setCurrentImage(foundProduct.colorImages[foundProduct.colors[0]]);
+                if (settings.showProductColors && loadedProduct.colors && loadedProduct.colors.length > 0) {
+                    setSelectedColor(loadedProduct.colors[0]);
+                    if (loadedProduct.colorImages && loadedProduct.colorImages[loadedProduct.colors[0]]) {
+                        setCurrentImage(loadedProduct.colorImages[loadedProduct.colors[0]]);
                     }
                 }
                 
-                const related = loadedProducts.filter(p => 
-                    p.id !== foundProduct.id && 
-                    (p.category === foundProduct.category || p.gender === foundProduct.gender)
+                // Process related products using loadProductsImages
+                const related = allProducts.filter(p => 
+                    p.id !== loadedProduct.id && 
+                    (p.category === loadedProduct.category || p.gender === loadedProduct.gender)
                 );
                 
-                const relatedCount = settings.showRelatedProducts ? (settings.relatedProductsCount || 4) : 0;
-                setRelatedProducts(related.slice(0, relatedCount));
+                // ✅ Use loadProductsImages from imageLoader.js
+                const relatedWithImages = await loadProductsImages(
+                    related.slice(0, settings.relatedProductsCount || 4)
+                );
+                
+                setRelatedProducts(relatedWithImages);
             } else {
                 toast.error("Product not found");
                 navigate('/');

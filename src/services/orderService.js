@@ -1,10 +1,22 @@
 // src/services/orderService.js
+
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  (window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:5000/api'
+    : window.location.hostname.endsWith('.vercel.app')
+      ? 'https://zamed-backend-1.onrender.com/api'
+      : 'https://zamed-backend-1.onrender.com/api');
+
 const DB_NAME = 'ZamedOrdersDB';
 const DB_VERSION = 3;
 const ORDERS_STORE = 'orders';
 const RETURNS_STORE = 'return_requests';
 
+// ============================================================
 // Initialize IndexedDB
+// ============================================================
 const initDB = () => {
     return new Promise((resolve, reject) => {
         try {
@@ -46,6 +58,7 @@ const initDB = () => {
                 store.createIndex('userEmail', 'userEmail', { unique: false });
                 store.createIndex('date', 'date', { unique: false });
                 store.createIndex('status', 'status', { unique: false });
+                store.createIndex('refundStatus', 'refundStatus', { unique: false });
                 console.log("📦 Order store created in IndexedDB");
                 
                 const returnsStore = db.createObjectStore(RETURNS_STORE, { keyPath: 'id' });
@@ -61,7 +74,9 @@ const initDB = () => {
     });
 };
 
+// ============================================================
 // Helper function to handle IndexedDB transactions with retry
+// ============================================================
 const executeTransaction = async (storeName, mode, callback, retries = 3) => {
     let lastError;
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -97,7 +112,38 @@ const executeTransaction = async (storeName, mode, callback, retries = 3) => {
     throw lastError;
 };
 
+// ============================================================
+// Helper Functions
+// ============================================================
+const getToken = () => {
+    return localStorage.getItem('adminToken') || localStorage.getItem('admin_token');
+};
+
+const getUserEmail = () => {
+    try {
+        const userData = localStorage.getItem('user');
+        if (!userData) return null;
+        const user = JSON.parse(userData);
+        return user.email || null;
+    } catch {
+        return null;
+    }
+};
+
+const formatCurrency = (amount) => {
+    try {
+        const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+        const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
+        const symbol = symbols[siteSettings.currency] || "$";
+        return `${symbol}${Number(amount).toFixed(2)}`;
+    } catch {
+        return `$${Number(amount).toFixed(2)}`;
+    }
+};
+
+// ============================================================
 // ==================== ORDER FUNCTIONS ====================
+// ============================================================
 
 const saveOrder = async (order) => {
     try {
@@ -243,7 +289,7 @@ const getOrderById = async (orderId) => {
     }
 };
 
-const updateOrderStatus = async (orderId, status) => {
+const updateOrderStatus = async (orderId, status, additionalData = {}) => {
     try {
         let result = null;
         
@@ -257,11 +303,16 @@ const updateOrderStatus = async (orderId, status) => {
                         order.orderStatus = status;
                         order.updatedAt = new Date().toISOString();
                         
+                        // Add additional data (for refunds, cancellations, etc.)
+                        Object.keys(additionalData).forEach(key => {
+                            order[key] = additionalData[key];
+                        });
+                        
                         if (!order.statusHistory) order.statusHistory = [];
                         order.statusHistory.push({
                             status: status,
                             timestamp: new Date().toISOString(),
-                            note: `Status updated to ${status}`
+                            note: additionalData.note || `Status updated to ${status}`
                         });
                         
                         const updateRequest = store.put(order);
@@ -284,11 +335,14 @@ const updateOrderStatus = async (orderId, status) => {
                 allOrders[index].status = status;
                 allOrders[index].orderStatus = status;
                 allOrders[index].updatedAt = new Date().toISOString();
+                Object.keys(additionalData).forEach(key => {
+                    allOrders[index][key] = additionalData[key];
+                });
                 if (!allOrders[index].statusHistory) allOrders[index].statusHistory = [];
                 allOrders[index].statusHistory.push({
                     status: status,
                     timestamp: new Date().toISOString(),
-                    note: `Status updated to ${status}`
+                    note: additionalData.note || `Status updated to ${status}`
                 });
                 localStorage.setItem('admin_orders', JSON.stringify(allOrders));
                 result = allOrders[index];
@@ -435,6 +489,7 @@ const getOrderStats = async () => {
             shipped: allOrders.filter(o => (o.status || o.orderStatus) === 'shipped').length,
             delivered: allOrders.filter(o => (o.status || o.orderStatus) === 'delivered').length,
             cancelled: allOrders.filter(o => (o.status || o.orderStatus) === 'cancelled').length,
+            refunded: allOrders.filter(o => (o.status || o.orderStatus) === 'refunded').length,
             totalRevenue: allOrders
                 .filter(o => (o.status || o.orderStatus) === 'delivered')
                 .reduce((sum, o) => sum + (o.total || 0), 0),
@@ -442,7 +497,10 @@ const getOrderStats = async () => {
                 const today = new Date().toDateString();
                 return new Date(o.date).toDateString() === today;
             }).length,
-            pendingRefunds: 0
+            pendingRefunds: allOrders.filter(o => 
+                (o.refundStatus === 'pending' || o.refundStatus === 'processing') && 
+                (o.status || o.orderStatus) !== 'refunded'
+            ).length
         };
         
         return stats;
@@ -455,6 +513,7 @@ const getOrderStats = async () => {
             shipped: 0,
             delivered: 0,
             cancelled: 0,
+            refunded: 0,
             totalRevenue: 0,
             totalOrdersToday: 0,
             pendingRefunds: 0
@@ -470,7 +529,8 @@ const getMonthlyRevenue = async (year, month) => {
                 const date = new Date(o.date);
                 return date.getFullYear() === year && 
                        date.getMonth() === month && 
-                       (o.status || o.orderStatus) !== 'cancelled';
+                       (o.status || o.orderStatus) !== 'cancelled' &&
+                       (o.status || o.orderStatus) !== 'refunded';
             })
             .reduce((sum, o) => sum + (o.total || 0), 0);
     } catch (error) {
@@ -492,7 +552,9 @@ const getDailyRevenue = async (days = 7) => {
             const dailyTotal = allOrders
                 .filter(o => {
                     const orderDate = new Date(o.date).toISOString().split('T')[0];
-                    return orderDate === dateStr && (o.status || o.orderStatus) !== 'cancelled';
+                    return orderDate === dateStr && 
+                           (o.status || o.orderStatus) !== 'cancelled' &&
+                           (o.status || o.orderStatus) !== 'refunded';
                 })
                 .reduce((sum, o) => sum + (o.total || 0), 0);
             
@@ -501,7 +563,9 @@ const getDailyRevenue = async (days = 7) => {
                 amount: dailyTotal,
                 count: allOrders.filter(o => {
                     const orderDate = new Date(o.date).toISOString().split('T')[0];
-                    return orderDate === dateStr && (o.status || o.orderStatus) !== 'cancelled';
+                    return orderDate === dateStr && 
+                           (o.status || o.orderStatus) !== 'cancelled' &&
+                           (o.status || o.orderStatus) !== 'refunded';
                 }).length
             });
         }
@@ -513,7 +577,292 @@ const getDailyRevenue = async (days = 7) => {
     }
 };
 
+// ============================================================
+// ==================== CANCELLATION & REFUND FUNCTIONS ====================
+// ============================================================
+
+/**
+ * Check if an order is eligible for cancellation
+ */
+const isOrderCancellable = (order) => {
+    if (!order) return false;
+    
+    const status = order.status || order.orderStatus;
+    
+    // Can't cancel if already shipped, delivered, or cancelled
+    const nonCancellableStatuses = ['shipped', 'delivered', 'cancelled', 'refunded', 'completed'];
+    
+    if (nonCancellableStatuses.includes(status)) return false;
+    
+    // Check if refund already processed
+    if (order.refundStatus === 'completed' || order.refunded === true) return false;
+    
+    return true;
+};
+
+/**
+ * Check if an order has been paid (for refund eligibility)
+ */
+const isOrderPaid = (order) => {
+    if (!order) return false;
+    
+    const paymentStatus = order.paymentStatus || order.payment?.status;
+    return paymentStatus === 'paid' || paymentStatus === 'completed' || paymentStatus === 'succeeded';
+};
+
+/**
+ * Create notification for customer when order is cancelled
+ */
+const createCancellationNotification = (orderId, result) => {
+    try {
+        const email = getUserEmail();
+        if (!email) return;
+
+        const refundAmount = result?.refund?.amount || 0;
+        const refundStatus = result?.refund?.status || 'pending';
+
+        const statusMessages = {
+            completed: `Your order #${orderId} has been cancelled and refunded. The refund of ${formatCurrency(refundAmount)} will appear in your account within 5-10 business days.`,
+            pending: `Your order #${orderId} has been cancelled. Your refund of ${formatCurrency(refundAmount)} is being processed and will appear in your account within 5-10 business days.`,
+            processing: `Your order #${orderId} has been cancelled. Your refund of ${formatCurrency(refundAmount)} is currently being processed.`,
+            manual_required: `Your order #${orderId} has been cancelled. Please contact support to process your refund.`,
+            failed: `Your order #${orderId} cancellation was processed but the refund failed. Please contact support.`
+        };
+
+        const message = statusMessages[refundStatus] || statusMessages.pending;
+
+        const notification = {
+            id: `cancel-${orderId}-${Date.now()}`,
+            title: refundStatus === 'completed' ? 'Order Cancelled & Refunded' : 'Order Cancelled - Refund Processing',
+            message: message,
+            type: 'refund',
+            orderId: orderId,
+            refundAmount: refundAmount,
+            refundStatus: refundStatus,
+            date: new Date().toISOString(),
+            read: false,
+            route: `/profile?tab=orders`
+        };
+
+        const key = `notifications_${email}`;
+        const existing = JSON.parse(localStorage.getItem(key) || '[]');
+        const current = Array.isArray(existing) ? existing : [];
+        
+        const compact = [notification, ...current.filter(item => item.id !== notification.id)].slice(0, 100);
+        localStorage.setItem(key, JSON.stringify(compact));
+
+        window.dispatchEvent(new CustomEvent('customerNotificationUpdated', {
+            detail: { email, notification }
+        }));
+
+    } catch (error) {
+        console.warn('Unable to create cancellation notification:', error);
+    }
+};
+
+/**
+ * Cancel an order with automatic refund
+ */
+const cancelOrderWithRefund = async (orderId, reason = "Customer cancelled order") => {
+    const token = getToken();
+    const headers = {
+        'Content-Type': 'application/json'
+    };
+
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    try {
+        // 1. Call backend API to cancel and refund
+        const response = await fetch(`${API_URL}/orders/${orderId}/cancel`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ 
+                reason,
+                autoRefund: true
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to cancel order: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+
+        // 2. Update order status with refund data
+        const refundData = {
+            status: 'cancelled',
+            cancelledAt: new Date().toISOString(),
+            cancellationReason: reason,
+            refundStatus: result.refund?.status || 'pending',
+            refundAmount: result.refund?.amount || 0,
+            refundMethod: result.refund?.method || 'original_payment',
+            refundedAt: result.refund?.completedAt || null,
+            note: `Order cancelled by customer. Refund ${result.refund?.status || 'pending'}`
+        };
+
+        await updateOrderStatus(orderId, 'cancelled', refundData);
+
+        // 3. Create notification for customer
+        createCancellationNotification(orderId, result);
+
+        // 4. Dispatch events
+        window.dispatchEvent(new CustomEvent('orderCancelled', {
+            detail: { orderId, refund: result.refund }
+        }));
+        window.dispatchEvent(new CustomEvent('ordersUpdated'));
+
+        return {
+            success: true,
+            orderId,
+            refund: result.refund || { status: 'pending', amount: 0 }
+        };
+
+    } catch (error) {
+        console.error('Error cancelling order:', error);
+        
+        // Fallback: manual cancellation without refund
+        return cancelOrderManually(orderId, reason);
+    }
+};
+
+/**
+ * Cancel an order manually (no automatic refund)
+ */
+const cancelOrderManually = async (orderId, reason = "Customer cancelled order") => {
+    try {
+        const refundData = {
+            status: 'cancelled',
+            cancelledAt: new Date().toISOString(),
+            cancellationReason: reason,
+            refundStatus: 'manual_required',
+            refundAmount: 0,
+            refundMethod: 'manual',
+            note: `Order cancelled by customer. Manual refund required.`
+        };
+
+        await updateOrderStatus(orderId, 'cancelled', refundData);
+
+        createCancellationNotification(orderId, { 
+            refund: { status: 'manual_required', amount: 0, method: 'manual' } 
+        });
+
+        window.dispatchEvent(new CustomEvent('ordersUpdated'));
+
+        return {
+            success: true,
+            orderId,
+            refund: { status: 'manual_required', amount: 0, method: 'manual' }
+        };
+    } catch (error) {
+        console.error('Error in manual cancellation:', error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+};
+
+/**
+ * Admin cancellation with refund
+ */
+const adminCancelOrder = async (orderId, reason = "Order cancelled by admin") => {
+    return cancelOrderWithRefund(orderId, reason);
+};
+
+/**
+ * Process manual refund from admin panel
+ */
+const processManualRefund = async (orderId, refundAmount, note = "") => {
+    try {
+        const token = getToken();
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        const response = await fetch(`${API_URL}/orders/${orderId}/refund`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ 
+                amount: refundAmount,
+                note,
+                manual: true
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to process refund: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+
+        // Update order status
+        const refundData = {
+            status: 'refunded',
+            refundedAt: new Date().toISOString(),
+            refundStatus: 'completed',
+            refundAmount: refundAmount,
+            refundNote: note,
+            refundMethod: 'manual',
+            note: `Manual refund processed by admin. Amount: ${formatCurrency(refundAmount)}`
+        };
+
+        await updateOrderStatus(orderId, 'refunded', refundData);
+
+        window.dispatchEvent(new CustomEvent('ordersUpdated'));
+
+        return {
+            success: true,
+            orderId,
+            refund: result
+        };
+
+    } catch (error) {
+        console.error('Error processing manual refund:', error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+};
+
+/**
+ * Get refund status for an order
+ */
+const getRefundStatus = async (orderId) => {
+    try {
+        const order = await getOrderById(orderId);
+        return order?.refundStatus || null;
+    } catch (error) {
+        console.error('Error getting refund status:', error);
+        return null;
+    }
+};
+
+/**
+ * Get all orders with pending refunds
+ */
+const getPendingRefundOrders = async () => {
+    try {
+        const allOrders = await getAllOrders();
+        return allOrders.filter(o => 
+            (o.refundStatus === 'pending' || o.refundStatus === 'processing') &&
+            (o.status || o.orderStatus) !== 'refunded'
+        );
+    } catch (error) {
+        console.error('Error getting pending refund orders:', error);
+        return [];
+    }
+};
+
+// ============================================================
 // ==================== RETURN REQUEST FUNCTIONS ====================
+// ============================================================
 
 const saveReturnRequest = async (returnRequest) => {
     try {
@@ -806,7 +1155,9 @@ const getReturnRequestsByDateRange = async (startDate, endDate) => {
     }
 };
 
+// ============================================================
 // ==================== MIGRATION FUNCTIONS ====================
+// ============================================================
 
 const syncLocalOrdersToIndexedDB = async () => {
     try {
@@ -908,7 +1259,9 @@ const clearAllReturnRequests = async () => {
     return false;
 };
 
+// ============================================================
 // ==================== EXPORTS ====================
+// ============================================================
 
 // Default export
 export default {
@@ -937,7 +1290,17 @@ export default {
     syncLocalOrdersToIndexedDB,
     syncLocalReturnsToIndexedDB,
     clearAllOrders,
-    clearAllReturnRequests
+    clearAllReturnRequests,
+    // NEW: Cancellation & Refund Functions
+    cancelOrderWithRefund,
+    cancelOrderManually,
+    adminCancelOrder,
+    processManualRefund,
+    isOrderCancellable,
+    isOrderPaid,
+    getRefundStatus,
+    getPendingRefundOrders,
+    createCancellationNotification
 };
 
 // Named exports for backward compatibility
@@ -967,5 +1330,15 @@ export {
     syncLocalOrdersToIndexedDB,
     syncLocalReturnsToIndexedDB,
     clearAllOrders,
-    clearAllReturnRequests
+    clearAllReturnRequests,
+    // NEW: Cancellation & Refund Functions
+    cancelOrderWithRefund,
+    cancelOrderManually,
+    adminCancelOrder,
+    processManualRefund,
+    isOrderCancellable,
+    isOrderPaid,
+    getRefundStatus,
+    getPendingRefundOrders,
+    createCancellationNotification
 };

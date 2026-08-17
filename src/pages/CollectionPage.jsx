@@ -3,7 +3,8 @@ import {
     useCallback,
     useEffect,
     useMemo,
-    useState
+    useState,
+    useRef
 } from "react";
 import {
     Filter,
@@ -16,7 +17,8 @@ import {
     Search,
     ShoppingBag,
     Star,
-    X
+    X,
+    Star as StarIcon
 } from "lucide-react";
 import {
     Link,
@@ -33,7 +35,7 @@ import { getWorkingImage } from "../utils/imageUtils";
 import { useCart } from "../context/CartContext";
 import productService from "../services/productService";
 import { loadProductsImages } from "../utils/imageLoader";
-
+import useFavorites from "../hooks/useFavorites";
 
 const CURRENCY_SYMBOLS = {
     USD: "$",
@@ -50,12 +52,75 @@ const CURRENCY_SYMBOLS = {
     QAR: "QAR"
 };
 
-// -----------------------------------------------------------------------------
-// FILTER SYSTEM IS KEPT IN THIS FILE ON PURPOSE.
-// This avoids Vite path/import problems on Windows and keeps the page portable.
-// -----------------------------------------------------------------------------
+// ============================================================
+// Helper to get image from IndexedDB
+// ============================================================
+const getImageFromIndexedDB = (imageId) => {
+    if (!imageId || !imageId.startsWith('db://')) return null;
+    
+    const id = imageId.replace('db://', '');
+    return new Promise((resolve) => {
+        try {
+            const request = indexedDB.open('ZamedImageStore');
+            request.onsuccess = (event) => {
+                const db = event.target.result;
+                const transaction = db.transaction(['images'], 'readonly');
+                const store = transaction.objectStore('images');
+                const getRequest = store.get(id);
+                getRequest.onsuccess = () => {
+                    resolve(getRequest.result ? getRequest.result.data : null);
+                };
+                getRequest.onerror = () => resolve(null);
+            };
+            request.onerror = () => resolve(null);
+        } catch (e) {
+            resolve(null);
+        }
+    });
+};
 
-// src/hooks/useCollectionFilters.js
+// ============================================================
+// Get product image - handles db:// references
+// ============================================================
+const getProductImage = async (product) => {
+    if (!product || !product.image) {
+        return getWorkingImage(product?.id || 0);
+    }
+    
+    if (product.image.startsWith('db://')) {
+        const imageData = await getImageFromIndexedDB(product.image);
+        if (imageData) {
+            return imageData;
+        }
+        return getWorkingImage(product.id || Date.now());
+    }
+    
+    if (product.image.startsWith('http') || product.image.startsWith('data:')) {
+        return product.image;
+    }
+    
+    return getWorkingImage(product.id || Date.now());
+};
+
+// ============================================================
+// Process products with images
+// ============================================================
+const processProductsWithImages = async (products) => {
+    if (!Array.isArray(products) || products.length === 0) return [];
+    
+    const processed = await Promise.all(
+        products.map(async (product) => {
+            const image = await getProductImage(product);
+            return { ...product, image };
+        })
+    );
+    
+    return processed;
+};
+
+// -----------------------------------------------------------------------------
+// FILTER SYSTEM
+// -----------------------------------------------------------------------------
 
 const normalize = (value) =>
     String(value ?? "")
@@ -577,7 +642,9 @@ const useCollectionFilters = (products = []) => {
     };
 };
 
-// src/components/Collection/CollectionFilters.jsx
+// ============================================================
+// CollectionFilters Component
+// ============================================================
 const COLOR_MAP = {
     Black: "#111111",
     White: "#ffffff",
@@ -1252,8 +1319,9 @@ const CollectionFilters = ({
     );
 };
 
-// src/components/Collection/ActiveFilterChips.jsx
-
+// ============================================================
+// ActiveFilterChips Component
+// ============================================================
 const Chip = ({
     children,
     onRemove,
@@ -1425,6 +1493,9 @@ const ActiveFilterChips = ({
     );
 };
 
+// ============================================================
+// MAIN CollectionPage Component
+// ============================================================
 const CollectionPage = () => {
     const { collection } = useParams();
     const navigate = useNavigate();
@@ -1448,8 +1519,24 @@ const CollectionPage = () => {
         productsPerRow: 4
     });
 
-    const [user, setUser] = useState(null);
-    const [favorites, setFavorites] = useState([]);
+    // ============================================================
+    // Use centralized favorites hook
+    // ============================================================
+    const { 
+        favoriteIds,
+        version,
+        toggleFavorite, 
+        isFavorited, 
+        refreshFavorites 
+    } = useFavorites();
+
+    // ============================================================
+    // Hover color cycling state
+    // ============================================================
+    const [hoveredProduct, setHoveredProduct] = useState(null);
+    const [hoverColorIndex, setHoverColorIndex] = useState({});
+    const [currentColorImages, setCurrentColorImages] = useState({});
+    const hoverIntervalRef = useRef({});
 
     const readSettings = useCallback(() => {
         try {
@@ -1510,15 +1597,19 @@ const CollectionPage = () => {
         ]
     );
 
+    // ============================================================
+    // normalizeProducts with image loading
+    // ============================================================
     const normalizeProducts = useCallback(
-        async rawProducts => {
-            const loaded = await loadProductsImages(
-                Array.isArray(rawProducts)
-                    ? rawProducts
-                    : []
-            );
-
-            return loaded.map(product => ({
+        async (rawProducts) => {
+            const products = Array.isArray(rawProducts)
+                ? rawProducts
+                : [];
+            
+            const loaded = await loadProductsImages(products);
+            const processed = await processProductsWithImages(loaded);
+            
+            return processed.map(product => ({
                 ...product,
                 price: Number(product.price) || 0,
                 originalPrice:
@@ -1527,7 +1618,8 @@ const CollectionPage = () => {
                     product.originalPrice === ""
                         ? null
                         : Number(product.originalPrice) || 0,
-                stock: Number(product.stock) || 0
+                stock: Number(product.stock) || 0,
+                colorImages: product.colorImages || {}
             }));
         },
         []
@@ -1574,33 +1666,85 @@ const CollectionPage = () => {
         [collection]
     );
 
+    // ============================================================
+    // loadProducts with deduplication
+    // ============================================================
     const loadProducts = useCallback(async () => {
         setLoading(true);
 
         try {
-            const raw =
-                productService.getAllProducts() || [];
+            let raw = [];
+            const possibleKeys = ['shop_products', 'products', 'admin_products', 'product_data'];
+            for (const key of possibleKeys) {
+                const stored = localStorage.getItem(key);
+                if (stored) {
+                    try {
+                        const parsed = JSON.parse(stored);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            raw = parsed;
+                            break;
+                        }
+                    } catch (e) {
+                        // Continue to next key
+                    }
+                }
+            }
+            
+            if (raw.length === 0) {
+                try {
+                    raw = productService.getAllProducts() || [];
+                } catch (e) {
+                    // Continue
+                }
+            }
+            
+            // Deduplicate products by ID
+            const uniqueProducts = [];
+            const seenIds = new Set();
+            
+            raw.forEach(product => {
+                const productId = String(product.id || product._id || '');
+                if (productId && !seenIds.has(productId)) {
+                    seenIds.add(productId);
+                    uniqueProducts.push(product);
+                }
+            });
 
-            const loaded =
-                await normalizeProducts(raw);
+            const loaded = await normalizeProducts(uniqueProducts);
+            const filtered = filterByCollection(loaded);
 
-            setProducts(
-                filterByCollection(loaded)
-            );
+            // Initialize color images for hover
+            const initialColorImages = {};
+            filtered.forEach(product => {
+                if (product.colors && product.colors.length > 0) {
+                    const firstColor = product.colors[0];
+                    const colorImage = product.colorImages?.[firstColor] || product.image;
+                    initialColorImages[product.id] = {
+                        current: colorImage,
+                        colors: product.colors,
+                        colorImages: product.colorImages || {}
+                    };
+                } else {
+                    initialColorImages[product.id] = {
+                        current: product.image,
+                        colors: [],
+                        colorImages: {}
+                    };
+                }
+            });
+            setCurrentColorImages(initialColorImages);
+
+            setProducts(filtered);
+            
+            // Refresh favorites silently - no blinking
+            refreshFavorites(true);
         } catch (error) {
-            console.error(
-                "Unable to load products:",
-                error
-            );
-
+            console.error("Unable to load products:", error);
             setProducts([]);
         } finally {
             setLoading(false);
         }
-    }, [
-        normalizeProducts,
-        filterByCollection
-    ]);
+    }, [normalizeProducts, filterByCollection, collection, refreshFavorites]);
 
     useEffect(() => {
         readSettings();
@@ -1694,32 +1838,30 @@ const CollectionPage = () => {
         loadProducts
     ]);
 
+    // ============================================================
+    // Listen for favorites updates from other components
+    // ============================================================
     useEffect(() => {
-        try {
-            const storedUser = JSON.parse(
-                localStorage.getItem("user") || "null"
-            );
+        // Refresh favorites silently when component mounts
+        refreshFavorites(true);
 
-            setUser(storedUser);
+        // Listen for favorites updates
+        const handleFavoritesUpdate = () => {
+            refreshFavorites(true);
+        };
 
-            if (storedUser?.email) {
-                const ids = JSON.parse(
-                    localStorage.getItem(
-                        `favorites_${storedUser.email}`
-                    ) || "[]"
-                );
+        window.addEventListener('favoritesUpdated', handleFavoritesUpdate);
+        window.addEventListener('wishlistUpdated', handleFavoritesUpdate);
+        window.addEventListener('whitelistUpdated', handleFavoritesUpdate);
+        window.addEventListener('storage', handleFavoritesUpdate);
 
-                setFavorites(
-                    Array.isArray(ids)
-                        ? ids
-                        : []
-                );
-            }
-        } catch {
-            setUser(null);
-            setFavorites([]);
-        }
-    }, []);
+        return () => {
+            window.removeEventListener('favoritesUpdated', handleFavoritesUpdate);
+            window.removeEventListener('wishlistUpdated', handleFavoritesUpdate);
+            window.removeEventListener('whitelistUpdated', handleFavoritesUpdate);
+            window.removeEventListener('storage', handleFavoritesUpdate);
+        };
+    }, [refreshFavorites]);
 
     const {
         searchQuery,
@@ -1740,51 +1882,94 @@ const CollectionPage = () => {
         clearAllFilters
     } = useCollectionFilters(products);
 
-    const toggleFavorite = product => {
-        if (!user?.email) {
-            toast.error(
-                "Please login to add favourites."
-            );
-            navigate("/login");
-            return;
+    // ============================================================
+    // Hover color cycling handlers
+    // ============================================================
+    const startHoverCycle = (productId) => {
+        // Clear existing interval for this product
+        if (hoverIntervalRef.current[productId]) {
+            clearInterval(hoverIntervalRef.current[productId]);
+            delete hoverIntervalRef.current[productId];
         }
 
-        const productId = product.id;
-        const alreadySaved =
-            favorites.some(
-                id => String(id) === String(productId)
-            );
+        const product = products.find(p => p.id === productId);
+        if (!product || !product.colors || product.colors.length <= 1) return;
 
-        const next = alreadySaved
-            ? favorites.filter(
-                id => String(id) !== String(productId)
-            )
-            : [
-                ...favorites,
-                productId
-            ];
+        const colorList = product.colors;
+        const currentIndex = hoverColorIndex[productId] || 0;
+        const nextIndex = (currentIndex + 1) % colorList.length;
 
-        setFavorites(next);
+        // Set the interval
+        const interval = setInterval(() => {
+            setHoverColorIndex(prev => {
+                const currentIdx = prev[productId] || 0;
+                const nextIdx = (currentIdx + 1) % colorList.length;
+                
+                const colorName = colorList[nextIdx];
+                const colorImgMap = product.colorImages || {};
+                const newImage = colorImgMap[colorName] || product.image;
+                
+                setCurrentColorImages(prevImages => ({
+                    ...prevImages,
+                    [productId]: {
+                        ...prevImages[productId],
+                        current: newImage
+                    }
+                }));
+                
+                return { ...prev, [productId]: nextIdx };
+            });
+        }, 1200); // 1.2 seconds per image
+        
+        hoverIntervalRef.current[productId] = interval;
+    };
 
-        localStorage.setItem(
-            `favorites_${user.email}`,
-            JSON.stringify(next)
-        );
+    const stopHoverCycle = (productId) => {
+        if (hoverIntervalRef.current[productId]) {
+            clearInterval(hoverIntervalRef.current[productId]);
+            delete hoverIntervalRef.current[productId];
+        }
+    };
 
-        window.dispatchEvent(
-            new CustomEvent("favoritesUpdated", {
-                detail: {
-                    email: user.email,
-                    favorites: next
+    const handleMouseEnter = (productId) => {
+        setHoveredProduct(productId);
+        startHoverCycle(productId);
+    };
+
+    const handleMouseLeave = (productId) => {
+        setHoveredProduct(null);
+        stopHoverCycle(productId);
+        setHoverColorIndex(prev => ({ ...prev, [productId]: 0 }));
+        
+        // Reset to default image
+        const product = products.find(p => p.id === productId);
+        if (product) {
+            const defaultColor = product.colors?.[0] || null;
+            const defaultImage = defaultColor 
+                ? (product.colorImages?.[defaultColor] || product.image)
+                : product.image;
+            setCurrentColorImages(prev => ({
+                ...prev,
+                [productId]: {
+                    ...prev[productId],
+                    current: defaultImage
                 }
-            })
-        );
+            }));
+        }
+    };
 
-        toast.success(
-            alreadySaved
-                ? "Removed from favourites."
-                : "Added to favourites."
-        );
+    // ============================================================
+    // Toggle favorite using centralized hook
+    // ============================================================
+    const handleToggleFavorite = (product, e) => {
+        e.stopPropagation();
+        const result = toggleFavorite(product);
+        if (!result.success) {
+            toast.error(result.message);
+            navigate('/login');
+        } else {
+            toast.success(result.isFavorite ? `${product.name} added to favorites` : `${product.name} removed from favorites`);
+        }
     };
 
     const getTitle = () => {
@@ -1833,36 +2018,39 @@ const CollectionPage = () => {
             return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
         }
 
-        return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+        return "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4";
     };
 
     const fallbackProductImage = getWorkingImage(0);
 
+    // ============================================================
+    // ProductCard Component - KEY FIX: Uses version from hook
+    // ============================================================
     const ProductCard = ({ product }) => {
-        const favourite =
-            favorites.some(
-                id => String(id) === String(product.id)
-            );
+        // Use version to force re-render when favorites change
+        const _ = version;
+        const isFavorite = isFavorited(product.id);
 
         const sale =
             product.originalPrice &&
             Number(product.originalPrice) >
                 Number(product.price);
 
+        const colorData = currentColorImages[product.id] || {};
+        const image = colorData.current || product.image || fallbackProductImage;
+        
+        const rating = Number(product.rating) || 0;
+        const reviewCount = Array.isArray(product.reviews) 
+            ? product.reviews.length 
+            : Number(product.reviews || 0);
+
         return (
-            <motion.article
-                layout
-                initial={{
-                    opacity: 0,
-                    y: 15
-                }}
-                animate={{
-                    opacity: 1,
-                    y: 0
-                }}
-                className="group flex h-full flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
+            <div
+                onMouseEnter={() => handleMouseEnter(product.id)}
+                onMouseLeave={() => handleMouseLeave(product.id)}
+                className="group flex h-full flex-col overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
             >
-                <div className="relative aspect-[4/5] overflow-hidden bg-white">
+                <div className="relative aspect-square overflow-hidden bg-white">
                     <button
                         type="button"
                         onClick={() =>
@@ -1873,7 +2061,7 @@ const CollectionPage = () => {
                         className="h-full w-full"
                     >
                         <img
-                            src={product.image || fallbackProductImage}
+                            src={image}
                             alt={product.name}
                             className="h-full w-full object-contain p-2 transition duration-500 group-hover:scale-[1.03]"
                             loading="lazy"
@@ -1886,34 +2074,63 @@ const CollectionPage = () => {
                     </button>
 
                     {settings.showSaleBadge && sale && (
-                        <span className="absolute left-3 top-3 rounded-full bg-red-600 px-3 py-1 text-[10px] font-black text-white">
+                        <span className="absolute left-2 top-2 rounded-full bg-red-600 px-2 py-0.5 text-[9px] font-black text-white">
                             SALE
                         </span>
                     )}
 
                     <button
                         type="button"
-                        onClick={() =>
-                            toggleFavorite(product)
-                        }
-                        className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white shadow-md"
+                        onClick={(e) => handleToggleFavorite(product, e)}
+                        className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-md"
                     >
                         <Heart
-                            size={17}
+                            size={15}
                             className={
-                                favourite
+                                isFavorite
                                     ? "fill-current text-red-500"
                                     : "text-gray-500"
                             }
                         />
                     </button>
+
+                    {settings.showProductColors && product.colors?.length > 1 && (
+                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1 bg-white/80 backdrop-blur-sm px-2 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                            {product.colors.slice(0, 5).map((color, idx) => (
+                                <span
+                                    key={idx}
+                                    className="w-3 h-3 rounded-full border border-gray-200"
+                                    style={{
+                                        backgroundColor: 
+                                            color === "White" ? "#f5f5f5" :
+                                            color === "Black" ? "#1a1a1a" :
+                                            color === "Red" ? "#dc2626" :
+                                            color === "Blue" ? "#3b82f6" :
+                                            color === "Green" ? "#22c55e" :
+                                            color === "Yellow" ? "#eab308" :
+                                            color === "Purple" ? "#a855f7" :
+                                            color === "Pink" ? "#ec4899" :
+                                            color === "Gray" ? "#9ca3af" :
+                                            color === "Navy" ? "#1e3a8a" :
+                                            color === "Orange" ? "#f97316" :
+                                            color === "Brown" ? "#78350f" :
+                                            color === "Teal" ? "#008080" :
+                                            color === "Maroon" ? "#800000" :
+                                            "#cccccc"
+                                    }}
+                                />
+                            ))}
+                            {product.colors.length > 5 && (
+                                <span className="text-[8px] font-bold text-gray-500">+{product.colors.length - 5}</span>
+                            )}
+                        </div>
+                    )}
                 </div>
 
-                <div className="flex flex-1 flex-col p-4">
+                <div className="flex flex-1 flex-col p-3">
                     {settings.showProductBrand && (
-                        <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-gray-400">
-                            {product.brand ||
-                                "Zamed Premium"}
+                        <p className="mb-0.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                            {product.brand || "Zamed Premium"}
                         </p>
                     )}
 
@@ -1926,26 +2143,20 @@ const CollectionPage = () => {
                         }
                         className="text-left"
                     >
-                        <h3 className="line-clamp-2 font-semibold text-gray-900 transition hover:text-black">
+                        <h3 className="line-clamp-1 text-sm font-semibold text-gray-900 transition hover:text-black">
                             {product.name}
                         </h3>
                     </button>
 
                     {settings.showProductRatings && (
-                        <div className="mt-2 flex items-center gap-2">
+                        <div className="mt-1 flex items-center gap-1.5">
                             <div className="flex">
                                 {[1, 2, 3, 4, 5].map(star => (
-                                    <Star
+                                    <StarIcon
                                         key={star}
                                         size={12}
                                         className={
-                                            star <=
-                                            Math.round(
-                                                Number(
-                                                    product.rating ||
-                                                    0
-                                                )
-                                            )
+                                            star <= Math.round(rating)
                                                 ? "fill-current text-amber-400"
                                                 : "text-gray-300"
                                         }
@@ -1953,67 +2164,64 @@ const CollectionPage = () => {
                                 ))}
                             </div>
 
-                            <button
-                                type="button"
-                                onClick={() =>
-                                    navigate(
-                                        `/product/${product.id}#reviews`
-                                    )
-                                }
-                                className="flex items-center gap-1 text-[11px] text-gray-500"
-                            >
-                                <MessageCircle size={11} />
-                                {Array.isArray(product.reviews)
-                                    ? product.reviews.length
-                                    : Number(
-                                        product.reviews || 0
-                                    )}
-                            </button>
+                            {reviewCount > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        navigate(
+                                            `/product/${product.id}#reviews`
+                                        )
+                                    }
+                                    className="flex items-center gap-0.5 text-[10px] text-gray-500"
+                                >
+                                    <MessageCircle size={10} />
+                                    {reviewCount}
+                                </button>
+                            )}
                         </div>
                     )}
 
-                    <div className="mt-3 flex items-center gap-2">
-                        <span className="text-lg font-black text-gray-950">
+                    <div className="mt-2 flex items-center gap-2">
+                        <span className="text-base font-black text-gray-950">
                             {formatMoney(product.price)}
                         </span>
 
                         {sale && (
-                            <span className="text-xs text-gray-400 line-through">
-                                {formatMoney(
-                                    product.originalPrice
-                                )}
+                            <span className="text-[10px] text-gray-400 line-through">
+                                {formatMoney(product.originalPrice)}
                             </span>
                         )}
                     </div>
 
                     {settings.showProductColors &&
                         product.colors?.length > 0 && (
-                            <div className="mt-3 flex flex-wrap gap-1.5">
-                                {product.colors
-                                    .slice(0, 5)
-                                    .map(color => (
-                                        <span
-                                            key={color}
-                                            className="rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-[10px] text-gray-600"
-                                        >
-                                            {color}
-                                        </span>
-                                    ))}
+                            <div className="mt-2 flex flex-wrap gap-1">
+                                {product.colors.slice(0, 4).map(color => (
+                                    <span
+                                        key={color}
+                                        className="rounded-full border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[8px] text-gray-600"
+                                    >
+                                        {color}
+                                    </span>
+                                ))}
+                                {product.colors.length > 4 && (
+                                    <span className="text-[8px] text-gray-400">
+                                        +{product.colors.length - 4}
+                                    </span>
+                                )}
                             </div>
                         )}
 
-                    <div className="mt-auto pt-4">
+                    <div className="mt-auto pt-2">
                         {settings.showQuickAdd ? (
                             <button
                                 type="button"
                                 onClick={() =>
-                                    setSelectedProduct(
-                                        product
-                                    )
+                                    setSelectedProduct(product)
                                 }
-                                className="flex w-full items-center justify-center gap-2 rounded-xl bg-black py-2.5 text-sm font-bold text-white transition hover:bg-gray-800"
+                                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-black py-2 text-xs font-bold text-white transition hover:bg-gray-800"
                             >
-                                <ShoppingBag size={15} />
+                                <ShoppingBag size={13} />
                                 Quick Shop
                             </button>
                         ) : (
@@ -2024,14 +2232,14 @@ const CollectionPage = () => {
                                         `/product/${product.id}`
                                     )
                                 }
-                                className="w-full rounded-xl bg-black py-2.5 text-sm font-bold text-white"
+                                className="w-full rounded-lg bg-black py-2 text-xs font-bold text-white"
                             >
                                 View Product
                             </button>
                         )}
                     </div>
                 </div>
-            </motion.article>
+            </div>
         );
     };
 
@@ -2051,7 +2259,8 @@ const CollectionPage = () => {
 
         const image =
             product.colorImages?.[color] ||
-            product.image;
+            product.image ||
+            fallbackProductImage;
 
         const addProduct = () => {
             addToCart({
@@ -2104,46 +2313,48 @@ const CollectionPage = () => {
                         scale: 1,
                         y: 0
                     }}
-                    className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white shadow-2xl"
+                    className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl"
                 >
                     <div className="grid md:grid-cols-2">
-                        <div className="relative min-h-[420px] bg-gray-50 p-4">
+                        <div className="relative min-h-[300px] bg-gray-50 p-4">
                             <img
                                 src={image}
                                 alt={product.name}
-                                className="h-full max-h-[560px] w-full object-contain"
+                                className="h-full max-h-[400px] w-full object-contain"
+                                onError={(e) => {
+                                    e.target.src = fallbackProductImage;
+                                }}
                             />
 
                             <button
                                 type="button"
                                 onClick={onClose}
-                                className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white shadow"
+                                className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white shadow"
                             >
-                                <X size={18} />
+                                <X size={17} />
                             </button>
                         </div>
 
-                        <div className="p-6">
-                            <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                                {product.brand ||
-                                    "Zamed Premium"}
+                        <div className="p-5">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                                {product.brand || "Zamed Premium"}
                             </p>
 
-                            <h2 className="mt-1 text-2xl font-black">
+                            <h2 className="mt-1 text-xl font-black">
                                 {product.name}
                             </h2>
 
-                            <p className="mt-3 text-2xl font-black">
+                            <p className="mt-2 text-2xl font-black">
                                 {formatMoney(product.price)}
                             </p>
 
                             {product.sizes?.length > 0 && (
-                                <div className="mt-6">
-                                    <p className="mb-2 text-sm font-bold">
+                                <div className="mt-4">
+                                    <p className="mb-1.5 text-xs font-bold">
                                         Size
                                     </p>
 
-                                    <div className="flex flex-wrap gap-2">
+                                    <div className="flex flex-wrap gap-1.5">
                                         {product.sizes.map(item => (
                                             <button
                                                 key={item}
@@ -2151,7 +2362,7 @@ const CollectionPage = () => {
                                                 onClick={() =>
                                                     setSize(item)
                                                 }
-                                                className={`rounded-xl border px-4 py-2 text-sm ${
+                                                className={`rounded-lg border px-3 py-1.5 text-xs ${
                                                     size === item
                                                         ? "border-black bg-black text-white"
                                                         : "border-gray-200"
@@ -2165,12 +2376,12 @@ const CollectionPage = () => {
                             )}
 
                             {product.colors?.length > 0 && (
-                                <div className="mt-5">
-                                    <p className="mb-2 text-sm font-bold">
+                                <div className="mt-4">
+                                    <p className="mb-1.5 text-xs font-bold">
                                         Color
                                     </p>
 
-                                    <div className="flex flex-wrap gap-2">
+                                    <div className="flex flex-wrap gap-1.5">
                                         {product.colors.map(item => (
                                             <button
                                                 key={item}
@@ -2178,7 +2389,7 @@ const CollectionPage = () => {
                                                 onClick={() =>
                                                     setColor(item)
                                                 }
-                                                className={`rounded-xl border px-4 py-2 text-sm ${
+                                                className={`rounded-lg border px-3 py-1.5 text-xs ${
                                                     color === item
                                                         ? "border-black bg-black text-white"
                                                         : "border-gray-200"
@@ -2191,12 +2402,12 @@ const CollectionPage = () => {
                                 </div>
                             )}
 
-                            <div className="mt-5">
-                                <p className="mb-2 text-sm font-bold">
+                            <div className="mt-4">
+                                <p className="mb-1.5 text-xs font-bold">
                                     Quantity
                                 </p>
 
-                                <div className="inline-flex items-center overflow-hidden rounded-xl border border-gray-200">
+                                <div className="inline-flex items-center overflow-hidden rounded-lg border border-gray-200">
                                     <button
                                         type="button"
                                         onClick={() =>
@@ -2207,12 +2418,12 @@ const CollectionPage = () => {
                                                 )
                                             )
                                         }
-                                        className="h-10 w-10"
+                                        className="h-8 w-8 text-sm"
                                     >
                                         -
                                     </button>
 
-                                    <span className="w-12 text-center font-bold">
+                                    <span className="w-10 text-center text-sm font-bold">
                                         {quantity}
                                     </span>
 
@@ -2223,7 +2434,7 @@ const CollectionPage = () => {
                                                 quantity + 1
                                             )
                                         }
-                                        className="h-10 w-10"
+                                        className="h-8 w-8 text-sm"
                                     >
                                         +
                                     </button>
@@ -2233,9 +2444,9 @@ const CollectionPage = () => {
                             <button
                                 type="button"
                                 onClick={addProduct}
-                                className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl bg-black py-3.5 font-black text-white"
+                                className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-black py-3 text-sm font-black text-white"
                             >
-                                <ShoppingBag size={18} />
+                                <ShoppingBag size={16} />
                                 Add to Cart
                             </button>
 
@@ -2247,7 +2458,7 @@ const CollectionPage = () => {
                                         `/product/${product.id}`
                                     );
                                 }}
-                                className="mt-3 w-full rounded-xl border border-gray-300 py-3 text-sm font-bold"
+                                className="mt-2 w-full rounded-lg border border-gray-300 py-2.5 text-xs font-bold"
                             >
                                 View Full Details
                             </button>
@@ -2290,27 +2501,27 @@ const CollectionPage = () => {
                 </div>
             </div>
 
-            <section className="bg-black py-9 text-white">
+            <section className="bg-black py-7 text-white">
                 <div className="container mx-auto px-4 text-center">
-                    <h1 className="text-3xl font-black">
+                    <h1 className="text-2xl font-black">
                         {getTitle()} Collection
                     </h1>
 
-                    <p className="mt-1 text-sm text-gray-400">
+                    <p className="mt-0.5 text-sm text-gray-400">
                         {getSubtitle()}
                     </p>
 
-                    <p className="mt-2 text-xs font-bold text-white/70">
+                    <p className="mt-1 text-xs font-bold text-white/70">
                         {filteredProducts.length} products
                     </p>
                 </div>
             </section>
 
-            <main className="container mx-auto px-4 py-6">
-                <div className="mb-4 flex gap-2">
+            <main className="container mx-auto px-4 py-4">
+                <div className="mb-3 flex gap-2">
                     <div className="relative flex-1">
                         <Search
-                            size={16}
+                            size={14}
                             className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
                         />
 
@@ -2322,8 +2533,8 @@ const CollectionPage = () => {
                                     event.target.value
                                 )
                             }
-                            placeholder="Search name, brand, category, material..."
-                            className="w-full rounded-xl border border-gray-200 bg-white py-3 pl-10 pr-10 text-sm outline-none focus:border-black"
+                            placeholder="Search name, brand, category..."
+                            className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-9 text-sm outline-none focus:border-black"
                         />
 
                         {searchQuery && (
@@ -2334,7 +2545,7 @@ const CollectionPage = () => {
                                 }
                                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
                             >
-                                <X size={15} />
+                                <X size={14} />
                             </button>
                         )}
                     </div>
@@ -2344,56 +2555,17 @@ const CollectionPage = () => {
                         onClick={() =>
                             setShowFilters(true)
                         }
-                        className="relative flex items-center gap-2 rounded-xl bg-black px-4 py-3 text-sm font-bold text-white"
+                        className="relative flex items-center gap-1.5 rounded-xl bg-black px-3 py-2.5 text-sm font-bold text-white"
                     >
-                        <Filter size={16} />
+                        <Filter size={14} />
                         Filters
 
                         {activeFilterCount > 0 && (
-                            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-[10px] font-black text-black">
+                            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-[9px] font-black text-black">
                                 {activeFilterCount}
                             </span>
                         )}
                     </button>
-                </div>
-
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs text-gray-500">
-                        Showing {filteredProducts.length} of{" "}
-                        {products.length}
-                    </p>
-
-                    <select
-                        value={filters.sortBy}
-                        onChange={event =>
-                            setSortBy(
-                                event.target.value
-                            )
-                        }
-                        className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs outline-none focus:border-black"
-                    >
-                        <option value="featured">
-                            Featured
-                        </option>
-                        <option value="newest">
-                            Newest
-                        </option>
-                        <option value="price-low-high">
-                            Price: Low to High
-                        </option>
-                        <option value="price-high-low">
-                            Price: High to Low
-                        </option>
-                        <option value="rating">
-                            Highest Rated
-                        </option>
-                        <option value="name-a-z">
-                            Name: A-Z
-                        </option>
-                        <option value="name-z-a">
-                            Name: Z-A
-                        </option>
-                    </select>
                 </div>
 
                 <ActiveFilterChips
@@ -2409,7 +2581,7 @@ const CollectionPage = () => {
                 {filteredProducts.length === 0 ? (
                     <div className="rounded-2xl bg-white py-16 text-center shadow-sm">
                         <ShoppingBag
-                            size={44}
+                            size={40}
                             className="mx-auto text-gray-300"
                         />
 
@@ -2430,17 +2602,14 @@ const CollectionPage = () => {
                         </button>
                     </div>
                 ) : (
-                    <motion.div
-                        layout
-                        className={`grid ${getGridCols()} gap-4`}
-                    >
-                        {filteredProducts.map(product => (
+                    <div className={`grid ${getGridCols()} gap-3`}>
+                        {filteredProducts.map((product, index) => (
                             <ProductCard
-                                key={product.id}
+                                key={product.id || `product-${index}`}
                                 product={product}
                             />
                         ))}
-                    </motion.div>
+                    </div>
                 )}
             </main>
 

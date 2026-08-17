@@ -7,6 +7,7 @@ import { Star, ShoppingBag, Heart, MessageCircle } from "lucide-react";
 import { useState, useEffect } from "react";
 import productService from "../../services/productService";
 import { loadProductsImages } from "../../utils/imageLoader";
+import { getWorkingImage } from "../../utils/imageUtils";
 
 const ProductGrid = ({ products, title }) => {
     const { addToCart } = useCart();
@@ -16,6 +17,7 @@ const ProductGrid = ({ products, title }) => {
     const [user, setUser] = useState(null);
     const [selectedColor, setSelectedColor] = useState({});
     const [currentImages, setCurrentImages] = useState({});
+    const [colorImages, setColorImages] = useState({});
     const [liveProducts, setLiveProducts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [settings, setSettings] = useState({
@@ -28,13 +30,30 @@ const ProductGrid = ({ products, title }) => {
         showProductBrand: true
     });
 
-    // Load settings from localStorage
+    // Use the same fallback as other components
+    const fallbackProductImage = getWorkingImage(0);
+
     const loadSettings = () => {
-        const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
-        console.log('🔄 ProductGrid - Loading settings:', siteSettings);
-        setSettings(prev => ({ ...prev, ...siteSettings }));
+        try {
+            const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+            const productsPerRow = parseInt(siteSettings.productsPerRow) || 4;
+            setSettings(prev => ({
+                ...prev,
+                ...siteSettings,
+                productsPerRow: productsPerRow,
+                showProductRatings: siteSettings.showProductRatings !== undefined ? siteSettings.showProductRatings : true,
+                showProductColors: siteSettings.showProductColors !== undefined ? siteSettings.showProductColors : true,
+                showProductSizes: siteSettings.showProductSizes !== undefined ? siteSettings.showProductSizes : true,
+                showSaleBadge: siteSettings.showSaleBadge !== undefined ? siteSettings.showSaleBadge : true,
+                showQuickAdd: siteSettings.showQuickAdd !== undefined ? siteSettings.showQuickAdd : true,
+                showProductBrand: siteSettings.showProductBrand !== undefined ? siteSettings.showProductBrand : true
+            }));
+        } catch (error) {
+            console.error('Error loading settings:', error);
+        }
     };
 
+    // Load settings and currency
     useEffect(() => {
         loadSettings();
         const symbols = { USD: "$", EUR: "€", GBP: "£", LKR: "Rs" };
@@ -50,81 +69,71 @@ const ProductGrid = ({ products, title }) => {
         }
     }, []);
 
-    // Load products with images
-    const loadProductsWithImages = async () => {
+    // ============================================================
+    // Load products with images using imageLoader
+    // ============================================================
+    const loadProductsWithImages = async (productList) => {
         setLoading(true);
         try {
-            let updatedProducts = products;
+            let updatedProducts = productList;
             
-            if (products && products.length > 0) {
-                updatedProducts = await loadProductsImages(products);
-            } else {
-                const allProducts = productService.getAllProducts();
-                updatedProducts = await loadProductsImages(allProducts);
+            // If no products provided, get all from service
+            if (!updatedProducts || updatedProducts.length === 0) {
+                updatedProducts = productService.getAllProducts();
             }
             
-            setLiveProducts(updatedProducts);
+            // Load images using imageLoader
+            const loadedProducts = await loadProductsImages(updatedProducts);
+            setLiveProducts(loadedProducts);
             
+            // Initialize image states
             const initialImages = {};
+            const initialColorImages = {};
             const initialColors = {};
-            updatedProducts.forEach(product => {
-                initialImages[product.id] = product.image;
+            
+            loadedProducts.forEach(product => {
+                initialImages[product.id] = product.image || fallbackProductImage;
+                initialColorImages[product.id] = product.colorImages || {};
                 if (product.colors && product.colors.length > 0) {
                     initialColors[product.id] = product.colors[0];
                 }
             });
+            
             setCurrentImages(initialImages);
+            setColorImages(initialColorImages);
             setSelectedColor(initialColors);
+            
+            console.log(`✅ ProductGrid: Loaded ${loadedProducts.length} products with images`);
         } catch (error) {
             console.error("Error loading products with images:", error);
-            setLiveProducts(products || []);
+            setLiveProducts(productList || []);
         } finally {
             setLoading(false);
         }
     };
 
+    // Load products when the products prop changes
     useEffect(() => {
-        loadProductsWithImages();
+        loadProductsWithImages(products);
     }, [products]);
 
-    // Listen for review and product updates
+    // Listen for product updates
     useEffect(() => {
         const handleReviewUpdate = async () => {
             try {
                 const updatedProducts = productService.getAllProducts();
-                const loadedProducts = await loadProductsImages(updatedProducts);
-                setLiveProducts(loadedProducts);
-                
-                const initialImages = {};
-                const initialColors = {};
-                loadedProducts.forEach(product => {
-                    initialImages[product.id] = product.image;
-                    if (product.colors && product.colors.length > 0) {
-                        initialColors[product.id] = product.colors[0];
-                    }
-                });
-                setCurrentImages(initialImages);
-                setSelectedColor(initialColors);
+                await loadProductsWithImages(updatedProducts);
             } catch (error) {
                 console.error("Error updating products:", error);
             }
         };
         
-        // Listen for settings changes and reload settings
         const handleSettingsUpdate = () => {
-            console.log('🔄 ProductGrid - Settings updated, reloading...');
             loadSettings();
-            // Force re-render
-            setLoading(prev => {
-                setTimeout(() => setLoading(false), 100);
-                return true;
-            });
         };
         
-        // Also listen for storage changes to catch settings updates
         const handleStorageChange = (e) => {
             if (e.key === 'site_settings') {
-                console.log('🔄 ProductGrid - Storage changed, reloading settings...');
                 loadSettings();
             }
         };
@@ -144,23 +153,21 @@ const ProductGrid = ({ products, title }) => {
         };
     }, []);
 
-    const getColorSwatch = (color) => {
-        const colorMap = {
-            'Black': '#1a1a1a', 'White': '#f5f5f5', 'Red': '#dc2626', 'Blue': '#3b82f6',
-            'Green': '#22c55e', 'Gray': '#9ca3af', 'Grey': '#9ca3af', 'Brown': '#78350f',
-            'Navy': '#1e3a8a', 'Pink': '#ec4899', 'Purple': '#a855f7', 'Yellow': '#eab308',
-            'Orange': '#f97316', 'Gold': '#fbbf24', 'Silver': '#cbd5e1', 'Nude': '#fde68a',
-            'Beige': '#f5e6d3'
-        };
-        return colorMap[color] || '#cccccc';
-    };
-
-    const handleColorClick = (productId, color, colorImage, productImage, e) => {
+    // ============================================================
+    // Handle color selection
+    // ============================================================
+    const handleColorClick = (productId, color, e) => {
         e.stopPropagation();
+        
         setSelectedColor(prev => ({ ...prev, [productId]: color }));
+        
+        // Update the displayed image to the selected color
+        const colorMap = colorImages[productId] || {};
+        const newImage = colorMap[color] || currentImages[productId] || fallbackProductImage;
+        
         setCurrentImages(prev => ({
             ...prev,
-            [productId]: colorImage || productImage
+            [productId]: newImage
         }));
     };
 
@@ -181,9 +188,7 @@ const ProductGrid = ({ products, title }) => {
 
     const handleAddToCart = (product, e) => {
         e.stopPropagation();
-        
         const currentColorName = selectedColor[product.id] || product.colors?.[0] || "Default";
-        
         addToCart({
             id: product.id,
             name: product.name,
@@ -194,21 +199,17 @@ const ProductGrid = ({ products, title }) => {
             color: currentColorName,
             quantity: 1
         });
-        
         toast.success(`${product.name} added to cart!`);
     };
 
     const toggleFavorite = (product, e) => {
         e.stopPropagation();
-        
         if (!user) {
             toast.error("Please login to add to favorites");
             return;
         }
-        
         const isInFavorites = favorites.some(item => item.id === product.id);
         let updatedFavorites;
-        
         if (isInFavorites) {
             updatedFavorites = favorites.filter(item => item.id !== product.id);
             toast.info(`${product.name} removed from favorites`);
@@ -216,9 +217,27 @@ const ProductGrid = ({ products, title }) => {
             updatedFavorites = [...favorites, product];
             toast.success(`${product.name} added to favorites`);
         }
-        
         setFavorites(updatedFavorites);
         localStorage.setItem(`favorites_${user.email}`, JSON.stringify(updatedFavorites));
+        
+        // Dispatch event for other components
+        window.dispatchEvent(new CustomEvent('favoritesUpdated', { 
+            detail: { email: user.email, favorites: updatedFavorites } 
+        }));
+        window.dispatchEvent(new Event('storage'));
+    };
+
+    const getGridCols = () => {
+        const perRow = parseInt(settings.productsPerRow) || 4;
+        if (perRow === 3) {
+            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
+        } else if (perRow === 5) {
+            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
+        } else if (perRow === 2) {
+            return "grid-cols-1 sm:grid-cols-2";
+        } else {
+            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+        }
     };
 
     if (loading) {
@@ -236,25 +255,6 @@ const ProductGrid = ({ products, title }) => {
     if (!liveProducts || liveProducts.length === 0) {
         return null;
     }
-
-    // Determine grid columns based on settings - FIXED
-    const getGridCols = () => {
-        const perRow = parseInt(settings.productsPerRow) || 4;
-        console.log('📊 ProductGrid - Products per row:', perRow);
-        
-        if (perRow === 3) {
-            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
-        } else if (perRow === 5) {
-            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
-        } else if (perRow === 2) {
-            return "grid-cols-1 sm:grid-cols-2";
-        } else {
-            // Default to 4 per row
-            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
-        }
-    };
-
-    const fallbackProductImage = 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400&h=400&fit=crop';
 
     return (
         <div className="py-12 bg-white">
@@ -276,10 +276,11 @@ const ProductGrid = ({ products, title }) => {
                 <div className={`grid ${getGridCols()} gap-6`}>
                     {liveProducts.map((product, index) => {
                         const isFavorite = favorites.some(item => item.id === product.id);
-                        const currentImage = currentImages[product.id] || product.image;
+                        const currentImage = currentImages[product.id] || product.image || fallbackProductImage;
                         const currentColorName = selectedColor[product.id] || product.colors?.[0];
                         const productRating = product.rating || 0;
                         const productReviews = product.reviews || 0;
+                        const colorMap = colorImages[product.id] || {};
                         
                         return (
                             <motion.div 
@@ -290,14 +291,13 @@ const ProductGrid = ({ products, title }) => {
                                 transition={{ delay: index * 0.1, duration: 0.5 }}
                                 className="bg-white rounded-xl shadow-md overflow-hidden group hover:shadow-xl transition-all duration-300 flex flex-col h-full border border-gray-100"
                             >
-                                {/* Fixed size image container */}
                                 <div 
                                     className="relative bg-white cursor-pointer overflow-hidden flex items-center justify-center"
                                     style={{ height: '280px' }}
                                     onClick={() => handleProductClick(product.id)}
                                 >
                                     <img 
-                                        src={currentImage || fallbackProductImage} 
+                                        src={currentImage} 
                                         alt={product.name}
                                         className="w-full h-full object-contain transition-transform duration-500 group-hover:scale-105"
                                         onError={(e) => {
@@ -306,7 +306,6 @@ const ProductGrid = ({ products, title }) => {
                                         }}
                                     />
                                     
-                                    {/* Sale Badge - Controlled by settings */}
                                     {settings.showSaleBadge && product.originalPrice && (
                                         <div className="absolute top-3 left-3 bg-red-500 text-white px-2 py-1 rounded-lg text-xs font-bold z-10">
                                             SALE
@@ -329,12 +328,10 @@ const ProductGrid = ({ products, title }) => {
                                         {product.name}
                                     </h3>
                                     
-                                    {/* Product Brand - Controlled by settings */}
                                     {settings.showProductBrand && (
                                         <p className="text-gray-500 text-sm mb-2">{product.brand || "Zamed Premium"}</p>
                                     )}
                                     
-                                    {/* Star Rating - Controlled by settings */}
                                     {settings.showProductRatings && (
                                         <div className="flex items-center justify-between mb-2">
                                             <div className="flex items-center gap-1">
@@ -373,19 +370,18 @@ const ProductGrid = ({ products, title }) => {
                                         )}
                                     </div>
                                     
-                                    {/* Color Swatches - Controlled by settings */}
                                     {settings.showProductColors && product.colors && product.colors.length > 0 && (
                                         <div className="mb-3">
                                             <div className="flex gap-2 flex-wrap">
                                                 {product.colors.slice(0, 4).map((color, idx) => {
-                                                    const colorImage = product.colorImages?.[color] || product.image;
+                                                    const colorImage = colorMap[color] || fallbackProductImage;
                                                     const isSelected = currentColorName === color;
                                                     
                                                     return (
                                                         <div
                                                             key={idx}
                                                             className="relative group/color"
-                                                            onClick={(e) => handleColorClick(product.id, color, colorImage, product.image, e)}
+                                                            onClick={(e) => handleColorClick(product.id, color, e)}
                                                         >
                                                             <div 
                                                                 className={`w-10 h-10 rounded-lg border-2 overflow-hidden cursor-pointer hover:scale-110 transition-all duration-200 ${
@@ -396,6 +392,9 @@ const ProductGrid = ({ products, title }) => {
                                                                     src={colorImage} 
                                                                     alt={color}
                                                                     className="w-full h-full object-cover"
+                                                                    onError={(e) => {
+                                                                        e.target.src = fallbackProductImage;
+                                                                    }}
                                                                 />
                                                             </div>
                                                             <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover/color:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20">
@@ -416,7 +415,6 @@ const ProductGrid = ({ products, title }) => {
                                         </div>
                                     )}
                                     
-                                    {/* Quick Add Button - Controlled by settings */}
                                     {settings.showQuickAdd && (
                                         <button 
                                             onClick={(e) => handleAddToCart(product, e)}
@@ -426,7 +424,6 @@ const ProductGrid = ({ products, title }) => {
                                         </button>
                                     )}
                                     
-                                    {/* Fallback View Details button if Quick Add is disabled */}
                                     {!settings.showQuickAdd && (
                                         <button 
                                             onClick={(e) => {
