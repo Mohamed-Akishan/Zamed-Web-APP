@@ -9,7 +9,8 @@ const SEARCH_HISTORY_KEY = "zamed_search_history";
 const SearchBar = ({
     mobile = false,
     onSearch,
-    placeholder = "Search products..."
+    placeholder = "Search products...",
+    onClose // NEW: callback to close mobile search
 }) => {
     const [query, setQuery] = useState("");
     const [suggestions, setSuggestions] = useState([]);
@@ -106,6 +107,11 @@ const SearchBar = ({
         if (!mobile) {
             setExpanded(false);
         }
+        
+        // NEW: Close mobile search if onClose provided
+        if (mobile && onClose) {
+            onClose();
+        }
     };
 
     const handleSubmit = event => {
@@ -141,7 +147,7 @@ const SearchBar = ({
         });
     };
 
-    // Mobile keeps the normal full-width search field.
+    // Mobile: full-width search field
     if (mobile) {
         return (
             <div ref={wrapperRef} className="relative w-full">
