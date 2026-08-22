@@ -21,7 +21,9 @@ const API_URL =
       ? 'https://zamed-backend-1.onrender.com/api'
       : 'https://zamed-backend-1.onrender.com/api');
 
-const MAX_UPLOAD_BYTES = 60 * 1024 * 1024; // supports large 8K source files
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // must match backend Multer limit
+const isRemoteImage = (value) =>
+    typeof value === 'string' && /^https?:\/\//i.test(value);
 const IMAGE_TYPES = [
     'logo',
     'footerLogo',
@@ -450,7 +452,8 @@ const Settings = () => {
         slide: slideInputRefs.current
     };
 
-    const getToken = () => localStorage.getItem('token');
+    const getToken = () =>
+        localStorage.getItem('token') || localStorage.getItem('authToken') || '';
 
     useEffect(() => {
         const checkDarkMode = () => {
@@ -626,6 +629,28 @@ const Settings = () => {
 
     const deleteImageFromIndexedDB = async (id) => {
         if (!id) return;
+
+        // New Cloudinary assets use a public ID such as zamed/products/abc123.
+        if (String(id).includes('/')) {
+            const token = getToken();
+            if (!token) throw new Error('Please sign in again before deleting this image.');
+
+            const response = await fetch(`${API_URL}/uploads/image`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ publicId: id })
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) {
+                throw new Error(result.message || 'Unable to delete Cloudinary image.');
+            }
+            return;
+        }
+
+        // Legacy images created before Cloudinary are still removed locally.
         await ImageStorage.deleteImage(id);
         await checkStorageUsage();
     };
@@ -636,21 +661,42 @@ const Settings = () => {
         try {
             const compressed = await compressImage(imageData, maxWidth, quality, mimeType);
 
-            const id = await storeImageInIndexedDB(compressed, type);
-
-            if (!id) {
-                throw new Error(
-                    "Unable to save this image in IndexedDB. Please refresh the page and try again."
-                );
+            const token = getToken();
+            if (!token) {
+                throw new Error('Your admin session has expired. Please sign in again.');
             }
 
-            // IMPORTANT:
-            // The Base64 data is returned only for the current React preview.
-            // It is NOT written to localStorage.
+            const blobResponse = await fetch(compressed);
+            const blob = await blobResponse.blob();
+            const extension = blob.type === 'image/png'
+                ? 'png'
+                : blob.type === 'image/webp'
+                    ? 'webp'
+                    : 'jpg';
+            const file = new File(
+                [blob],
+                `${String(type).replace(/[^a-z0-9_-]/gi, '-')}.${extension}`,
+                { type: blob.type || 'image/jpeg' }
+            );
+            const body = new FormData();
+            body.append('image', file);
+
+            const response = await fetch(`${API_URL}/uploads/image`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+                body
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success || !result.imageUrl) {
+                throw new Error(result.message || 'Cloudinary image upload failed.');
+            }
+
             return {
-                type: 'indexeddb',
-                id,
-                data: compressed
+                type: 'cloudinary',
+                id: result.publicId || result.filename || null,
+                publicId: result.publicId || result.filename || null,
+                data: result.imageUrl,
+                imageUrl: result.imageUrl
             };
         } catch (error) {
             console.error('Upload error:', error);
@@ -667,6 +713,7 @@ const Settings = () => {
         type
     ) => {
         if (!imageData) return null;
+        if (isRemoteImage(imageData)) return imageData;
 
         const config = {
             logo: { maxWidth: 512, quality: 0.9 },
@@ -758,14 +805,13 @@ const Settings = () => {
     const saveToLocalStorage = async (sourceSettings = settings) => {
         const current = sourceSettings;
 
-        // Large image data must live ONLY in IndexedDB.
-        // localStorage stores lightweight IDs + text configuration.
+        // localStorage stores lightweight Cloudinary URLs, public IDs and text.
         const imageKeys = IMAGE_TYPES;
 
         const lightweightSettings = { ...current };
 
         imageKeys.forEach((key) => {
-            delete lightweightSettings[key];
+            if (!isRemoteImage(current[key])) delete lightweightSettings[key];
         });
 
         const lightweightSlides = (current.slides || []).map((slide, index) => {
@@ -782,6 +828,7 @@ const Settings = () => {
 
             return {
                 ...slideWithoutImage,
+                image: isRemoteImage(image) ? image : null,
                 imageId,
                 order: slide.order ?? index + 1
             };
@@ -838,7 +885,12 @@ const Settings = () => {
             showTermsAgreement: current.showTermsAgreement,
             showAuthTrustBadges: current.showAuthTrustBadges,
 
-            // IDs only
+            // Cloudinary URLs and public IDs
+            loginBackground: isRemoteImage(current.loginBackground) ? current.loginBackground : null,
+            registerBackground: isRemoteImage(current.registerBackground) ? current.registerBackground : null,
+            authSideImage: isRemoteImage(current.authSideImage) ? current.authSideImage : null,
+            loginPromoImage: isRemoteImage(current.loginPromoImage) ? current.loginPromoImage : null,
+            registerPromoImage: isRemoteImage(current.registerPromoImage) ? current.registerPromoImage : null,
             loginBackgroundId: current.loginBackgroundId || null,
             registerBackgroundId: current.registerBackgroundId || null,
             authSideImageId: current.authSideImageId || null,
@@ -884,7 +936,7 @@ const Settings = () => {
             },
             authSettings,
 
-            // Lightweight public logo/favicon + full image IDs.
+            // Public Cloudinary URLs + public IDs.
             logo: publicLogo || null,
             logoId: current.logoId || null,
             footerLogo: publicFooterLogo || null,
@@ -896,13 +948,18 @@ const Settings = () => {
             authSideImageId: current.authSideImageId || null,
             loginPromoImageId: current.loginPromoImageId || null,
             registerPromoImageId: current.registerPromoImageId || null,
+            loginBackground: isRemoteImage(current.loginBackground) ? current.loginBackground : null,
+            registerBackground: isRemoteImage(current.registerBackground) ? current.registerBackground : null,
+            authSideImage: isRemoteImage(current.authSideImage) ? current.authSideImage : null,
+            loginPromoImage: isRemoteImage(current.loginPromoImage) ? current.loginPromoImage : null,
+            registerPromoImage: isRemoteImage(current.registerPromoImage) ? current.registerPromoImage : null,
 
             slides: lightweightSlides
         };
 
         const imageManifest = {
             // Small public UI previews for existing Header/SiteContext code.
-            // Full-resolution files still live only in IndexedDB.
+            // Full-resolution files are delivered through Cloudinary.
             logo: publicLogo || null,
             logoId: current.logoId || null,
             footerLogo: publicFooterLogo || null,
@@ -914,10 +971,16 @@ const Settings = () => {
             authSideImageId: current.authSideImageId || null,
             loginPromoImageId: current.loginPromoImageId || null,
             registerPromoImageId: current.registerPromoImageId || null,
+            loginBackground: isRemoteImage(current.loginBackground) ? current.loginBackground : null,
+            registerBackground: isRemoteImage(current.registerBackground) ? current.registerBackground : null,
+            authSideImage: isRemoteImage(current.authSideImage) ? current.authSideImage : null,
+            loginPromoImage: isRemoteImage(current.loginPromoImage) ? current.loginPromoImage : null,
+            registerPromoImage: isRemoteImage(current.registerPromoImage) ? current.registerPromoImage : null,
 
             slides: lightweightSlides.map((slide) => ({
                 id: slide.id,
                 imageId: slide.imageId || null,
+                image: isRemoteImage(slide.image) ? slide.image : null,
                 title: slide.title,
                 subtitle: slide.subtitle,
                 buttonText: slide.buttonText,
@@ -980,7 +1043,7 @@ const Settings = () => {
             }
 
             console.log(
-                '✅ Lightweight settings saved. Images remain in IndexedDB.'
+                '✅ Lightweight settings saved. Images use Cloudinary URLs.'
             );
         } catch (error) {
             console.error('Error saving lightweight settings:', error);
@@ -1077,11 +1140,26 @@ const Settings = () => {
                 localStorage.getItem('site_images') || '{}'
             );
 
+            let backendSettings = {};
+            try {
+                const response = await fetch(`${API_URL}/settings`);
+                if (response.ok) {
+                    const result = await response.json();
+                    backendSettings = result.settings || result.data || result || {};
+                    setBackendAvailable(true);
+                }
+            } catch (backendError) {
+                console.warn('Backend settings load failed:', backendError.message);
+                setBackendAvailable(false);
+            }
+
             const mergedSettings = {
                 ...settings,
                 ...savedSettings,
                 ...savedSiteInfo,
-                ...(savedSiteInfo.authSettings || {})
+                ...(savedSiteInfo.authSettings || {}),
+                ...backendSettings,
+                ...(backendSettings.authSettings || {})
             };
 
             const previews = {};
@@ -1119,10 +1197,9 @@ const Settings = () => {
                     savedSiteInfo.authSettings?.[type] ||
                     null;
 
-                const image = await loadImage(
-                    imageId,
-                    legacyFallback
-                );
+                const image = isRemoteImage(mergedSettings[type])
+                    ? mergedSettings[type]
+                    : await loadImage(imageId, legacyFallback);
 
                 if (image) {
                     previews[type] = image;
@@ -1135,6 +1212,7 @@ const Settings = () => {
             }
 
             const slidesMetadata =
+                backendSettings.slides ||
                 savedSiteInfo.slides ||
                 savedImages.slides ||
                 savedSettings.slides ||
@@ -1155,9 +1233,9 @@ const Settings = () => {
                     )?.imageId ||
                     null;
 
-                let imageData = null;
+                let imageData = isRemoteImage(slide.image) ? slide.image : null;
 
-                if (imageId) {
+                if (!imageData && imageId) {
                     imageData = await ImageStorage.getImage(imageId);
                 }
 
@@ -1202,7 +1280,7 @@ const Settings = () => {
             await checkStorageUsage();
 
             console.log(
-                '✅ Settings loaded. Image assets are using IndexedDB.'
+                '✅ Settings loaded. New image assets use Cloudinary.'
             );
         } catch (error) {
             console.error("Error loading settings:", error);
@@ -1315,7 +1393,7 @@ const Settings = () => {
         }
 
         if (file.size > MAX_UPLOAD_BYTES) {
-            toast.error('Image must be less than 60MB.');
+            toast.error('Image must be less than 5MB.');
             return false;
         }
 
@@ -1353,7 +1431,7 @@ const Settings = () => {
             );
 
             const imageUrl = result.data || croppedImage;
-            const imageId = result.type === 'indexeddb' ? result.id : null;
+            const imageId = result.publicId || result.id || null;
 
             const previousSlide = settings.slides[cropSlideId];
             const oldImageId = previousSlide.imageId || settings.slideImageIds?.[previousSlide.id];
@@ -1465,7 +1543,7 @@ const Settings = () => {
             const result = await uploadImage(croppedImage, selectedType);
 
             const imageUrl = result.data || croppedImage;
-            const imageId = result.type === 'indexeddb' ? result.id : null;
+            const imageId = result.publicId || result.id || null;
             const idField = `${selectedType}Id`;
             const previousId = settings[idField];
 
@@ -1568,11 +1646,15 @@ const Settings = () => {
 
                     const imageKeys = IMAGE_TYPES;
 
-                    imageKeys.forEach((key) => delete backendData[key]);
+                    imageKeys.forEach((key) => {
+                        // Send Cloudinary URLs, but never send legacy Base64 data.
+                        if (!isRemoteImage(backendData[key])) delete backendData[key];
+                    });
 
                     backendData.slides = (settings.slides || []).map(
                         ({ image, ...slide }) => ({
                             ...slide,
+                            image: isRemoteImage(image) ? image : null,
                             imageId:
                                 slide.imageId ||
                                 settings.slideImageIds?.[slide.id] ||
@@ -1589,19 +1671,25 @@ const Settings = () => {
                         body: JSON.stringify(backendData)
                     });
                     
-                    if (response.ok) {
-                        const data = await response.json();
-                        if (data.success) {
-                            toast.success("Settings saved to server!");
-                            setBackendAvailable(true);
-                        }
+                    if (!response.ok) {
+                        const result = await response.json().catch(() => ({}));
+                        throw new Error(result.message || 'Server rejected the settings update.');
                     }
+
+                    const data = await response.json();
+                    if (!data.success) {
+                        throw new Error(data.message || 'Settings were not saved.');
+                    }
+
+                    toast.success("Settings saved to server!");
+                    setBackendAvailable(true);
                 } catch (backendError) {
                     console.warn('Backend save failed:', backendError.message);
                     setBackendAvailable(false);
+                    throw backendError;
                 }
             } else {
-                toast.success("Settings saved locally!");
+                throw new Error('Your admin session has expired. Please sign in again.');
             }
             
             setLastSaved(new Date());
@@ -1664,11 +1752,11 @@ const Settings = () => {
                 />
                 <div className="flex-1">
                     <p className="text-xs text-gray-500">{recommended}</p>
-                    <p className="text-xs text-gray-400 mt-1">JPG, PNG, WEBP (Max 60MB source file)</p>
+                    <p className="text-xs text-gray-400 mt-1">JPG, PNG, WEBP (Max 5MB source file)</p>
                     {storageUsed > 0 && (
                         <p className="text-xs text-blue-600 mt-1">💾 ~{storageUsed}MB used in storage</p>
                     )}
-                    <p className="text-xs text-green-600 mt-1">✓ Stored independently in IndexedDB • 8K supported where appropriate</p>
+                    <p className="text-xs text-green-600 mt-1">✓ Securely stored in Cloudinary and available on every device</p>
                 </div>
             </div>
         </div>
@@ -1697,7 +1785,7 @@ const Settings = () => {
             <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
                 <div>
                     <h1 className="text-2xl font-bold dark:text-white">Site Settings</h1>
-                    <p className="text-gray-500 dark:text-gray-400 text-sm">Independent image storage for logo, favicon, hero, authentication artwork and promotional assets</p>
+                    <p className="text-gray-500 dark:text-gray-400 text-sm">Cloudinary storage for logo, favicon, hero, authentication artwork and promotional assets</p>
                     {lastSaved && <p className="text-xs text-green-600 mt-1">Last saved: {lastSaved.toLocaleTimeString()}</p>}
                     {!backendAvailable && (
                         <p className="text-xs text-yellow-600 mt-1">⚠️ Working in offline mode (backend unavailable)</p>
