@@ -280,6 +280,7 @@ const FeaturedCollection = () => {
     // Handle favorite toggle using centralized hook
     // ============================================================
     const handleToggleFavorite = (product, e) => {
+        e.preventDefault();
         e.stopPropagation();
         const result = toggleFavorite(product);
         if (!result.success) {
@@ -474,6 +475,8 @@ const FeaturedCollection = () => {
                                                         )}
                                                         
                                                         <button
+                                                            type="button"
+                                                            aria-label={isFavorite ? `Remove ${featuredProduct.name} from wishlist` : `Add ${featuredProduct.name} to wishlist`}
                                                             onClick={(e) => handleToggleFavorite(featuredProduct, e)}
                                                             className="absolute top-4 right-4 p-2 bg-white/90 backdrop-blur-sm rounded-full shadow-md hover:scale-110 transition-all duration-300 z-10"
                                                         >

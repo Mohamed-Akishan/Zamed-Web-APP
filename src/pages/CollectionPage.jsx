@@ -1,4 +1,3 @@
-// src/pages/CollectionPage.jsx
 import {
     useCallback,
     useEffect,
@@ -1611,6 +1610,9 @@ const CollectionPage = () => {
             
             return processed.map(product => ({
                 ...product,
+                // MongoDB products may only have _id. Every card and the
+                // wishlist hook must use the same stable string ID.
+                id: String(product.id ?? product._id ?? ""),
                 price: Number(product.price) || 0,
                 originalPrice:
                     product.originalPrice === null ||
@@ -1962,6 +1964,7 @@ const CollectionPage = () => {
     // Toggle favorite using centralized hook
     // ============================================================
     const handleToggleFavorite = (product, e) => {
+        e.preventDefault();
         e.stopPropagation();
         const result = toggleFavorite(product);
         if (!result.success) {
@@ -2024,10 +2027,9 @@ const CollectionPage = () => {
     const fallbackProductImage = getWorkingImage(0);
 
     // ============================================================
-    // ProductCard Component - KEY FIX: Uses version from hook
+    // ProductCard Component
     // ============================================================
     const ProductCard = ({ product }) => {
-        // Use version to force re-render when favorites change
         const _ = version;
         const isFavorite = isFavorited(product.id);
 
@@ -2479,45 +2481,39 @@ const CollectionPage = () => {
 
     return (
         <div className="min-h-screen bg-gray-50">
+            {/* Breadcrumb - Minimal */}
             <div className="border-b bg-white">
-                <div className="container mx-auto px-4 py-3">
-                    <div className="flex items-center gap-2 text-sm">
-                        <Link
-                            to="/"
-                            className="flex items-center gap-1 text-gray-500"
-                        >
-                            <Home size={14} />
+                <div className="container mx-auto px-4 py-2">
+                    <div className="flex items-center gap-2 text-xs">
+                        <Link to="/" className="flex items-center gap-1 text-gray-500 hover:text-black">
+                            <Home size={12} />
                             Home
                         </Link>
-
-                        <span className="text-gray-300">
-                            /
-                        </span>
-
-                        <span className="font-medium text-gray-900">
-                            {getTitle()}
-                        </span>
+                        <span className="text-gray-300">/</span>
+                        <span className="font-medium text-gray-900">{getTitle()}</span>
                     </div>
                 </div>
             </div>
 
-            <section className="bg-black py-7 text-white">
-                <div className="container mx-auto px-4 text-center">
-                    <h1 className="text-2xl font-black">
-                        {getTitle()} Collection
-                    </h1>
-
-                    <p className="mt-0.5 text-sm text-gray-400">
-                        {getSubtitle()}
-                    </p>
-
-                    <p className="mt-1 text-xs font-bold text-white/70">
-                        {filteredProducts.length} products
-                    </p>
+            {/* ============================================================
+                REMOVED: Big black heading section
+                Now just a minimal product count bar
+            ============================================================ */}
+            <div className="bg-white border-b border-gray-100 py-2">
+                <div className="container mx-auto px-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <span className="text-sm font-medium text-gray-500">
+                                {filteredProducts.length} products
+                            </span>
+                        </div>
+                    </div>
                 </div>
-            </section>
+            </div>
 
-            <main className="container mx-auto px-4 py-4">
+            {/* Main Content */}
+            <main className="container mx-auto px-4 py-3">
+                {/* Search and Filter Bar */}
                 <div className="mb-3 flex gap-2">
                     <div className="relative flex-1">
                         <Search
@@ -2555,7 +2551,7 @@ const CollectionPage = () => {
                         onClick={() =>
                             setShowFilters(true)
                         }
-                        className="relative flex items-center gap-1.5 rounded-xl bg-black px-3 py-2.5 text-sm font-bold text-white"
+                        className="relative flex items-center gap-1.5 rounded-xl bg-black px-3 py-2.5 text-sm font-bold text-white whitespace-nowrap"
                     >
                         <Filter size={14} />
                         Filters
