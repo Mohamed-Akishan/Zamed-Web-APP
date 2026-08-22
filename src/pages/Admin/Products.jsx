@@ -13,6 +13,71 @@ import { motion, AnimatePresence } from "framer-motion";
 import productService from "../../services/productService";
 import ImageCropper from "../../components/Admin/ImageCropper";
 
+const API_URL = (
+    import.meta.env.VITE_API_URL ||
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+        ? "http://localhost:5000/api"
+        : "https://zamed-backend-1.onrender.com/api")
+).replace(/\/$/, "");
+
+const getAuthToken = () =>
+    localStorage.getItem("token") || localStorage.getItem("authToken") || "";
+
+const dataUrlToFile = async (dataUrl, filename = "product-image.jpg") => {
+    const response = await fetch(dataUrl);
+    const blob = await response.blob();
+    const extension = blob.type === "image/png"
+        ? "png"
+        : blob.type === "image/webp"
+            ? "webp"
+            : "jpg";
+    return new File([blob], filename.replace(/\.[^.]+$/, `.${extension}`), {
+        type: blob.type || "image/jpeg"
+    });
+};
+
+const uploadImageToCloudinary = async (image, filename = "product-image.jpg") => {
+    if (!image || typeof image !== "string") {
+        return { imageUrl: image || null, publicId: null };
+    }
+
+    // Existing Cloudinary/remote images do not need to be uploaded again.
+    if (/^https?:\/\//i.test(image)) {
+        return { imageUrl: image, publicId: null };
+    }
+
+    if (!image.startsWith("data:image/")) {
+        throw new Error("The selected image format is not supported");
+    }
+
+    const token = getAuthToken();
+    if (!token) {
+        throw new Error("Your admin session has expired. Please sign in again.");
+    }
+
+    const file = await dataUrlToFile(image, filename);
+    const body = new FormData();
+    body.append("image", file);
+
+    const response = await fetch(`${API_URL}/uploads/image`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`
+        },
+        body
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success || !result.imageUrl) {
+        throw new Error(result.message || "Cloudinary image upload failed");
+    }
+
+    return {
+        imageUrl: result.imageUrl,
+        publicId: result.publicId || result.filename || null
+    };
+};
+
 const Products = () => {
     const [products, setProducts] = useState([]);
     const [filteredProducts, setFilteredProducts] = useState([]);
@@ -450,8 +515,8 @@ const Products = () => {
             return;
         }
 
-        if (file.size > 25 * 1024 * 1024) {
-            toast.error("Product image must be smaller than 25MB.");
+        if (file.size > 5 * 1024 * 1024) {
+            toast.error("Product image must be smaller than 5MB.");
             e.target.value = "";
             return;
         }
@@ -523,14 +588,34 @@ const Products = () => {
                     console.warn('Image compression failed:', e);
                 }
             }
+
+            let mainImagePublicId = editingProduct?.imagePublicId || null;
+            if (finalImage?.startsWith?.("data:image/")) {
+                const mainUpload = await uploadImageToCloudinary(
+                    finalImage,
+                    `${formData.name.trim() || "product"}-main.jpg`
+                );
+                finalImage = mainUpload.imageUrl;
+                mainImagePublicId = mainUpload.publicId;
+            }
             
             const colorImagesObj = {};
+            const colorImagePublicIds = { ...(editingProduct?.colorImagePublicIds || {}) };
             if (formData.colors && formData.colors.length > 0) {
-                formData.colors.forEach(color => {
+                for (const color of formData.colors) {
                     if (colorImages[color]) {
-                        colorImagesObj[color] = colorImages[color];
+                        if (colorImages[color].startsWith?.("data:image/")) {
+                            const colorUpload = await uploadImageToCloudinary(
+                                colorImages[color],
+                                `${formData.name.trim() || "product"}-${color}.jpg`
+                            );
+                            colorImagesObj[color] = colorUpload.imageUrl;
+                            colorImagePublicIds[color] = colorUpload.publicId;
+                        } else {
+                            colorImagesObj[color] = colorImages[color];
+                        }
                     }
-                });
+                }
             }
             
             const productData = {
@@ -547,7 +632,9 @@ const Products = () => {
                 description: formData.description || "",
                 brand: formData.brand || "Zamed Premium",
                 image: finalImage,
+                imagePublicId: mainImagePublicId,
                 colorImages: colorImagesObj,
+                colorImagePublicIds,
                 rating: formData.rating || 0,
                 reviews: editingProduct?.reviews || 0,
                 isFeatured: formData.isFeatured || false,
@@ -1048,7 +1135,7 @@ const Products = () => {
                                             ) : (<div onClick={() => fileInputRef.current?.click()} className="w-32 h-32 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500"><FiUpload className="w-8 h-8 text-gray-400" /><span className="text-xs text-gray-500 mt-1">Upload</span></div>)}
                                         </div>
                                         <input type="file" ref={fileInputRef} onChange={(e) => handleImageSelect(e, 'main')} accept="image/*" className="hidden" />
-                                        <div className="flex-1"><p className="text-xs text-gray-500">Recommended: 400x500px (Max 2MB)</p><p className="text-xs text-green-600">Images are stored in IndexedDB</p></div>
+                                        <div className="flex-1"><p className="text-xs text-gray-500">Recommended: 400x500px (Max 5MB)</p><p className="text-xs text-green-600">Images are securely stored in Cloudinary</p></div>
                                     </div>
                                 </div>
 
