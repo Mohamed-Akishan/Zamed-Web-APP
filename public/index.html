@@ -2,59 +2,67 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    
-    <!-- ==================== FAVICONS (Prevents 404 Error) ==================== -->
-    <!-- Option B: Data URI fallback - prevents 404 without needing favicon.ico file -->
-    <link rel="icon" type="image/x-icon" href="data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==" />
-    
-    <!-- SVG favicon - modern browsers (your Z logo) -->
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    
-    <!-- Keep existing Vite favicon as fallback -->
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    
-    <!-- Apple Touch Icon for iOS devices -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/favicon.svg" />
-    
-    <!-- PWA Manifest -->
-    <link rel="manifest" href="/site.webmanifest" />
-    <!-- ==================== END FAVICONS ==================== -->
-    
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    
+
+    <!-- Favicon -->
+    <link
+      rel="icon"
+      type="image/x-icon"
+      href="data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+
+    <!-- PWA Manifest: file must be frontend/public/manifest.json -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
+      rel="stylesheet"
+    />
+
     <!-- Primary Meta Tags -->
     <title>ZAMED - Premium Fashion Wear</title>
     <meta name="title" content="ZAMED - Premium Fashion Wear" />
-    <meta name="description" content="Discover premium fashion at ZAMED. Shop the latest trends in men's, women's, and kids' clothing. Free shipping on orders over $100." />
-    <meta name="keywords" content="ZAMED, premium wear, fashion, clothing, men's fashion, women's fashion, kids clothing" />
-    
+    <meta
+      name="description"
+      content="Discover premium fashion at ZAMED. Shop the latest trends in men's, women's, and kids' clothing. Free shipping on orders over $100."
+    />
+    <meta
+      name="keywords"
+      content="ZAMED, premium wear, fashion, clothing, men's fashion, women's fashion, kids clothing"
+    />
+
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://zamed.com/" />
+    <meta property="og:url" content="https://zamed-premium-wear.vercel.app/" />
     <meta property="og:title" content="ZAMED - Premium Fashion Wear" />
-    <meta property="og:description" content="Discover premium fashion at ZAMED. Shop the latest trends in men's, women's, and kids' clothing. Free shipping on orders over $100." />
-    <meta property="og:image" content="https://zamed.com/og-image.jpg" />
-    
-    <!-- Twitter -->
-    <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:url" content="https://zamed.com/" />
-    <meta property="twitter:title" content="ZAMED - Premium Fashion Wear" />
-    <meta property="twitter:description" content="Discover premium fashion at ZAMED. Shop the latest trends." />
-    <meta property="twitter:image" content="https://zamed.com/og-image.jpg" />
-    
-    <!-- Theme Color for mobile browsers -->
+    <meta
+      property="og:description"
+      content="Discover premium fashion at ZAMED. Shop the latest trends in men's, women's, and kids' clothing."
+    />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ZAMED - Premium Fashion Wear" />
+    <meta
+      name="twitter:description"
+      content="Discover premium fashion at ZAMED. Shop the latest trends."
+    />
+
+    <!-- Browser theme -->
     <meta name="theme-color" content="#1a1a2e" />
-    
+
     <style>
-      /* Prevent FOUC (Flash of Unstyled Content) */
       #root {
         min-height: 100vh;
       }
     </style>
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
