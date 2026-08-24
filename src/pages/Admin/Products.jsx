@@ -488,6 +488,7 @@ const Products = () => {
         setLoading(true);
         try {
             let latestProducts = [];
+            let apiSucceeded = false;
 
             try {
                 const response = await fetch(`${API_URL}/products`, {
@@ -497,13 +498,19 @@ const Products = () => {
                 if (!response.ok) {
                     throw new Error(result.message || "Unable to load products from MongoDB");
                 }
+                apiSucceeded = true;
                 latestProducts = unwrapProducts(result).map(product => ({
                     ...product,
                     id: String(product.id ?? product._id ?? "")
                 }));
+
+                // MongoDB is authoritative, even when its list is empty.
+                // Clear stale local copies that could resurrect deleted products.
+                ["shop_products", "admin_products", "products", "product_data"]
+                    .forEach(key => localStorage.removeItem(key));
             } catch (apiError) {
                 console.warn("MongoDB product load failed; using browser fallback:", apiError);
-                latestProducts = getFreshStoredProducts();
+                if (!apiSucceeded) latestProducts = getFreshStoredProducts();
             }
 
             setProducts(latestProducts);

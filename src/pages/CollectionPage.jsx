@@ -1729,6 +1729,7 @@ const CollectionPage = () => {
 
         try {
             let raw = [];
+            let apiSucceeded = false;
 
             // MongoDB/backend is authoritative so every device sees the same products.
             try {
@@ -1737,15 +1738,21 @@ const CollectionPage = () => {
                 });
                 const result = await response.json().catch(() => ({}));
                 if (response.ok) {
+                    apiSucceeded = true;
                     raw = Array.isArray(result)
                         ? result
                         : result.products ?? result.data?.products ?? result.data ?? [];
+
+                    // A successful empty response means there are no products.
+                    // Remove stale legacy browser copies so deleted products cannot return.
+                    ['shop_products', 'products', 'admin_products', 'product_data']
+                        .forEach(key => localStorage.removeItem(key));
                 }
             } catch (apiError) {
                 console.warn("Backend products request failed:", apiError);
             }
 
-            if (!Array.isArray(raw) || raw.length === 0) {
+            if (!apiSucceeded) {
                 try {
                     const serviceProducts = await Promise.resolve(productService.getAllProducts());
                     raw = Array.isArray(serviceProducts)
@@ -1757,7 +1764,7 @@ const CollectionPage = () => {
             }
 
             // Offline-only fallback. It never overrides fresh MongoDB products.
-            if (!Array.isArray(raw) || raw.length === 0) {
+            if (!apiSucceeded && (!Array.isArray(raw) || raw.length === 0)) {
                 const possibleKeys = ['shop_products', 'products', 'admin_products', 'product_data'];
                 for (const key of possibleKeys) {
                     try {
