@@ -23,6 +23,37 @@ const API_URL = (
 const getAuthToken = () =>
     localStorage.getItem("token") || localStorage.getItem("authToken") || "";
 
+const unwrapProducts = result => {
+    const value = Array.isArray(result)
+        ? result
+        : result?.products ?? result?.data?.products ?? result?.data ?? [];
+    return Array.isArray(value) ? value : [];
+};
+
+const saveProductToBackend = async (product, productId = null) => {
+    const token = getAuthToken();
+    if (!token) throw new Error("Your admin session has expired. Please sign in again.");
+
+    const response = await fetch(
+        productId
+            ? `${API_URL}/products/${encodeURIComponent(productId)}`
+            : `${API_URL}/products`,
+        {
+            method: productId ? "PUT" : "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify(product)
+        }
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.success === false) {
+        throw new Error(result.message || "The product could not be saved to MongoDB.");
+    }
+    return result.product ?? result.data?.product ?? result.data ?? result;
+};
+
 const dataUrlToFile = async (dataUrl, filename = "product-image.jpg") => {
     const response = await fetch(dataUrl);
     const blob = await response.blob();
@@ -456,7 +487,25 @@ const Products = () => {
     const loadProducts = async ({ showToast = false } = {}) => {
         setLoading(true);
         try {
-            const latestProducts = getFreshStoredProducts();
+            let latestProducts = [];
+
+            try {
+                const response = await fetch(`${API_URL}/products`, {
+                    headers: { Accept: "application/json" }
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(result.message || "Unable to load products from MongoDB");
+                }
+                latestProducts = unwrapProducts(result).map(product => ({
+                    ...product,
+                    id: String(product.id ?? product._id ?? "")
+                }));
+            } catch (apiError) {
+                console.warn("MongoDB product load failed; using browser fallback:", apiError);
+                latestProducts = getFreshStoredProducts();
+            }
+
             setProducts(latestProducts);
             if (showToast) {
                 toast.success(`Products refreshed · ${latestProducts.length} loaded`);
@@ -657,10 +706,11 @@ const Products = () => {
             };
             
             if (editingProduct) {
-                productService.updateProduct(editingProduct.id, productData);
+                const backendId = editingProduct._id || editingProduct.id;
+                await saveProductToBackend(productData, backendId);
                 toast.success(`Product "${formData.name}" updated successfully!`);
             } else {
-                productService.addProduct(productData);
+                await saveProductToBackend(productData);
                 toast.success(`Product "${formData.name}" added successfully!`);
             }
             
@@ -684,9 +734,23 @@ const Products = () => {
 
     const handleDelete = async (product) => {
         if (window.confirm(`Delete "${product.name}"?`)) {
-            productService.deleteProduct(product.id);
-            toast.success(`"${product.name}" deleted!`);
-            loadProducts();
+            try {
+                const token = getAuthToken();
+                if (!token) throw new Error("Please sign in again.");
+                const productId = product._id || product.id;
+                const response = await fetch(
+                    `${API_URL}/products/${encodeURIComponent(productId)}`,
+                    { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
+                );
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || result.success === false) {
+                    throw new Error(result.message || "Unable to delete product");
+                }
+                toast.success(`"${product.name}" deleted!`);
+                await loadProducts();
+            } catch (error) {
+                toast.error(error.message || "Unable to delete product");
+            }
         }
     };
 
@@ -732,16 +796,21 @@ const Products = () => {
         setShowModal(true);
     };
 
-    const handleDuplicate = (product) => {
+    const handleDuplicate = async (product) => {
         const newProduct = {
             ...product,
+            _id: undefined,
             id: Date.now().toString(),
             name: `${product.name} (Copy)`,
             createdAt: new Date().toISOString()
         };
-        productService.addProduct(newProduct);
-        toast.success(`"${product.name}" duplicated!`);
-        loadProducts();
+        try {
+            await saveProductToBackend(newProduct);
+            toast.success(`"${product.name}" duplicated!`);
+            await loadProducts();
+        } catch (error) {
+            toast.error(error.message || "Unable to duplicate product");
+        }
     };
 
     const handleCloseModal = () => {
@@ -778,16 +847,30 @@ const Products = () => {
         });
     };
 
-    const toggleFeatured = (product) => {
-        productService.updateProduct(product.id, { ...product, isFeatured: !product.isFeatured });
-        toast.success(`${product.name} ${!product.isFeatured ? 'featured' : 'unfeatured'}`);
-        loadProducts();
+    const toggleFeatured = async (product) => {
+        try {
+            await saveProductToBackend(
+                { ...product, isFeatured: !product.isFeatured },
+                product._id || product.id
+            );
+            toast.success(`${product.name} ${!product.isFeatured ? 'featured' : 'unfeatured'}`);
+            await loadProducts();
+        } catch (error) {
+            toast.error(error.message || "Unable to update featured status");
+        }
     };
 
-    const toggleNewArrival = (product) => {
-        productService.updateProduct(product.id, { ...product, isNewArrival: !product.isNewArrival });
-        toast.success(`${product.name} ${!product.isNewArrival ? 'new arrival' : 'removed'}`);
-        loadProducts();
+    const toggleNewArrival = async (product) => {
+        try {
+            await saveProductToBackend(
+                { ...product, isNewArrival: !product.isNewArrival },
+                product._id || product.id
+            );
+            toast.success(`${product.name} ${!product.isNewArrival ? 'new arrival' : 'removed'}`);
+            await loadProducts();
+        } catch (error) {
+            toast.error(error.message || "Unable to update new-arrival status");
+        }
     };
 
     const handleGenderChange = (gender) => {

@@ -1,0 +1,10 @@
+{
+  "name": "Zamed Premium Wear",
+  "short_name": "Zamed",
+  "description": "Premium fashion for men, women and kids",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#111111"
+}

@@ -36,6 +36,13 @@ import productService from "../services/productService";
 import { loadProductsImages } from "../utils/imageLoader";
 import useFavorites from "../hooks/useFavorites";
 
+const API_URL = (
+    import.meta.env.VITE_API_URL ||
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+        ? "http://localhost:5000/api"
+        : "https://zamed-backend-1.onrender.com/api")
+).replace(/\/$/, "");
+
 const CURRENCY_SYMBOLS = {
     USD: "$",
     GBP: "£",
@@ -82,20 +89,21 @@ const getImageFromIndexedDB = (imageId) => {
 // Get product image - handles db:// references
 // ============================================================
 const getProductImage = async (product) => {
-    if (!product || !product.image) {
+    const source = product?.image ?? product?.imageUrl ?? product?.mainImage ?? product?.thumbnail;
+    if (!source || typeof source !== "string") {
         return getWorkingImage(product?.id || 0);
     }
     
-    if (product.image.startsWith('db://')) {
-        const imageData = await getImageFromIndexedDB(product.image);
+    if (source.startsWith('db://')) {
+        const imageData = await getImageFromIndexedDB(source);
         if (imageData) {
             return imageData;
         }
         return getWorkingImage(product.id || Date.now());
     }
     
-    if (product.image.startsWith('http') || product.image.startsWith('data:')) {
-        return product.image;
+    if (source.startsWith('http') || source.startsWith('data:')) {
+        return source;
     }
     
     return getWorkingImage(product.id || Date.now());
@@ -129,7 +137,17 @@ const normalize = (value) =>
 const toList = (value) => {
     if (Array.isArray(value)) {
         return value
-            .map(item => String(item).trim())
+            .map(item => {
+                if (typeof item === "string" || typeof item === "number") {
+                    return String(item).trim();
+                }
+                if (item && typeof item === "object") {
+                    return String(
+                        item.name ?? item.label ?? item.value ?? item.color ?? ""
+                    ).trim();
+                }
+                return "";
+            })
             .filter(Boolean);
     }
 
@@ -141,6 +159,30 @@ const toList = (value) => {
     }
 
     return [];
+};
+
+const normalizeColorImages = (value) => {
+    if (!value) return {};
+    if (Array.isArray(value)) {
+        return value.reduce((result, item) => {
+            if (!item || typeof item !== "object") return result;
+            const name = String(item.color ?? item.name ?? item.label ?? "").trim();
+            const image = item.image ?? item.url ?? item.imageUrl ?? item.src;
+            if (name && image) result[name] = image;
+            return result;
+        }, {});
+    }
+    if (typeof value === "object") return { ...value };
+    return {};
+};
+
+const getColorImage = (product, color) => {
+    const images = normalizeColorImages(product?.colorImages);
+    if (!color) return product?.image || null;
+    if (images[color]) return images[color];
+    const wanted = normalize(color);
+    const matchingKey = Object.keys(images).find(key => normalize(key) === wanted);
+    return (matchingKey && images[matchingKey]) || product?.image || null;
 };
 
 const initialFilters = {
@@ -668,6 +710,13 @@ const COLOR_MAP = {
     Khaki: "#c3b091",
     Cream: "#fffdd0",
     Ivory: "#fffff0"
+};
+
+const getColorHex = color => {
+    const value = String(color || "").trim();
+    if (/^#[0-9a-f]{3,8}$/i.test(value)) return value;
+    const key = Object.keys(COLOR_MAP).find(item => normalize(item) === normalize(value));
+    return (key && COLOR_MAP[key]) || "#cccccc";
 };
 
 const Section = ({
@@ -1621,7 +1670,11 @@ const CollectionPage = () => {
                         ? null
                         : Number(product.originalPrice) || 0,
                 stock: Number(product.stock) || 0,
-                colorImages: product.colorImages || {}
+                sizes: toList(product.sizes),
+                colors: toList(product.colors ?? product.availableColors ?? product.colours),
+                colorImages: normalizeColorImages(
+                    product.colorImages ?? product.colourImages ?? product.variantImages
+                )
             }));
         },
         []
@@ -1676,27 +1729,46 @@ const CollectionPage = () => {
 
         try {
             let raw = [];
-            const possibleKeys = ['shop_products', 'products', 'admin_products', 'product_data'];
-            for (const key of possibleKeys) {
-                const stored = localStorage.getItem(key);
-                if (stored) {
+
+            // MongoDB/backend is authoritative so every device sees the same products.
+            try {
+                const response = await fetch(`${API_URL}/products`, {
+                    headers: { Accept: "application/json" }
+                });
+                const result = await response.json().catch(() => ({}));
+                if (response.ok) {
+                    raw = Array.isArray(result)
+                        ? result
+                        : result.products ?? result.data?.products ?? result.data ?? [];
+                }
+            } catch (apiError) {
+                console.warn("Backend products request failed:", apiError);
+            }
+
+            if (!Array.isArray(raw) || raw.length === 0) {
+                try {
+                    const serviceProducts = await Promise.resolve(productService.getAllProducts());
+                    raw = Array.isArray(serviceProducts)
+                        ? serviceProducts
+                        : serviceProducts?.products ?? serviceProducts?.data ?? [];
+                } catch (serviceError) {
+                    console.warn("Product service fallback failed:", serviceError);
+                }
+            }
+
+            // Offline-only fallback. It never overrides fresh MongoDB products.
+            if (!Array.isArray(raw) || raw.length === 0) {
+                const possibleKeys = ['shop_products', 'products', 'admin_products', 'product_data'];
+                for (const key of possibleKeys) {
                     try {
-                        const parsed = JSON.parse(stored);
+                        const parsed = JSON.parse(localStorage.getItem(key) || "[]");
                         if (Array.isArray(parsed) && parsed.length > 0) {
                             raw = parsed;
                             break;
                         }
-                    } catch (e) {
-                        // Continue to next key
+                    } catch {
+                        // Try the next legacy key.
                     }
-                }
-            }
-            
-            if (raw.length === 0) {
-                try {
-                    raw = productService.getAllProducts() || [];
-                } catch (e) {
-                    // Continue
                 }
             }
             
@@ -1720,7 +1792,7 @@ const CollectionPage = () => {
             filtered.forEach(product => {
                 if (product.colors && product.colors.length > 0) {
                     const firstColor = product.colors[0];
-                    const colorImage = product.colorImages?.[firstColor] || product.image;
+                    const colorImage = getColorImage(product, firstColor);
                     initialColorImages[product.id] = {
                         current: colorImage,
                         colors: product.colors,
@@ -1908,8 +1980,7 @@ const CollectionPage = () => {
                 const nextIdx = (currentIdx + 1) % colorList.length;
                 
                 const colorName = colorList[nextIdx];
-                const colorImgMap = product.colorImages || {};
-                const newImage = colorImgMap[colorName] || product.image;
+                const newImage = getColorImage(product, colorName);
                 
                 setCurrentColorImages(prevImages => ({
                     ...prevImages,
@@ -1948,7 +2019,7 @@ const CollectionPage = () => {
         if (product) {
             const defaultColor = product.colors?.[0] || null;
             const defaultImage = defaultColor 
-                ? (product.colorImages?.[defaultColor] || product.image)
+                ? getColorImage(product, defaultColor)
                 : product.image;
             setCurrentColorImages(prev => ({
                 ...prev,
@@ -2096,30 +2167,16 @@ const CollectionPage = () => {
                         />
                     </button>
 
-                    {settings.showProductColors && product.colors?.length > 1 && (
-                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1 bg-white/80 backdrop-blur-sm px-2 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                    {product.colors?.length > 0 && (
+                        <div className="absolute bottom-2 left-1/2 flex -translate-x-1/2 gap-1 rounded-full bg-white/90 px-2 py-1 shadow-sm backdrop-blur-sm">
                             {product.colors.slice(0, 5).map((color, idx) => (
                                 <span
                                     key={idx}
                                     className="w-3 h-3 rounded-full border border-gray-200"
                                     style={{
-                                        backgroundColor: 
-                                            color === "White" ? "#f5f5f5" :
-                                            color === "Black" ? "#1a1a1a" :
-                                            color === "Red" ? "#dc2626" :
-                                            color === "Blue" ? "#3b82f6" :
-                                            color === "Green" ? "#22c55e" :
-                                            color === "Yellow" ? "#eab308" :
-                                            color === "Purple" ? "#a855f7" :
-                                            color === "Pink" ? "#ec4899" :
-                                            color === "Gray" ? "#9ca3af" :
-                                            color === "Navy" ? "#1e3a8a" :
-                                            color === "Orange" ? "#f97316" :
-                                            color === "Brown" ? "#78350f" :
-                                            color === "Teal" ? "#008080" :
-                                            color === "Maroon" ? "#800000" :
-                                            "#cccccc"
+                                        backgroundColor: getColorHex(color)
                                     }}
+                                    title={color}
                                 />
                             ))}
                             {product.colors.length > 5 && (
@@ -2195,8 +2252,7 @@ const CollectionPage = () => {
                         )}
                     </div>
 
-                    {settings.showProductColors &&
-                        product.colors?.length > 0 && (
+                    {product.colors?.length > 0 && (
                             <div className="mt-2 flex flex-wrap gap-1">
                                 {product.colors.slice(0, 4).map(color => (
                                     <span
@@ -2259,10 +2315,7 @@ const CollectionPage = () => {
 
         const [quantity, setQuantity] = useState(1);
 
-        const image =
-            product.colorImages?.[color] ||
-            product.image ||
-            fallbackProductImage;
+        const image = getColorImage(product, color) || fallbackProductImage;
 
         const addProduct = () => {
             addToCart({
