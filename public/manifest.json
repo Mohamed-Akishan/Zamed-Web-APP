@@ -1,13 +1,11 @@
 {
   "name": "ZAMED Premium Wear",
   "short_name": "ZAMED",
-  "description": "Premium fashion clothing for men, women, and kids",
+  "description": "Premium fashion clothing",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#1a1a2e",
-  "orientation": "portrait-primary",
-  "categories": ["shopping", "fashion", "lifestyle"],
   "icons": [
     {
       "src": "/favicon.svg",
