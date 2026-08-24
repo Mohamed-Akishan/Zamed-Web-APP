@@ -30,6 +30,9 @@ const unwrapProducts = result => {
     return Array.isArray(value) ? value : [];
 };
 
+// ============================================================
+// saveProductToBackend - FIXED: Clean payload for MongoDB
+// ============================================================
 const saveProductToBackend = async (product, productId = null) => {
     const token = getAuthToken();
     if (!token) throw new Error("Your admin session has expired. Please sign in again.");
@@ -39,6 +42,8 @@ const saveProductToBackend = async (product, productId = null) => {
     delete payload._id;
     delete payload.id;
     delete payload.__v;
+    delete payload.createdAt;
+    delete payload.updatedAt;
 
     // The Product schema stores review documents, not a numeric review count.
     payload.reviews = Array.isArray(product.reviews) ? product.reviews : [];
@@ -154,10 +159,14 @@ const Products = () => {
     const [newBrand, setNewBrand] = useState("");
     const [showNewBrandInput, setShowNewBrandInput] = useState(false);
     
+    // ============================================================
+    // FIX: reviews should be array, not number
+    // ============================================================
     const [formData, setFormData] = useState({
         name: "", price: "", originalPrice: "", category: "", gender: "",
         sizes: [], colors: [], stock: 0, description: "", brand: "",
-        rating: 4.5, reviews: 0, isFeatured: false, isNewArrival: false,
+        rating: 4.5, reviews: [], // ✅ FIXED: reviews as array
+        isFeatured: false, isNewArrival: false,
         tags: [], weight: "", material: "", careInstructions: "",
         details: "", shipping: "", shippingFee: 0, freeShippingThreshold: 0,
         taxRate: 0, isTaxFree: false, deliveryDays: "3-5", returnPolicy: "30-day easy returns"
@@ -445,6 +454,9 @@ const Products = () => {
         return [];
     };
 
+    // ============================================================
+    // useLatestProductValues - FIXED: reviews as array
+    // ============================================================
     const useLatestProductValues = (product = {}) => {
         const defaults = getSiteProductDefaults();
         return {
@@ -459,7 +471,7 @@ const Products = () => {
             description: product.description ?? "",
             brand: product.brand ?? "",
             rating: product.rating ?? 4.5,
-            reviews: Array.isArray(product.reviews) ? product.reviews.length : product.reviews ?? 0,
+            reviews: Array.isArray(product.reviews) ? product.reviews : [],
             isFeatured: Boolean(product.isFeatured),
             isNewArrival: Boolean(product.isNewArrival),
             tags: normaliseArrayField(product.tags),
@@ -621,7 +633,7 @@ const Products = () => {
     };
 
     // ============================================================
-    // handleSubmit - prevents double submission
+    // handleSubmit - FIXED: Clean data for MongoDB
     // ============================================================
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -683,11 +695,10 @@ const Products = () => {
                 }
             }
             
+            // ============================================================
+            // FIX: Build clean product data - NO custom id fields
+            // ============================================================
             const productData = {
-                ...(editingProduct || {}),
-                ...(editingProduct
-                    ? { id: String(editingProduct.id ?? editingProduct._id ?? "") }
-                    : {}),
                 name: formData.name.trim(),
                 price: parseFloat(formData.price),
                 originalPrice: formData.originalPrice ? parseFloat(formData.originalPrice) : null,
@@ -702,10 +713,9 @@ const Products = () => {
                 imagePublicId: mainImagePublicId,
                 colorImages: colorImagesObj,
                 colorImagePublicIds,
+                // ✅ FIX: reviews should be array, not number
+                reviews: [],
                 rating: formData.rating || 0,
-                reviews: Array.isArray(editingProduct?.reviews)
-                    ? editingProduct.reviews
-                    : [],
                 isFeatured: formData.isFeatured || false,
                 isNewArrival: formData.isNewArrival || false,
                 inStock: Number(formData.stock) > 0,
@@ -720,11 +730,16 @@ const Products = () => {
                 taxRate: formData.isTaxFree ? 0 : parseFloat(formData.taxRate) || 0,
                 isTaxFree: formData.isTaxFree || false,
                 deliveryDays: formData.deliveryDays || "3-5",
-                returnPolicy: formData.returnPolicy || "30-day easy returns",
-                createdAt: editingProduct ? editingProduct.createdAt : new Date().toISOString(),
-                updatedAt: new Date().toISOString()
+                returnPolicy: formData.returnPolicy || "30-day easy returns"
             };
-            
+
+            // ✅ FIX: Remove id fields that MongoDB doesn't accept
+            delete productData.id;
+            delete productData._id;
+            delete productData.__v;
+            delete productData.createdAt;
+            delete productData.updatedAt;
+
             if (editingProduct) {
                 const backendId = editingProduct._id || editingProduct.id;
                 await saveProductToBackend(productData, backendId);
@@ -793,6 +808,9 @@ const Products = () => {
         setShowModal(true);
     };
 
+    // ============================================================
+    // handleOpenAddProduct - FIXED: reviews as array
+    // ============================================================
     const handleOpenAddProduct = () => {
         const defaults = getSiteProductDefaults();
         setEditingProduct(null);
@@ -806,7 +824,9 @@ const Products = () => {
         setFormData({
             name: "", price: "", originalPrice: "", category: "", gender: "",
             sizes: [], colors: [], stock: 0, description: "", brand: "",
-            rating: 4.5, reviews: 0, isFeatured: false, isNewArrival: false,
+            rating: 4.5, 
+            reviews: [], // ✅ FIXED: reviews as array
+            isFeatured: false, isNewArrival: false,
             tags: [], weight: "", material: "", careInstructions: "",
             details: "", shipping: "", shippingFee: defaults.shippingFee,
             freeShippingThreshold: defaults.freeShippingThreshold,
@@ -820,7 +840,7 @@ const Products = () => {
         const newProduct = {
             ...product,
             _id: undefined,
-            id: Date.now().toString(),
+            id: undefined,
             name: `${product.name} (Copy)`,
             createdAt: new Date().toISOString()
         };
@@ -833,6 +853,9 @@ const Products = () => {
         }
     };
 
+    // ============================================================
+    // handleCloseModal - FIXED: reviews as array
+    // ============================================================
     const handleCloseModal = () => {
         setShowModal(false);
         setEditingProduct(null);
@@ -844,7 +867,9 @@ const Products = () => {
         setFormData({
             name: "", price: "", originalPrice: "", category: "", gender: "",
             sizes: [], colors: [], stock: 0, description: "", brand: "",
-            rating: 4.5, reviews: 0, isFeatured: false, isNewArrival: false,
+            rating: 4.5, 
+            reviews: [], // ✅ FIXED: reviews as array
+            isFeatured: false, isNewArrival: false,
             tags: [], weight: "", material: "", careInstructions: "",
             details: "", shipping: "", shippingFee: 5.00, freeShippingThreshold: 100,
             taxRate: 10, isTaxFree: false, deliveryDays: "3-5", returnPolicy: "30-day easy returns"
