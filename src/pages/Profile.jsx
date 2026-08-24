@@ -250,6 +250,31 @@ const Profile = () => {
         try { return JSON.parse(value) ?? fallback; } catch { return fallback; }
     };
 
+    const buildEditableUser = (source = {}) => {
+        const fullName = String(source.name || source.fullName || "").trim();
+        const nameParts = fullName.split(/\s+/).filter(Boolean);
+        const rawAddress = source.address && typeof source.address === "object" ? source.address : {};
+
+        return {
+            ...source,
+            firstName: source.firstName || source.firstname || nameParts[0] || "",
+            lastName: source.lastName || source.lastname || nameParts.slice(1).join(" ") || "",
+            email: source.email || "",
+            phone: source.phone || source.phoneNumber || "",
+            street: source.street || rawAddress.street || rawAddress.addressLine1 || "",
+            city: source.city || rawAddress.city || "",
+            county: source.county || source.state || rawAddress.county || rawAddress.state || "",
+            postcode: source.postcode || source.zipCode || rawAddress.postcode || rawAddress.zipCode || "",
+            country: source.country || rawAddress.country || ""
+        };
+    };
+
+    const openProfileEditor = () => {
+        setProfileErrors({});
+        setEditedUser(buildEditableUser(user || {}));
+        setIsEditingProfile(true);
+    };
+
     const getNotificationId = (n = {}) => String(
         n.id || n._id || n.notificationId || `${n.type || "notification"}-${n.date || n.createdAt || Date.now()}`
     );
@@ -279,11 +304,15 @@ const Profile = () => {
             ? (value.deliveryStatus || value.status || value.orderStatus || value.fulfillmentStatus || value.shippingStatus || "")
             : value;
 
-        const normalized = String(rawStatus || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+        const normalized = String(rawStatus || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
         const aliases = {
             completed: "delivered", complete: "delivered", received: "delivered",
             fulfilled: "delivered", order_delivered: "delivered", order_completed: "delivered",
-            delivery_completed: "delivered", delivered_successfully: "delivered", successfully_delivered: "delivered"
+            delivery_completed: "delivered", delivered_successfully: "delivered", successfully_delivered: "delivered",
+            delivered_to_customer: "delivered", customer_received: "delivered",
+            confirmed: "processing", packing: "processing", packed: "processing",
+            dispatched: "shipped", dispatch: "shipped", in_transit: "shipped",
+            out_for_delivery: "out_for_delivery", outfordelivery: "out_for_delivery"
         };
         if (aliases[normalized]) return aliases[normalized];
         if (normalized.includes("delivered") || normalized.includes("completed")) return "delivered";
@@ -295,7 +324,8 @@ const Profile = () => {
         const statusCandidates = [
             order.deliveryStatus, order.status, order.orderStatus, order.fulfillmentStatus,
             order.shippingStatus, order.trackingStatus, order.delivery?.status,
-            order.shipping?.status, order.fulfillment?.status, order.tracking?.status
+            order.shipping?.status, order.fulfillment?.status, order.tracking?.status,
+            order.deliveryInfo?.status, order.shippingInfo?.status, order.currentStatus
         ];
         const hasDeliveredStatus = statusCandidates.some(value => value && normalizeOrderStatus(value) === "delivered");
         if (hasDeliveredStatus) return true;
@@ -307,7 +337,8 @@ const Profile = () => {
     const getOrderTrackingSteps = (order = {}) => {
         const status = isOrderDelivered(order) ? "delivered" : normalizeOrderStatus(
             order.deliveryStatus || order.status || order.orderStatus || order.fulfillmentStatus ||
-            order.shippingStatus || order.trackingStatus || order.delivery?.status || order.shipping?.status || "pending"
+            order.shippingStatus || order.trackingStatus || order.delivery?.status || order.shipping?.status ||
+            order.deliveryInfo?.status || order.shippingInfo?.status || order.currentStatus || "pending"
         );
         const steps = [
             { id: "pending", label: "Order Placed", description: "Your order has been received.", icon: FiCheckCircle },
@@ -668,7 +699,10 @@ const Profile = () => {
         if (!email) return;
 
         try {
-            const userOrders = await orderService.getUserOrders(email);
+            const userOrdersResponse = await orderService.getUserOrders(email);
+            const userOrders = Array.isArray(userOrdersResponse)
+                ? userOrdersResponse
+                : userOrdersResponse?.orders || userOrdersResponse?.data?.orders || userOrdersResponse?.data || [];
             const normalizedOrders = (Array.isArray(userOrders) ? userOrders : []).map(order => ({
                 ...order,
                 id: order.id || order._id || order.orderId,
@@ -683,7 +717,10 @@ const Profile = () => {
 
             let serviceReturns = [];
             try {
-                serviceReturns = await orderService.getUserReturnRequests(email);
+                const response = await orderService.getUserReturnRequests(email);
+                serviceReturns = Array.isArray(response)
+                    ? response
+                    : response?.returns || response?.returnRequests || response?.data?.returns || response?.data || [];
             } catch (error) {
                 console.warn("Unable to load returns from orderService:", error);
             }
@@ -747,7 +784,7 @@ const Profile = () => {
         try {
             const parsedUser = JSON.parse(userData);
             setUser(parsedUser);
-            setEditedUser(parsedUser);
+            setEditedUser(buildEditableUser(parsedUser));
 
             const email = parsedUser.email;
             loadFavorites(email);
@@ -912,24 +949,37 @@ const Profile = () => {
             email: editedUser.email?.trim(),
             phone: editedUser.phone?.trim(),
             phoneNumber: editedUser.phone?.trim(),
-            address: [editedUser.street, editedUser.city, editedUser.county, editedUser.postcode, editedUser.country].filter(Boolean).join(", ")
+            name: [editedUser.firstName?.trim(), editedUser.lastName?.trim()].filter(Boolean).join(" "),
+            zipCode: editedUser.postcode?.trim(),
+            state: editedUser.county?.trim(),
+            address: {
+                street: editedUser.street?.trim() || "",
+                city: editedUser.city?.trim() || "",
+                state: editedUser.county?.trim() || "",
+                postcode: editedUser.postcode?.trim() || "",
+                zipCode: editedUser.postcode?.trim() || "",
+                country: editedUser.country?.trim() || ""
+            }
         };
 
         try {
             const token = getToken();
             if (token) {
-                const response = await fetch(`${API_URL}/users/profile`, {
+                const payload = { ...normalizedUser };
+                delete payload._id;
+                delete payload.id;
+                delete payload.__v;
+                delete payload.password;
+                delete payload.role;
+
+                const result = await tryApiEndpoints(["/users/profile", "/users/me", "/auth/profile"], {
                     method: "PUT",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "Authorization": `Bearer ${token}`
-                    },
-                    body: JSON.stringify(normalizedUser)
+                    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+                    body: JSON.stringify(payload)
                 });
 
-                if (response.ok) {
-                    const data = await response.json();
-                    const savedUser = data.user || normalizedUser;
+                if (result.ok) {
+                    const savedUser = buildEditableUser(result.data?.user || result.data?.data || normalizedUser);
                     localStorage.setItem("user", JSON.stringify(savedUser));
                     setUser(savedUser);
                     setEditedUser(savedUser);
@@ -940,20 +990,11 @@ const Profile = () => {
                 }
             }
 
-            localStorage.setItem("user", JSON.stringify(normalizedUser));
-            setUser(normalizedUser);
-            setEditedUser(normalizedUser);
-            window.dispatchEvent(new CustomEvent("profileUpdated", { detail: normalizedUser }));
-            toast.success("Your profile has been updated.");
-            setIsEditingProfile(false);
+            if (!token) throw new Error("Your session has expired. Please sign in again.");
+            throw new Error("The server could not update your profile. Please check the backend profile route.");
         } catch (error) {
             console.error("Profile update failed:", error);
-            localStorage.setItem("user", JSON.stringify(normalizedUser));
-            setUser(normalizedUser);
-            setEditedUser(normalizedUser);
-            window.dispatchEvent(new CustomEvent("profileUpdated", { detail: normalizedUser }));
-            toast.success("Profile saved locally.");
-            setIsEditingProfile(false);
+            toast.error(error?.message || "Unable to update your profile.");
         } finally {
             setIsSavingProfile(false);
         }
@@ -1189,9 +1230,50 @@ const Profile = () => {
 
     const getOrderIdentifier = (order = {}) => order.id || order._id || order.orderId || "";
 
-    const getItemIdentifier = (item = {}) => item.id || item._id || item.productId || "";
+    const getItemIdentifier = (item = {}) => item.id || item._id || item.productId || item.product?._id || item.product?.id || item.product || "";
 
-    const getOrderItems = (order = {}) => Array.isArray(order.itemsList) ? order.itemsList : Array.isArray(order.items) ? order.items : [];
+    const getOrderItems = (order = {}) => {
+        const items = order.itemsList || order.items || order.orderItems || order.products || order.cartItems || [];
+        return Array.isArray(items) ? items.map(item => ({
+            ...item,
+            id: getItemIdentifier(item),
+            name: item.name || item.productName || item.title || item.product?.name || "Product",
+            image: item.image || item.productImage || item.thumbnail || item.product?.image || item.product?.images?.[0] || "",
+            price: Number(item.price ?? item.product?.price ?? 0),
+            quantity: Number(item.quantity ?? item.qty ?? 1)
+        })) : [];
+    };
+
+    const openOrderTracking = async (order) => {
+        if (!order) return;
+        const orderId = getOrderIdentifier(order);
+        setTrackingOrder(order);
+
+        try {
+            let latest = null;
+            if (typeof orderService.getOrderById === "function" && orderId) {
+                latest = await orderService.getOrderById(orderId);
+            }
+            if (!latest && user?.email) {
+                const refreshedResponse = await orderService.getUserOrders(user.email);
+                const refreshed = Array.isArray(refreshedResponse)
+                    ? refreshedResponse
+                    : refreshedResponse?.orders || refreshedResponse?.data?.orders || refreshedResponse?.data || [];
+                latest = (Array.isArray(refreshed) ? refreshed : []).find(candidate =>
+                    String(getOrderIdentifier(candidate)) === String(orderId)
+                );
+            }
+            if (latest) {
+                const normalizedLatest = { ...order, ...latest, id: getOrderIdentifier(latest) || orderId };
+                setTrackingOrder(normalizedLatest);
+                setOrders(current => current.map(item =>
+                    String(getOrderIdentifier(item)) === String(orderId) ? normalizedLatest : item
+                ));
+            }
+        } catch (error) {
+            console.warn("Could not refresh tracking; showing saved order status:", error);
+        }
+    };
 
     const getOrderPaymentMethod = (order = {}) => String(order.paymentMethod || order.payment?.method || order.paymentType || "");
 
@@ -1240,6 +1322,7 @@ const Profile = () => {
         if (returnRequest?.status === "refunded") return "refunded";
         if (returnRequest?.status === "refund_processing") return "refund_processing";
         if (["picked_up", "verified", "pickup_scheduled", "pending_pickup"].includes(returnRequest?.status)) return "return_in_progress";
+        if (isOrderDelivered(order)) return "delivered";
         return order.refundStatus || order.status || order.orderStatus || order.deliveryStatus || "pending";
     };
 
@@ -1993,7 +2076,7 @@ const Profile = () => {
                                         <p className="mt-0.5 text-xs sm:text-sm text-gray-500 dark:text-gray-400">Manage your personal information and account details</p>
                                     </div>
                                     <button 
-                                        onClick={() => setIsEditingProfile(true)} 
+                                        onClick={openProfileEditor} 
                                         className="inline-flex items-center justify-center gap-2 bg-black px-4 py-2.5 text-xs font-semibold tracking-wide text-white hover:bg-[#b98237] rounded-xl transition-all w-full sm:w-auto"
                                     >
                                         <FiEdit2 size={15} /> EDIT PROFILE
@@ -2052,7 +2135,7 @@ const Profile = () => {
                                 <section className="rounded-xl border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
                                     <div className="flex items-center justify-between mb-4">
                                         <h2 className="text-lg sm:text-xl font-bold">Personal Information</h2>
-                                        <button onClick={() => setIsEditingProfile(true)} className="text-xs font-semibold text-[#a86f25] hover:underline">EDIT</button>
+                                        <button type="button" onClick={openProfileEditor} className="text-xs font-semibold text-[#a86f25] hover:underline">EDIT</button>
                                     </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                                         {[
@@ -2243,7 +2326,8 @@ const Profile = () => {
                                                     <div className="pt-3 border-t mt-3">
                                                         <div className="flex flex-wrap gap-2">
                                                             <button
-                                                                onClick={() => setTrackingOrder(order)}
+                                                                type="button"
+                                                                onClick={() => openOrderTracking(order)}
                                                                 className="inline-flex items-center gap-1.5 rounded-xl bg-black px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#b98237]"
                                                             >
                                                                 <FiTruck size={13} /> Track Order
@@ -2251,7 +2335,8 @@ const Profile = () => {
 
                                                             {isDelivered && (
                                                                 <button
-                                                                    onClick={() => setTrackingOrder(order)}
+                                                                    type="button"
+                                                                    onClick={() => openOrderTracking(order)}
                                                                     className="inline-flex items-center gap-1.5 rounded-xl bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-green-700"
                                                                 >
                                                                     <FiCheckCircle size={13} /> Delivery Complete
@@ -2259,7 +2344,7 @@ const Profile = () => {
                                                             )}
 
                                                             <Link
-                                                                to={`/product/${order.itemsList?.[0]?.id}`}
+                                                                to={`/product/${getItemIdentifier(getOrderItems(order)[0] || {})}`}
                                                                 className="inline-flex items-center gap-1.5 rounded-xl border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:border-black hover:text-black dark:text-gray-200"
                                                                 onClick={() => window.scrollTo(0, 0)}
                                                             >
@@ -2268,7 +2353,8 @@ const Profile = () => {
 
                                                             {isDelivered && (
                                                                 <button
-                                                                    onClick={() => navigateToProductReview(order.itemsList?.[0]?.id, order.itemsList?.[0]?.name, order.id)}
+                                                                    type="button"
+                                                                    onClick={() => navigateToProductReview(getItemIdentifier(getOrderItems(order)[0] || {}), getOrderItems(order)[0]?.name, getOrderIdentifier(order))}
                                                                     className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-700"
                                                                 >
                                                                     <FiStar size={13} /> Review
