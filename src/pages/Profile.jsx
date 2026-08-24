@@ -1451,6 +1451,199 @@ const Profile = () => {
     };
 
     // ============================================================
+    // Tracking Modal Component
+    // ============================================================
+    const TrackingModal = ({ order, onClose }) => {
+        if (!order) return null;
+        
+        const steps = getOrderTrackingSteps(order);
+        const isDelivered = isOrderDelivered(order);
+        
+        return (
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+                <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-800">
+                    <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-2xl font-bold dark:text-white">Order Tracking</h2>
+                        <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
+                            <FiX size={24} />
+                        </button>
+                    </div>
+                    
+                    <div className="mb-6">
+                        <p className="text-sm text-gray-500 dark:text-gray-400">Order #{order.id}</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">Placed on {formatDate(order.date)}</p>
+                    </div>
+                    
+                    <div className="relative">
+                        {steps.map((step, index) => {
+                            const Icon = step.icon;
+                            return (
+                                <div key={step.id} className="relative flex gap-4 pb-8 last:pb-0">
+                                    {index < steps.length - 1 && (
+                                        <div className={`absolute left-5 top-10 w-0.5 h-12 ${step.completed ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
+                                    )}
+                                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${step.completed ? 'bg-green-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-400'}`}>
+                                        <Icon size={18} />
+                                    </div>
+                                    <div className="flex-1">
+                                        <p className={`font-semibold ${step.completed ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500'}`}>{step.label}</p>
+                                        <p className="text-sm text-gray-500 dark:text-gray-400">{step.description}</p>
+                                        {step.active && !isDelivered && (
+                                            <span className="inline-block mt-1 px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">Current</span>
+                                        )}
+                                        {step.completed && step.id === 'delivered' && (
+                                            <span className="inline-block mt-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">Delivered</span>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    
+                    {isDelivered && (
+                        <div className="mt-6 p-4 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-200 dark:border-green-800">
+                            <p className="text-sm text-green-700 dark:text-green-300">✅ Your order has been delivered successfully!</p>
+                        </div>
+                    )}
+                    
+                    <button onClick={onClose} className="mt-6 w-full bg-black text-white py-3 rounded-xl font-semibold hover:bg-gray-800 transition">
+                        Close
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
+    // ============================================================
+    // Edit Profile Modal Component
+    // ============================================================
+    const EditProfileModal = () => {
+        if (!isEditingProfile) return null;
+        
+        return (
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) setIsEditingProfile(false); }}>
+                <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-800">
+                    <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-2xl font-bold dark:text-white">Edit Profile</h2>
+                        <button onClick={() => setIsEditingProfile(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
+                            <FiX size={24} />
+                        </button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium mb-1 dark:text-white">First Name *</label>
+                                <input
+                                    type="text"
+                                    value={editedUser.firstName || ''}
+                                    onChange={(e) => setProfileField('firstName', e.target.value)}
+                                    className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                                {profileErrors.firstName && <p className="text-xs text-red-500 mt-1">{profileErrors.firstName}</p>}
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1 dark:text-white">Last Name *</label>
+                                <input
+                                    type="text"
+                                    value={editedUser.lastName || ''}
+                                    onChange={(e) => setProfileField('lastName', e.target.value)}
+                                    className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                                {profileErrors.lastName && <p className="text-xs text-red-500 mt-1">{profileErrors.lastName}</p>}
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium mb-1 dark:text-white">Email *</label>
+                            <input
+                                type="email"
+                                value={editedUser.email || ''}
+                                onChange={(e) => setProfileField('email', e.target.value)}
+                                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            />
+                            {profileErrors.email && <p className="text-xs text-red-500 mt-1">{profileErrors.email}</p>}
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium mb-1 dark:text-white">Phone</label>
+                            <input
+                                type="tel"
+                                value={editedUser.phone || ''}
+                                onChange={(e) => setProfileField('phone', e.target.value)}
+                                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            />
+                            {profileErrors.phone && <p className="text-xs text-red-500 mt-1">{profileErrors.phone}</p>}
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium mb-1 dark:text-white">Street</label>
+                            <input
+                                type="text"
+                                value={editedUser.street || ''}
+                                onChange={(e) => setProfileField('street', e.target.value)}
+                                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            />
+                        </div>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium mb-1 dark:text-white">City</label>
+                                <input
+                                    type="text"
+                                    value={editedUser.city || ''}
+                                    onChange={(e) => setProfileField('city', e.target.value)}
+                                    className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1 dark:text-white">State/County</label>
+                                <input
+                                    type="text"
+                                    value={editedUser.county || ''}
+                                    onChange={(e) => setProfileField('county', e.target.value)}
+                                    className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium mb-1 dark:text-white">Postcode</label>
+                                <input
+                                    type="text"
+                                    value={editedUser.postcode || ''}
+                                    onChange={(e) => setProfileField('postcode', e.target.value)}
+                                    className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                                {profileErrors.postcode && <p className="text-xs text-red-500 mt-1">{profileErrors.postcode}</p>}
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1 dark:text-white">Country</label>
+                                <input
+                                    type="text"
+                                    value={editedUser.country || ''}
+                                    onChange={(e) => setProfileField('country', e.target.value)}
+                                    className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="flex flex-col-reverse sm:flex-row gap-3 mt-6">
+                        <button onClick={() => setIsEditingProfile(false)} className="flex-1 px-4 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                            Cancel
+                        </button>
+                        <button onClick={updateProfile} disabled={isSavingProfile} className="flex-1 px-4 py-3 bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 flex items-center justify-center gap-2">
+                            {isSavingProfile ? <><FiLoader className="animate-spin" /> Saving...</> : <><FiSave /> Save Changes</>}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // ============================================================
     // UI Helper Functions
     // ============================================================
     const getOrderStatusBadge = (status) => {
@@ -1615,16 +1808,14 @@ const Profile = () => {
     if (!user) return null;
 
     // ============================================================
-    // Main Render - MOBILE RESPONSIVE
+    // Main Render
     // ============================================================
     return (
         <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900 text-white' : 'bg-[#fbfaf8] text-gray-950'}`}>
             <div className="mx-auto max-w-[1440px] px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 md:py-8">
                 <div className="flex flex-col gap-4 md:gap-6 lg:gap-8 lg:flex-row">
                     
-                    {/* ============================================================
-                        DESKTOP SIDEBAR
-                    ============================================================ */}
+                    {/* Desktop Sidebar */}
                     <aside className="hidden w-64 xl:w-72 shrink-0 lg:block">
                         <div className="sticky top-24 overflow-hidden rounded-xl border border-[#e8e1d6] bg-white shadow-[0_8px_30px_rgba(28,24,18,0.05)] dark:border-gray-700 dark:bg-gray-800">
                             <div className="border-b border-[#ece5db] px-4 sm:px-5 py-4 text-xs font-semibold tracking-wide text-[#a86f25] dark:border-gray-700 dark:text-amber-400">
@@ -1684,9 +1875,7 @@ const Profile = () => {
                         </div>
                     </aside>
 
-                    {/* ============================================================
-                        MOBILE MENU BUTTON
-                    ============================================================ */}
+                    {/* Mobile Menu Button */}
                     <div className="lg:hidden fixed bottom-4 right-4 z-50">
                         <button
                             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -1697,9 +1886,7 @@ const Profile = () => {
                         </button>
                     </div>
 
-                    {/* ============================================================
-                        MOBILE SIDEBAR (Slide-in)
-                    ============================================================ */}
+                    {/* Mobile Sidebar */}
                     <AnimatePresence>
                         {isMobileMenuOpen && (
                             <>
@@ -1792,15 +1979,14 @@ const Profile = () => {
                     </AnimatePresence>
 
                     {/* ============================================================
-                        MAIN CONTENT - MOBILE RESPONSIVE
+                        MAIN CONTENT
                     ============================================================ */}
                     <div className="flex-1 min-w-0">
                         
-                        {/* ==================== OVERVIEW TAB ==================== */}
+                        {/* OVERVIEW TAB */}
                         {activeTab === "overview" && (
                             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
                                 
-                                {/* Header */}
                                 <div className="flex flex-col sm:flex-row justify-between gap-3 sm:items-center">
                                     <div>
                                         <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-950 dark:text-white">My Profile</h1>
@@ -1955,7 +2141,7 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* ==================== ORDERS TAB ==================== */}
+                        {/* ORDERS TAB */}
                         {activeTab === "orders" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
@@ -2014,9 +2200,7 @@ const Profile = () => {
                                     <div className="space-y-3 sm:space-y-4">
                                         {filteredOrders.map((order) => {
                                             const orderStatus = getEffectiveOrderStatus(order);
-                                            const isRefunded = orderStatus === "refunded";
-                                            const isReturnInProgress = orderStatus === "return_in_progress" || orderStatus === "refund_processing";
-                                            const isDelivered = !isRefunded && !isReturnInProgress && isOrderDelivered(order);
+                                            const isDelivered = isOrderDelivered(order);
                                             const isCancelled = normalizeOrderStatus(orderStatus) === "cancelled";
 
                                             return (
@@ -2058,14 +2242,12 @@ const Profile = () => {
 
                                                     <div className="pt-3 border-t mt-3">
                                                         <div className="flex flex-wrap gap-2">
-                                                            {!isDelivered && !isCancelled && (
-                                                                <button
-                                                                    onClick={() => setTrackingOrder(order)}
-                                                                    className="inline-flex items-center gap-1.5 rounded-xl bg-black px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#b98237]"
-                                                                >
-                                                                    <FiTruck size={13} /> Track Order
-                                                                </button>
-                                                            )}
+                                                            <button
+                                                                onClick={() => setTrackingOrder(order)}
+                                                                className="inline-flex items-center gap-1.5 rounded-xl bg-black px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#b98237]"
+                                                            >
+                                                                <FiTruck size={13} /> Track Order
+                                                            </button>
 
                                                             {isDelivered && (
                                                                 <button
@@ -2084,7 +2266,7 @@ const Profile = () => {
                                                                 <FiEye size={13} /> View
                                                             </Link>
 
-                                                            {isDelivered && !isRefunded && !isReturnInProgress && (
+                                                            {isDelivered && (
                                                                 <button
                                                                     onClick={() => navigateToProductReview(order.itemsList?.[0]?.id, order.itemsList?.[0]?.name, order.id)}
                                                                     className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-700"
@@ -2101,7 +2283,7 @@ const Profile = () => {
                                                                 <FiTrash2 size={13} /> Delete
                                                             </button>
 
-                                                            {!isCancelled && !isDelivered && !isRefunded && !isReturnInProgress && (
+                                                            {!isCancelled && !isDelivered && (
                                                                 <button
                                                                     onClick={() => cancelOrder(order.id)}
                                                                     disabled={cancellingOrderId === order.id}
@@ -2112,6 +2294,49 @@ const Profile = () => {
                                                             )}
                                                         </div>
                                                     </div>
+
+                                                    {isDelivered && (
+                                                        <div className="mt-3 rounded-xl bg-green-50 p-3 dark:bg-green-900/10">
+                                                            <div className="flex items-center gap-2 mb-2">
+                                                                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-green-600 text-white">
+                                                                    <FiCheckCircle size={14} />
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-xs font-bold text-green-800 dark:text-green-300">Order Delivered!</p>
+                                                                    <p className="text-[10px] text-green-700 dark:text-green-400">You can now request a return for eligible items.</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="space-y-2">
+                                                                {getOrderItems(order).map((item, itemIndex) => {
+                                                                    const alreadyReturned = hasReturnRequestForItem(getOrderIdentifier(order), getItemIdentifier(item));
+                                                                    return (
+                                                                        <div key={`${getOrderIdentifier(order)}-${getItemIdentifier(item)}-${itemIndex}`} className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-2 sm:flex-row sm:items-center sm:justify-between dark:border-gray-600 dark:bg-gray-800">
+                                                                            <div className="flex min-w-0 items-center gap-2">
+                                                                                {item.image ? (
+                                                                                    <img src={item.image} alt={item.name} className="h-10 w-10 shrink-0 rounded-lg object-cover" />
+                                                                                ) : (
+                                                                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
+                                                                                        <FiPackage className="text-gray-400" />
+                                                                                    </div>
+                                                                                )}
+                                                                                <div className="min-w-0">
+                                                                                    <p className="truncate text-xs font-semibold">{item.name}</p>
+                                                                                    <p className="text-[10px] text-gray-500">Qty {item.quantity || 1}{item.size ? ` · ${item.size}` : ""}{item.color ? ` · ${item.color}` : ""}</p>
+                                                                                </div>
+                                                                            </div>
+                                                                            <button
+                                                                                onClick={() => openReturnForItem(order, item)}
+                                                                                disabled={alreadyReturned}
+                                                                                className="inline-flex items-center gap-1.5 rounded-lg border border-orange-300 px-2 py-1 text-[10px] font-bold text-orange-700 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                            >
+                                                                                <FiCornerDownLeft /> {alreadyReturned ? "Return Requested" : "Return Item"}
+                                                                            </button>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             );
                                         })}
@@ -2120,7 +2345,7 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* ==================== WISHLIST TAB ==================== */}
+                        {/* WISHLIST TAB */}
                         {activeTab === "wishlist" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
@@ -2245,7 +2470,7 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* ==================== COUPONS TAB ==================== */}
+                        {/* COUPONS TAB */}
                         {activeTab === "coupons" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
@@ -2360,9 +2585,7 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* ============================================================
-                            RETURNS TAB
-                        ============================================================ */}
+                        {/* RETURNS TAB */}
                         {activeTab === "returns" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
@@ -2444,9 +2667,7 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* ============================================================
-                            NOTIFICATIONS TAB
-                        ============================================================ */}
+                        {/* NOTIFICATIONS TAB */}
                         {activeTab === "notifications" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
@@ -2498,9 +2719,7 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* ============================================================
-                            ADDRESSES TAB
-                        ============================================================ */}
+                        {/* ADDRESSES TAB */}
                         {activeTab === "addresses" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
@@ -2551,9 +2770,7 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* ============================================================
-                            SECURITY TAB
-                        ============================================================ */}
+                        {/* SECURITY TAB */}
                         {activeTab === "security" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
@@ -2605,9 +2822,7 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* ============================================================
-                            SETTINGS TAB
-                        ============================================================ */}
+                        {/* SETTINGS TAB */}
                         {activeTab === "settings" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
@@ -2655,7 +2870,22 @@ const Profile = () => {
                 </div>
 
                 {/* ============================================================
-                    RETURN ITEM MODAL - Mobile Responsive
+                    TRACKING MODAL
+                ============================================================ */}
+                {trackingOrder && (
+                    <TrackingModal 
+                        order={trackingOrder} 
+                        onClose={() => setTrackingOrder(null)} 
+                    />
+                )}
+
+                {/* ============================================================
+                    EDIT PROFILE MODAL
+                ============================================================ */}
+                <EditProfileModal />
+
+                {/* ============================================================
+                    RETURN ITEM MODAL
                 ============================================================ */}
                 <AnimatePresence>
                     {selectedItemForReturn && (
@@ -2676,6 +2906,7 @@ const Profile = () => {
                                 exit={{ opacity: 0, y: 15, scale: 0.98 }}
                                 className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-gray-800"
                             >
+                                {/* Return modal content - same as before */}
                                 <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3 dark:border-gray-700">
                                     <div className="min-w-0">
                                         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-600">Returns & Refunds</p>
