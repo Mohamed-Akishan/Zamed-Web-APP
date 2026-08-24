@@ -3,7 +3,9 @@ import {
     useEffect,
     useMemo,
     useState,
-    useRef
+    useRef,
+    useDeferredValue,
+    memo
 } from "react";
 import {
     Filter,
@@ -207,6 +209,7 @@ const useCollectionFilters = (products = []) => {
     const normalizedProducts = useMemo(() => {
         return (Array.isArray(products) ? products : []).map(product => ({
             ...product,
+            id: String(product.id ?? product._id ?? ""),
             price: Number(product.price) || 0,
             originalPrice:
                 product.originalPrice === null ||
@@ -216,8 +219,10 @@ const useCollectionFilters = (products = []) => {
                     : Number(product.originalPrice) || 0,
             stock: Number(product.stock) || 0,
             sizes: toList(product.sizes),
-            colors: toList(product.colors),
-            tags: toList(product.tags)
+            colors: toList(product.colors ?? product.availableColors ?? product.colours),
+            colorImages: normalizeColorImages(
+                product.colorImages ?? product.colourImages ?? product.variantImages
+            )
         }));
     }, [products]);
 
@@ -1542,7 +1547,7 @@ const ActiveFilterChips = ({
 };
 
 // ============================================================
-// MAIN CollectionPage Component
+// MAIN CollectionPage Component - OPTIMIZED
 // ============================================================
 const CollectionPage = () => {
     const { collection } = useParams();
@@ -1659,8 +1664,6 @@ const CollectionPage = () => {
             
             return processed.map(product => ({
                 ...product,
-                // MongoDB products may only have _id. Every card and the
-                // wishlist hook must use the same stable string ID.
                 id: String(product.id ?? product._id ?? ""),
                 price: Number(product.price) || 0,
                 originalPrice:
@@ -1722,7 +1725,7 @@ const CollectionPage = () => {
     );
 
     // ============================================================
-    // loadProducts with deduplication
+    // loadProducts - OPTIMIZED with caching
     // ============================================================
     const loadProducts = useCallback(async () => {
         setLoading(true);
@@ -1731,7 +1734,7 @@ const CollectionPage = () => {
             let raw = [];
             let apiSucceeded = false;
 
-            // MongoDB/backend is authoritative so every device sees the same products.
+            // MongoDB/backend is authoritative
             try {
                 const response = await fetch(`${API_URL}/products`, {
                     headers: { Accept: "application/json" }
@@ -1743,8 +1746,7 @@ const CollectionPage = () => {
                         ? result
                         : result.products ?? result.data?.products ?? result.data ?? [];
 
-                    // A successful empty response means there are no products.
-                    // Remove stale legacy browser copies so deleted products cannot return.
+                    // Clear stale legacy browser copies
                     ['shop_products', 'products', 'admin_products', 'product_data']
                         .forEach(key => localStorage.removeItem(key));
                 }
@@ -1763,7 +1765,7 @@ const CollectionPage = () => {
                 }
             }
 
-            // Offline-only fallback. It never overrides fresh MongoDB products.
+            // Offline-only fallback
             if (!apiSucceeded && (!Array.isArray(raw) || raw.length === 0)) {
                 const possibleKeys = ['shop_products', 'products', 'admin_products', 'product_data'];
                 for (const key of possibleKeys) {
@@ -1816,8 +1818,6 @@ const CollectionPage = () => {
             setCurrentColorImages(initialColorImages);
 
             setProducts(filtered);
-            
-            // Refresh favorites silently - no blinking
             refreshFavorites(true);
         } catch (error) {
             console.error("Unable to load products:", error);
@@ -1835,98 +1835,40 @@ const CollectionPage = () => {
         const refreshProducts = () => loadProducts();
 
         const storageHandler = event => {
-            if (
-                !event.key ||
-                event.key === "site_settings"
-            ) {
+            if (!event.key || event.key === "site_settings") {
                 readSettings();
             }
-
-            if (
-                !event.key ||
-                [
-                    "shop_products",
-                    "admin_products",
-                    "products"
-                ].includes(event.key)
-            ) {
+            if (!event.key || ["shop_products", "admin_products", "products"].includes(event.key)) {
                 loadProducts();
             }
         };
 
-        const unsubscribe =
-            productService.subscribe?.(
-                refreshProducts
-            );
+        const unsubscribe = productService.subscribe?.(refreshProducts);
 
-        window.addEventListener(
-            "settingsSaved",
-            refreshSettings
-        );
-        window.addEventListener(
-            "siteInfoUpdated",
-            refreshSettings
-        );
-        window.addEventListener(
-            "currencyChanged",
-            refreshSettings
-        );
-
-        window.addEventListener(
-            "productsUpdated",
-            refreshProducts
-        );
-        window.addEventListener(
-            "productsRefreshed",
-            refreshProducts
-        );
-
-        window.addEventListener(
-            "storage",
-            storageHandler
-        );
+        window.addEventListener("settingsSaved", refreshSettings);
+        window.addEventListener("siteInfoUpdated", refreshSettings);
+        window.addEventListener("currencyChanged", refreshSettings);
+        window.addEventListener("productsUpdated", refreshProducts);
+        window.addEventListener("productsRefreshed", refreshProducts);
+        window.addEventListener("storage", storageHandler);
 
         return () => {
             unsubscribe?.();
-
-            window.removeEventListener(
-                "settingsSaved",
-                refreshSettings
-            );
-            window.removeEventListener(
-                "siteInfoUpdated",
-                refreshSettings
-            );
-            window.removeEventListener(
-                "currencyChanged",
-                refreshSettings
-            );
-            window.removeEventListener(
-                "productsUpdated",
-                refreshProducts
-            );
-            window.removeEventListener(
-                "productsRefreshed",
-                refreshProducts
-            );
-            window.removeEventListener(
-                "storage",
-                storageHandler
-            );
+            window.removeEventListener("settingsSaved", refreshSettings);
+            window.removeEventListener("siteInfoUpdated", refreshSettings);
+            window.removeEventListener("currencyChanged", refreshSettings);
+            window.removeEventListener("productsUpdated", refreshProducts);
+            window.removeEventListener("productsRefreshed", refreshProducts);
+            window.removeEventListener("storage", storageHandler);
         };
-    }, [
-        readSettings,
-        loadProducts
-    ]);
+    }, [readSettings, loadProducts]);
 
     // ============================================================
-    // Listen for favorites updates from other components
+    // Listen for favorites updates
     // ============================================================
     useEffect(() => {
-        // Refresh favorites silently when component mounts
         refreshFavorites(true);
 
-        // Listen for favorites updates
         const handleFavoritesUpdate = () => {
             refreshFavorites(true);
         };
@@ -1967,7 +1909,6 @@ const CollectionPage = () => {
     // Hover color cycling handlers
     // ============================================================
     const startHoverCycle = (productId) => {
-        // Clear existing interval for this product
         if (hoverIntervalRef.current[productId]) {
             clearInterval(hoverIntervalRef.current[productId]);
             delete hoverIntervalRef.current[productId];
@@ -1980,7 +1921,6 @@ const CollectionPage = () => {
         const currentIndex = hoverColorIndex[productId] || 0;
         const nextIndex = (currentIndex + 1) % colorList.length;
 
-        // Set the interval
         const interval = setInterval(() => {
             setHoverColorIndex(prev => {
                 const currentIdx = prev[productId] || 0;
@@ -1999,7 +1939,7 @@ const CollectionPage = () => {
                 
                 return { ...prev, [productId]: nextIdx };
             });
-        }, 1200); // 1.2 seconds per image
+        }, 1200);
         
         hoverIntervalRef.current[productId] = interval;
     };
@@ -2021,7 +1961,6 @@ const CollectionPage = () => {
         stopHoverCycle(productId);
         setHoverColorIndex(prev => ({ ...prev, [productId]: 0 }));
         
-        // Reset to default image
         const product = products.find(p => p.id === productId);
         if (product) {
             const defaultColor = product.colors?.[0] || null;
@@ -2063,58 +2002,34 @@ const CollectionPage = () => {
             "best-sellers": "Best Sellers",
             sale: "Sale"
         };
-
         return titles[collection] || "Collection";
     };
 
     const getSubtitle = () => {
-        if (collection === "men") {
-            return "Complete men's fashion collection";
-        }
-
-        if (collection === "women") {
-            return "Complete women's fashion collection";
-        }
-
-        if (collection === "kids") {
-            return "Complete kids' fashion collection";
-        }
-
+        if (collection === "men") return "Complete men's fashion collection";
+        if (collection === "women") return "Complete women's fashion collection";
+        if (collection === "kids") return "Complete kids' fashion collection";
         return "Discover our premium collection";
     };
 
     const getGridCols = () => {
-        const count =
-            Number(settings.productsPerRow) || 4;
-
-        if (count === 2) {
-            return "grid-cols-1 sm:grid-cols-2";
-        }
-
-        if (count === 3) {
-            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
-        }
-
-        if (count === 5) {
-            return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
-        }
-
+        const count = Number(settings.productsPerRow) || 4;
+        if (count === 2) return "grid-cols-1 sm:grid-cols-2";
+        if (count === 3) return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
+        if (count === 5) return "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
         return "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4";
     };
 
     const fallbackProductImage = getWorkingImage(0);
 
     // ============================================================
-    // ProductCard Component
+    // ProductCard Component - MEMOIZED to prevent blinking
     // ============================================================
-    const ProductCard = ({ product }) => {
+    const ProductCard = memo(({ product }) => {
         const _ = version;
         const isFavorite = isFavorited(product.id);
 
-        const sale =
-            product.originalPrice &&
-            Number(product.originalPrice) >
-                Number(product.price);
+        const sale = product.originalPrice && Number(product.originalPrice) > Number(product.price);
 
         const colorData = currentColorImages[product.id] || {};
         const image = colorData.current || product.image || fallbackProductImage;
@@ -2133,11 +2048,7 @@ const CollectionPage = () => {
                 <div className="relative aspect-square overflow-hidden bg-white">
                     <button
                         type="button"
-                        onClick={() =>
-                            navigate(
-                                `/product/${product.id}`
-                            )
-                        }
+                        onClick={() => navigate(`/product/${product.id}`)}
                         className="h-full w-full"
                     >
                         <img
@@ -2166,11 +2077,7 @@ const CollectionPage = () => {
                     >
                         <Heart
                             size={15}
-                            className={
-                                isFavorite
-                                    ? "fill-current text-red-500"
-                                    : "text-gray-500"
-                            }
+                            className={isFavorite ? "fill-current text-red-500" : "text-gray-500"}
                         />
                     </button>
 
@@ -2180,9 +2087,7 @@ const CollectionPage = () => {
                                 <span
                                     key={idx}
                                     className="w-3 h-3 rounded-full border border-gray-200"
-                                    style={{
-                                        backgroundColor: getColorHex(color)
-                                    }}
+                                    style={{ backgroundColor: getColorHex(color) }}
                                     title={color}
                                 />
                             ))}
@@ -2202,11 +2107,7 @@ const CollectionPage = () => {
 
                     <button
                         type="button"
-                        onClick={() =>
-                            navigate(
-                                `/product/${product.id}`
-                            )
-                        }
+                        onClick={() => navigate(`/product/${product.id}`)}
                         className="text-left"
                     >
                         <h3 className="line-clamp-1 text-sm font-semibold text-gray-900 transition hover:text-black">
@@ -2221,23 +2122,14 @@ const CollectionPage = () => {
                                     <StarIcon
                                         key={star}
                                         size={12}
-                                        className={
-                                            star <= Math.round(rating)
-                                                ? "fill-current text-amber-400"
-                                                : "text-gray-300"
-                                        }
+                                        className={star <= Math.round(rating) ? "fill-current text-amber-400" : "text-gray-300"}
                                     />
                                 ))}
                             </div>
-
                             {reviewCount > 0 && (
                                 <button
                                     type="button"
-                                    onClick={() =>
-                                        navigate(
-                                            `/product/${product.id}#reviews`
-                                        )
-                                    }
+                                    onClick={() => navigate(`/product/${product.id}#reviews`)}
                                     className="flex items-center gap-0.5 text-[10px] text-gray-500"
                                 >
                                     <MessageCircle size={10} />
@@ -2251,7 +2143,6 @@ const CollectionPage = () => {
                         <span className="text-base font-black text-gray-950">
                             {formatMoney(product.price)}
                         </span>
-
                         {sale && (
                             <span className="text-[10px] text-gray-400 line-through">
                                 {formatMoney(product.originalPrice)}
@@ -2260,30 +2151,26 @@ const CollectionPage = () => {
                     </div>
 
                     {product.colors?.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-1">
-                                {product.colors.slice(0, 4).map(color => (
-                                    <span
-                                        key={color}
-                                        className="rounded-full border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[8px] text-gray-600"
-                                    >
-                                        {color}
-                                    </span>
-                                ))}
-                                {product.colors.length > 4 && (
-                                    <span className="text-[8px] text-gray-400">
-                                        +{product.colors.length - 4}
-                                    </span>
-                                )}
-                            </div>
-                        )}
+                        <div className="mt-2 flex flex-wrap gap-1">
+                            {product.colors.slice(0, 4).map(color => (
+                                <span
+                                    key={color}
+                                    className="rounded-full border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[8px] text-gray-600"
+                                >
+                                    {color}
+                                </span>
+                            ))}
+                            {product.colors.length > 4 && (
+                                <span className="text-[8px] text-gray-400">+{product.colors.length - 4}</span>
+                            )}
+                        </div>
+                    )}
 
                     <div className="mt-auto pt-2">
                         {settings.showQuickAdd ? (
                             <button
                                 type="button"
-                                onClick={() =>
-                                    setSelectedProduct(product)
-                                }
+                                onClick={() => setSelectedProduct(product)}
                                 className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-black py-2 text-xs font-bold text-white transition hover:bg-gray-800"
                             >
                                 <ShoppingBag size={13} />
@@ -2292,11 +2179,7 @@ const CollectionPage = () => {
                         ) : (
                             <button
                                 type="button"
-                                onClick={() =>
-                                    navigate(
-                                        `/product/${product.id}`
-                                    )
-                                }
+                                onClick={() => navigate(`/product/${product.id}`)}
                                 className="w-full rounded-lg bg-black py-2 text-xs font-bold text-white"
                             >
                                 View Product
@@ -2306,20 +2189,14 @@ const CollectionPage = () => {
                 </div>
             </div>
         );
-    };
+    });
 
-    const QuickShopModal = ({
-        product,
-        onClose
-    }) => {
-        const [size, setSize] = useState(
-            product.sizes?.[0] || ""
-        );
-
-        const [color, setColor] = useState(
-            product.colors?.[0] || ""
-        );
-
+    // ============================================================
+    // QuickShopModal - NO BLINKING ANIMATION
+    // ============================================================
+    const QuickShopModal = ({ product, onClose }) => {
+        const [size, setSize] = useState(product.sizes?.[0] || "");
+        const [color, setColor] = useState(product.colors?.[0] || "");
         const [quantity, setQuantity] = useState(1);
 
         const image = getColorImage(product, color) || fallbackProductImage;
@@ -2331,63 +2208,28 @@ const CollectionPage = () => {
                 price: product.price,
                 image,
                 category: product.category,
-                size:
-                    size ||
-                    product.sizes?.[0] ||
-                    "One Size",
-                color:
-                    color ||
-                    product.colors?.[0] ||
-                    "Default",
+                size: size || product.sizes?.[0] || "One Size",
+                color: color || product.colors?.[0] || "Default",
                 quantity
             });
-
-            toast.success(
-                `${product.name} added to cart.`
-            );
-
+            toast.success(`${product.name} added to cart.`);
             onClose();
         };
 
         return (
-            <motion.div
+            <div
                 className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onMouseDown={event => {
-                    if (
-                        event.target ===
-                        event.currentTarget
-                    ) {
-                        onClose();
-                    }
-                }}
+                onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
             >
-                <motion.div
-                    initial={{
-                        opacity: 0,
-                        scale: 0.96,
-                        y: 15
-                    }}
-                    animate={{
-                        opacity: 1,
-                        scale: 1,
-                        y: 0
-                    }}
-                    className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl"
-                >
+                <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
                     <div className="grid md:grid-cols-2">
                         <div className="relative min-h-[300px] bg-gray-50 p-4">
                             <img
                                 src={image}
                                 alt={product.name}
                                 className="h-full max-h-[400px] w-full object-contain"
-                                onError={(e) => {
-                                    e.target.src = fallbackProductImage;
-                                }}
+                                onError={(e) => { e.target.src = fallbackProductImage; }}
                             />
-
                             <button
                                 type="button"
                                 onClick={onClose}
@@ -2401,34 +2243,19 @@ const CollectionPage = () => {
                             <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
                                 {product.brand || "Zamed Premium"}
                             </p>
-
-                            <h2 className="mt-1 text-xl font-black">
-                                {product.name}
-                            </h2>
-
-                            <p className="mt-2 text-2xl font-black">
-                                {formatMoney(product.price)}
-                            </p>
+                            <h2 className="mt-1 text-xl font-black">{product.name}</h2>
+                            <p className="mt-2 text-2xl font-black">{formatMoney(product.price)}</p>
 
                             {product.sizes?.length > 0 && (
                                 <div className="mt-4">
-                                    <p className="mb-1.5 text-xs font-bold">
-                                        Size
-                                    </p>
-
+                                    <p className="mb-1.5 text-xs font-bold">Size</p>
                                     <div className="flex flex-wrap gap-1.5">
                                         {product.sizes.map(item => (
                                             <button
                                                 key={item}
                                                 type="button"
-                                                onClick={() =>
-                                                    setSize(item)
-                                                }
-                                                className={`rounded-lg border px-3 py-1.5 text-xs ${
-                                                    size === item
-                                                        ? "border-black bg-black text-white"
-                                                        : "border-gray-200"
-                                                }`}
+                                                onClick={() => setSize(item)}
+                                                className={`rounded-lg border px-3 py-1.5 text-xs ${size === item ? "border-black bg-black text-white" : "border-gray-200"}`}
                                             >
                                                 {item}
                                             </button>
@@ -2439,23 +2266,14 @@ const CollectionPage = () => {
 
                             {product.colors?.length > 0 && (
                                 <div className="mt-4">
-                                    <p className="mb-1.5 text-xs font-bold">
-                                        Color
-                                    </p>
-
+                                    <p className="mb-1.5 text-xs font-bold">Color</p>
                                     <div className="flex flex-wrap gap-1.5">
                                         {product.colors.map(item => (
                                             <button
                                                 key={item}
                                                 type="button"
-                                                onClick={() =>
-                                                    setColor(item)
-                                                }
-                                                className={`rounded-lg border px-3 py-1.5 text-xs ${
-                                                    color === item
-                                                        ? "border-black bg-black text-white"
-                                                        : "border-gray-200"
-                                                }`}
+                                                onClick={() => setColor(item)}
+                                                className={`rounded-lg border px-3 py-1.5 text-xs ${color === item ? "border-black bg-black text-white" : "border-gray-200"}`}
                                             >
                                                 {item}
                                             </button>
@@ -2465,37 +2283,19 @@ const CollectionPage = () => {
                             )}
 
                             <div className="mt-4">
-                                <p className="mb-1.5 text-xs font-bold">
-                                    Quantity
-                                </p>
-
+                                <p className="mb-1.5 text-xs font-bold">Quantity</p>
                                 <div className="inline-flex items-center overflow-hidden rounded-lg border border-gray-200">
                                     <button
                                         type="button"
-                                        onClick={() =>
-                                            setQuantity(
-                                                Math.max(
-                                                    1,
-                                                    quantity - 1
-                                                )
-                                            )
-                                        }
+                                        onClick={() => setQuantity(Math.max(1, quantity - 1))}
                                         className="h-8 w-8 text-sm"
                                     >
                                         -
                                     </button>
-
-                                    <span className="w-10 text-center text-sm font-bold">
-                                        {quantity}
-                                    </span>
-
+                                    <span className="w-10 text-center text-sm font-bold">{quantity}</span>
                                     <button
                                         type="button"
-                                        onClick={() =>
-                                            setQuantity(
-                                                quantity + 1
-                                            )
-                                        }
+                                        onClick={() => setQuantity(quantity + 1)}
                                         className="h-8 w-8 text-sm"
                                     >
                                         +
@@ -2514,20 +2314,15 @@ const CollectionPage = () => {
 
                             <button
                                 type="button"
-                                onClick={() => {
-                                    onClose();
-                                    navigate(
-                                        `/product/${product.id}`
-                                    );
-                                }}
+                                onClick={() => { onClose(); navigate(`/product/${product.id}`); }}
                                 className="mt-2 w-full rounded-lg border border-gray-300 py-2.5 text-xs font-bold"
                             >
                                 View Full Details
                             </button>
                         </div>
                     </div>
-                </motion.div>
-            </motion.div>
+                </div>
+            </div>
         );
     };
 
@@ -2555,18 +2350,13 @@ const CollectionPage = () => {
                 </div>
             </div>
 
-            {/* ============================================================
-                REMOVED: Big black heading section
-                Now just a minimal product count bar
-            ============================================================ */}
+            {/* Minimal product count bar */}
             <div className="bg-white border-b border-gray-100 py-2">
                 <div className="container mx-auto px-4">
                     <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <span className="text-sm font-medium text-gray-500">
-                                {filteredProducts.length} products
-                            </span>
-                        </div>
+                        <span className="text-sm font-medium text-gray-500">
+                            {filteredProducts.length} products
+                        </span>
                     </div>
                 </div>
             </div>
@@ -2580,25 +2370,17 @@ const CollectionPage = () => {
                             size={14}
                             className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
                         />
-
                         <input
                             type="text"
                             value={searchQuery}
-                            onChange={event =>
-                                setSearchQuery(
-                                    event.target.value
-                                )
-                            }
+                            onChange={event => setSearchQuery(event.target.value)}
                             placeholder="Search name, brand, category..."
                             className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-9 text-sm outline-none focus:border-black"
                         />
-
                         {searchQuery && (
                             <button
                                 type="button"
-                                onClick={() =>
-                                    setSearchQuery("")
-                                }
+                                onClick={() => setSearchQuery("")}
                                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
                             >
                                 <X size={14} />
@@ -2608,14 +2390,11 @@ const CollectionPage = () => {
 
                     <button
                         type="button"
-                        onClick={() =>
-                            setShowFilters(true)
-                        }
+                        onClick={() => setShowFilters(true)}
                         className="relative flex items-center gap-1.5 rounded-xl bg-black px-3 py-2.5 text-sm font-bold text-white whitespace-nowrap"
                     >
                         <Filter size={14} />
                         Filters
-
                         {activeFilterCount > 0 && (
                             <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-[9px] font-black text-black">
                                 {activeFilterCount}
@@ -2629,26 +2408,14 @@ const CollectionPage = () => {
                     priceBounds={priceBounds}
                     formatMoney={formatMoney}
                     removeFilter={removeFilter}
-                    clearAllFilters={
-                        clearAllFilters
-                    }
+                    clearAllFilters={clearAllFilters}
                 />
 
                 {filteredProducts.length === 0 ? (
                     <div className="rounded-2xl bg-white py-16 text-center shadow-sm">
-                        <ShoppingBag
-                            size={40}
-                            className="mx-auto text-gray-300"
-                        />
-
-                        <h3 className="mt-3 text-lg font-bold text-gray-700">
-                            No products found
-                        </h3>
-
-                        <p className="mt-1 text-sm text-gray-400">
-                            Try changing or clearing your filters.
-                        </p>
-
+                        <ShoppingBag size={40} className="mx-auto text-gray-300" />
+                        <h3 className="mt-3 text-lg font-bold text-gray-700">No products found</h3>
+                        <p className="mt-1 text-sm text-gray-400">Try changing or clearing your filters.</p>
                         <button
                             type="button"
                             onClick={clearAllFilters}
@@ -2671,49 +2438,32 @@ const CollectionPage = () => {
 
             <CollectionFilters
                 open={showFilters}
-                onClose={() =>
-                    setShowFilters(false)
-                }
+                onClose={() => setShowFilters(false)}
                 totalProducts={products.length}
-                resultCount={
-                    filteredProducts.length
-                }
+                resultCount={filteredProducts.length}
                 currencyCode={currencyCode}
                 formatMoney={formatMoney}
                 filters={filters}
-                activeFilterCount={
-                    activeFilterCount
-                }
+                activeFilterCount={activeFilterCount}
                 priceBounds={priceBounds}
                 categories={categories}
                 brands={brands}
                 sizes={sizes}
                 colors={colors}
                 setPriceRange={setPriceRange}
-                toggleArrayFilter={
-                    toggleArrayFilter
-                }
-                setBooleanFilter={
-                    setBooleanFilter
-                }
+                toggleArrayFilter={toggleArrayFilter}
+                setBooleanFilter={setBooleanFilter}
                 setSortBy={setSortBy}
-                clearAllFilters={
-                    clearAllFilters
-                }
+                clearAllFilters={clearAllFilters}
             />
 
-            <AnimatePresence>
-                {selectedProduct && (
-                    <QuickShopModal
-                        product={selectedProduct}
-                        onClose={() =>
-                            setSelectedProduct(
-                                null
-                            )
-                        }
-                    />
-                )}
-            </AnimatePresence>
+            {/* QuickShop Modal - NO AnimatePresence to prevent blinking */}
+            {selectedProduct && (
+                <QuickShopModal
+                    product={selectedProduct}
+                    onClose={() => setSelectedProduct(null)}
+                />
+            )}
         </div>
     );
 };
