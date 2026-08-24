@@ -4,17 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- Favicon -->
+    <!-- ==================== FAVICONS ==================== -->
+    <!-- Data URI fallback - prevents 404 error -->
     <link
       rel="icon"
       type="image/x-icon"
       href="data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
     />
+    
+    <!-- SVG favicon - modern browsers -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    
+    <!-- Apple Touch Icon - iOS devices -->
     <link rel="apple-touch-icon" href="/favicon.svg" />
+    <!-- ==================== END FAVICONS ==================== -->
 
-    <!-- PWA Manifest: file must be frontend/public/manifest.json -->
+    <!-- ==================== PWA MANIFEST ==================== -->
+    <!-- Make sure frontend/public/manifest.json exists and is valid JSON -->
     <link rel="manifest" href="/manifest.json" />
+    <!-- ==================== END PWA MANIFEST ==================== -->
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -44,6 +52,7 @@
       property="og:description"
       content="Discover premium fashion at ZAMED. Shop the latest trends in men's, women's, and kids' clothing."
     />
+    <meta property="og:image" content="https://zamed-premium-wear.vercel.app/og-image.jpg" />
 
     <!-- Twitter / X -->
     <meta name="twitter:card" content="summary_large_image" />
@@ -52,6 +61,7 @@
       name="twitter:description"
       content="Discover premium fashion at ZAMED. Shop the latest trends."
     />
+    <meta name="twitter:image" content="https://zamed-premium-wear.vercel.app/og-image.jpg" />
 
     <!-- Browser theme -->
     <meta name="theme-color" content="#1a1a2e" />
