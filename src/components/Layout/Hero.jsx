@@ -5,120 +5,6 @@ import { ChevronLeft, ChevronRight, Pause, Play, ArrowRight } from "lucide-react
 import { useSite } from "../../context/SiteContext";
 import { motion, AnimatePresence } from "framer-motion";
 
-// ============================================================
-// FIX: IndexedDB helper for loading images
-// ============================================================
-const ImageStorage = {
-    dbName: 'ZamedImageStore',
-    storeName: 'images',
-    db: null,
-    initialized: false,
-    initPromise: null,
-
-    async init() {
-        if (this.initPromise) return this.initPromise;
-        if (this.initialized && this.db) return this.db;
-
-        this.initPromise = new Promise((resolve, reject) => {
-            try {
-                const request = indexedDB.open(this.dbName);
-                
-                request.onupgradeneeded = (event) => {
-                    const db = event.target.result;
-                    if (!db.objectStoreNames.contains(this.storeName)) {
-                        const store = db.createObjectStore(this.storeName, { keyPath: 'id' });
-                        store.createIndex('type', 'type', { unique: false });
-                        store.createIndex('timestamp', 'timestamp', { unique: false });
-                        console.log('✅ IndexedDB store created for Hero');
-                    }
-                    this.initialized = true;
-                    this.db = db;
-                };
-                
-                request.onsuccess = (event) => {
-                    this.db = event.target.result;
-                    this.initialized = true;
-                    console.log('✅ IndexedDB connected for Hero');
-                    this.db.onclose = () => {
-                        this.initialized = false;
-                        this.db = null;
-                        this.initPromise = null;
-                    };
-                    this.initPromise = null;
-                    resolve(this.db);
-                };
-                
-                request.onerror = (event) => {
-                    console.warn('IndexedDB init failed:', event.target.error);
-                    this.initialized = false;
-                    this.db = null;
-                    this.initPromise = null;
-                    reject(event.target.error);
-                };
-            } catch (error) {
-                this.initPromise = null;
-                reject(error);
-            }
-        });
-
-        return this.initPromise;
-    },
-
-    async ensureInitialized() {
-        if (!this.initialized || !this.db) {
-            await this.init();
-        }
-        return this.db;
-    },
-
-    async getImage(id) {
-        if (!id) return null;
-        try {
-            const db = await this.ensureInitialized();
-            if (!db) return null;
-            
-            return new Promise((resolve, reject) => {
-                try {
-                    const transaction = db.transaction([this.storeName], 'readonly');
-                    const store = transaction.objectStore(this.storeName);
-                    const request = store.get(id);
-                    
-                    request.onsuccess = () => resolve(request.result ? request.result.data : null);
-                    request.onerror = () => reject(request.error);
-                } catch (error) {
-                    reject(error);
-                }
-            });
-        } catch (error) {
-            console.warn('Error getting image from IndexedDB:', error);
-            return null;
-        }
-    },
-
-    async getAllImages() {
-        try {
-            const db = await this.ensureInitialized();
-            if (!db) return [];
-            
-            return new Promise((resolve, reject) => {
-                try {
-                    const transaction = db.transaction([this.storeName], 'readonly');
-                    const store = transaction.objectStore(this.storeName);
-                    const request = store.getAll();
-                    
-                    request.onsuccess = () => resolve(request.result || []);
-                    request.onerror = () => reject(request.error);
-                } catch (error) {
-                    reject(error);
-                }
-            });
-        } catch (error) {
-            console.warn('Error getting all images:', error);
-            return [];
-        }
-    }
-};
-
 const Hero = () => {
     const { siteInfo } = useSite();
     const [currentSlide, setCurrentSlide] = useState(0);
@@ -134,72 +20,64 @@ const Hero = () => {
     const heroRef = useRef(null);
 
     // ============================================================
-    // FIX: Load slides from IndexedDB AND localStorage
+    // FIX: Load slides from localStorage (Cloudinary URLs)
     // ============================================================
     const loadSlides = async () => {
         setLoading(true);
         try {
-            // Get data from multiple sources
+            // Get data from localStorage (Cloudinary URLs)
             const siteInfoData = JSON.parse(localStorage.getItem('site_info') || '{}');
             const savedImages = JSON.parse(localStorage.getItem('site_images') || '{}');
+            const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
             
-            let slidesData = siteInfoData.slides || siteInfo?.slides || [];
+            let slidesData = siteInfoData.slides || 
+                            siteInfo?.slides || 
+                            siteSettings.slides || 
+                            [];
             
-            // Also try to get slides from site_info auth settings
+            // Also try to get slides from auth settings
             if (!slidesData || slidesData.length === 0) {
                 const authSlides = siteInfoData.authSettings?.slides || [];
                 if (authSlides.length > 0) {
                     slidesData = authSlides;
                 }
             }
-            
-            // If still no slides, try to get from settings
-            if (!slidesData || slidesData.length === 0) {
-                const settings = JSON.parse(localStorage.getItem('site_settings') || '{}');
-                if (settings.slides) {
-                    slidesData = settings.slides;
-                }
-            }
 
-            // ============================================================
-            // FIX: Load images from IndexedDB using imageId
-            // ============================================================
-            const slidesWithImages = await Promise.all(slidesData.map(async (slide, index) => {
+            // Process slides with images
+            const slidesWithImages = slidesData.map((slide, index) => {
                 let imageData = null;
                 
-                // 1. Check if slide has imageId (from Cloudinary/IndexedDB)
-                const imageId = slide.imageId || savedImages?.slides?.find(s => s.id === slide.id)?.imageId || null;
-                
-                if (imageId) {
-                    try {
-                        // Try to get from IndexedDB
-                        const indexedImage = await ImageStorage.getImage(imageId);
-                        if (indexedImage) {
-                            imageData = indexedImage;
-                            console.log(`✅ Slide ${index} image loaded from IndexedDB`);
-                        }
-                    } catch (e) {
-                        console.warn('Could not load slide image from IndexedDB:', e);
-                    }
+                // 1. Use direct Cloudinary URL from slide
+                if (slide.image && typeof slide.image === 'string' && 
+                    (slide.image.startsWith('http') || slide.image.startsWith('https') || slide.image.startsWith('data:'))) {
+                    imageData = slide.image;
+                    console.log(`✅ Slide ${index} image loaded from direct URL`);
                 }
                 
-                // 2. If no image from IndexedDB, check if slide has direct image URL
-                if (!imageData && slide.image) {
-                    // If it's a Cloudinary URL or data URL
-                    if (typeof slide.image === 'string' && 
-                        (slide.image.startsWith('http') || slide.image.startsWith('data:'))) {
-                        imageData = slide.image;
-                        console.log(`✅ Slide ${index} image loaded from direct URL`);
-                    }
-                }
-                
-                // 3. Check savedImages
+                // 2. Check savedImages
                 if (!imageData && savedImages?.slides) {
                     const savedSlide = savedImages.slides.find(s => s.id === slide.id);
                     if (savedSlide && savedSlide.image) {
                         imageData = savedSlide.image;
                         console.log(`✅ Slide ${index} image loaded from savedImages`);
                     }
+                }
+                
+                // 3. Check slide imageId (for legacy support)
+                if (!imageData && slide.imageId) {
+                    // Try to get from savedImages by imageId
+                    if (savedImages?.slides) {
+                        const savedSlide = savedImages.slides.find(s => s.imageId === slide.imageId);
+                        if (savedSlide && savedSlide.image) {
+                            imageData = savedSlide.image;
+                            console.log(`✅ Slide ${index} image loaded via imageId`);
+                        }
+                    }
+                }
+                
+                // 4. Fallback: use slide.image as is
+                if (!imageData && slide.image) {
+                    imageData = slide.image;
                 }
                 
                 // Validate image data
@@ -217,10 +95,10 @@ const Hero = () => {
                 
                 return {
                     ...slide,
-                    image: imageData,
-                    imageId: imageId || slide.imageId || null
+                    image: imageData || null,
+                    imageId: slide.imageId || null
                 };
-            }));
+            });
             
             // Filter active slides
             const activeSlides = slidesWithImages.filter(s => s.active !== false);
@@ -232,15 +110,17 @@ const Hero = () => {
                     const img = new Image();
                     img.onload = () => {
                         setLoadedImages(prev => ({ ...prev, [index]: true }));
+                        console.log(`✅ Slide ${index} image preloaded successfully`);
                     };
                     img.onerror = () => {
-                        console.warn('Failed to load slide image:', index);
+                        console.warn(`⚠️ Failed to preload slide ${index} image`);
                     };
                     img.src = slide.image;
                 }
             });
             
             setSlides(finalSlides);
+            console.log(`✅ Loaded ${finalSlides.length} slides`);
         } catch (error) {
             console.error('Error loading slides:', error);
             // Fallback to default slides
@@ -253,7 +133,8 @@ const Hero = () => {
                     buttonLink: "/collections/all",
                     color: "from-blue-600",
                     active: true,
-                    image: null
+                    image: null,
+                    badge: "Zamed Premium"
                 }
             ]);
         } finally {

@@ -28,14 +28,51 @@ const Header = () => {
     const [searchQuery, setSearchQuery] = useState("");
     const [user, setUser] = useState(null);
     const [scrolled, setScrolled] = useState(false);
+    const [logoImage, setLogoImage] = useState(null);
     
     const { cartItems } = useCart();
     const { favorites } = useFavorites();
     
-    const logo = siteInfo?.logo || null;
     const siteName = siteInfo?.siteName || "Zamed";
     const sitePhone = siteInfo?.sitePhone || "+94 77 061 6154";
     const siteEmail = siteInfo?.siteEmail || "support@zamed.com";
+
+    // ============================================================
+    // FIX: Load logo directly from localStorage (Cloudinary URL)
+    // ============================================================
+    const loadLogo = () => {
+        try {
+            // 1. Try site_info first
+            const siteInfoData = JSON.parse(localStorage.getItem('site_info') || '{}');
+            
+            // 2. Try site_images
+            const siteImages = JSON.parse(localStorage.getItem('site_images') || '{}');
+            
+            // 3. Try site_settings
+            const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
+            
+            // Get logo from any source - prioritize Cloudinary URL
+            const logo = siteInfoData.logo || 
+                        siteImages.logo || 
+                        siteSettings.logo || 
+                        siteInfo?.logo || 
+                        null;
+            
+            if (logo && typeof logo === 'string' && logo.startsWith('http')) {
+                console.log('✅ Logo loaded from localStorage:', logo.substring(0, 50) + '...');
+                setLogoImage(logo);
+            } else if (logo && typeof logo === 'string' && logo.startsWith('data:')) {
+                console.log('✅ Logo loaded as data URL');
+                setLogoImage(logo);
+            } else {
+                console.log('ℹ️ No logo found, using text fallback');
+                setLogoImage(null);
+            }
+        } catch (error) {
+            console.warn('Error loading logo:', error);
+            setLogoImage(null);
+        }
+    };
 
     // Get user from localStorage
     useEffect(() => {
@@ -61,14 +98,25 @@ const Header = () => {
             }
         };
         
+        // Load logo on mount and when settings change
+        loadLogo();
+        
         window.addEventListener('authChanged', handleAuthChange);
         window.addEventListener('userUpdated', handleAuthChange);
         window.addEventListener('profileUpdated', handleAuthChange);
+        window.addEventListener('logoUpdated', loadLogo);
+        window.addEventListener('siteInfoUpdated', loadLogo);
+        window.addEventListener('settingsSaved', loadLogo);
+        window.addEventListener('storage', loadLogo);
         
         return () => {
             window.removeEventListener('authChanged', handleAuthChange);
             window.removeEventListener('userUpdated', handleAuthChange);
             window.removeEventListener('profileUpdated', handleAuthChange);
+            window.removeEventListener('logoUpdated', loadLogo);
+            window.removeEventListener('siteInfoUpdated', loadLogo);
+            window.removeEventListener('settingsSaved', loadLogo);
+            window.removeEventListener('storage', loadLogo);
         };
     }, []);
 
@@ -127,9 +175,9 @@ const Header = () => {
 
     return (
         <>
-            {/* Main Header - Positioned below Topbar */}
+            {/* Main Header */}
             <header 
-                className={`fixed top-10 left-0 right-0 z-40 bg-white transition-all duration-300 ${
+                className={`sticky top-0 z-50 bg-white transition-all duration-300 ${
                     scrolled ? 'shadow-lg' : 'shadow-sm'
                 }`}
             >
@@ -150,13 +198,23 @@ const Header = () => {
                             className="flex items-center space-x-2 sm:space-x-3 flex-shrink-0"
                             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
                         >
-                            {logo ? (
+                            {logoImage ? (
                                 <img 
-                                    src={logo} 
+                                    src={logoImage} 
                                     alt={siteName} 
                                     className="h-8 sm:h-10 md:h-12 w-auto object-contain"
+                                    loading="eager"
                                     onError={(e) => {
+                                        console.warn('Logo image failed to load on mobile');
                                         e.target.style.display = 'none';
+                                        // Show text fallback
+                                        const parent = e.target.parentElement;
+                                        if (parent) {
+                                            const textSpan = document.createElement('span');
+                                            textSpan.className = 'text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 tracking-tight';
+                                            textSpan.textContent = siteName;
+                                            parent.appendChild(textSpan);
+                                        }
                                     }}
                                 />
                             ) : (
@@ -308,9 +366,9 @@ const Header = () => {
                                 className="flex items-center space-x-2"
                                 onClick={toggleMobileMenu}
                             >
-                                {logo ? (
+                                {logoImage ? (
                                     <img 
-                                        src={logo} 
+                                        src={logoImage} 
                                         alt={siteName} 
                                         className="h-8 w-auto object-contain"
                                         onError={(e) => {
