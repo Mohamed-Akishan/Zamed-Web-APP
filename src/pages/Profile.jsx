@@ -229,7 +229,7 @@ const Profile = () => {
     const { addToCart } = useCart();
 
     // ============================================================
-    // FIX: Use centralized favorites hook - THIS IS THE KEY FIX
+    // Use centralized favorites hook
     // ============================================================
     const { 
         favorites, 
@@ -425,7 +425,6 @@ const Profile = () => {
     // Remove from favorites - using centralized hook
     // ============================================================
     const removeFromFavorites = useCallback((productId) => {
-        // Find the product in favorites
         const product = favorites.find(p => String(p.id) === String(productId));
         if (product) {
             const result = toggleFavorite(product);
@@ -433,7 +432,6 @@ const Profile = () => {
                 toast.success("Removed from favorites");
             }
         } else {
-            // If product not in favorites list, just refresh
             refreshFavorites(true);
             toast.success("Wishlist updated");
         }
@@ -794,7 +792,6 @@ const Profile = () => {
 
                 if (String(eventEmail).toLowerCase() === String(email).toLowerCase()) {
                     if (Array.isArray(eventFavorites)) {
-                        // Refresh favorites from central hook
                         loadFavorites(email);
                     }
                     return;
@@ -854,7 +851,6 @@ const Profile = () => {
         const email = user.email;
 
         if (activeTab === 'wishlist') {
-            // Force refresh favorites when switching to wishlist
             loadFavorites(email);
         }
         if (activeTab === 'orders' || activeTab === 'returns') {
@@ -1607,10 +1603,10 @@ const Profile = () => {
     // ============================================================
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
                 <div className="text-center">
                     <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
-                    <p className="mt-4 text-gray-600" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Loading your profile...</p>
+                    <p className="mt-4 text-gray-600">Loading your profile...</p>
                 </div>
             </div>
         );
@@ -1619,209 +1615,260 @@ const Profile = () => {
     if (!user) return null;
 
     // ============================================================
-    // Main Render
+    // Main Render - MOBILE RESPONSIVE
     // ============================================================
     return (
-        <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900 text-white' : 'bg-[#fbfaf8] text-gray-950'}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-            <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8">
-                <div className="flex flex-col gap-8 lg:flex-row">
-                    {/* Desktop Sidebar */}
-                    <aside className="hidden w-72 shrink-0 lg:block">
-                        <div className="sticky top-36 overflow-hidden rounded-md border border-[#e8e1d6] bg-white shadow-[0_8px_30px_rgba(28,24,18,0.05)] dark:border-gray-700 dark:bg-gray-800">
-                            <div className="border-b border-[#ece5db] px-6 py-5 text-sm font-semibold tracking-wide text-[#a86f25]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>MY ACCOUNT</div>
-                            <nav className="p-3">
+        <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900 text-white' : 'bg-[#fbfaf8] text-gray-950'}`}>
+            <div className="mx-auto max-w-[1440px] px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 md:py-8">
+                <div className="flex flex-col gap-4 md:gap-6 lg:gap-8 lg:flex-row">
+                    
+                    {/* ============================================================
+                        DESKTOP SIDEBAR
+                    ============================================================ */}
+                    <aside className="hidden w-64 xl:w-72 shrink-0 lg:block">
+                        <div className="sticky top-24 overflow-hidden rounded-xl border border-[#e8e1d6] bg-white shadow-[0_8px_30px_rgba(28,24,18,0.05)] dark:border-gray-700 dark:bg-gray-800">
+                            <div className="border-b border-[#ece5db] px-4 sm:px-5 py-4 text-xs font-semibold tracking-wide text-[#a86f25] dark:border-gray-700 dark:text-amber-400">
+                                MY ACCOUNT
+                            </div>
+                            <nav className="p-2 sm:p-3">
                                 {sidebarNav.map((item) => {
                                     const Icon = item.icon;
                                     return (
                                         <button
                                             key={item.id}
                                             onClick={() => setActiveTab(item.id)}
-                                            className={`mb-1 flex w-full items-center justify-between rounded-md px-4 py-3 text-left transition-all ${activeTab === item.id ? 'bg-[#f5ecdd] text-[#a86f25]' : 'text-gray-700 hover:bg-[#faf7f2] dark:text-gray-200 dark:hover:bg-gray-700'}`}
-                                            style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                            className={`mb-0.5 flex w-full items-center justify-between rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 text-left transition-all text-sm ${
+                                                activeTab === item.id 
+                                                    ? 'bg-[#f5ecdd] text-[#a86f25] dark:bg-amber-900/20 dark:text-amber-400' 
+                                                    : 'text-gray-700 hover:bg-[#faf7f2] dark:text-gray-200 dark:hover:bg-gray-700'
+                                            }`}
                                         >
-                                            <span className="flex items-center gap-3">
-                                                <Icon size={19} className={activeTab === item.id ? 'text-[#b98237]' : 'text-gray-500'} />
-                                                <span className="text-sm font-medium" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.label}</span>
+                                            <span className="flex items-center gap-2.5 sm:gap-3">
+                                                <Icon size={18} className={activeTab === item.id ? 'text-[#b98237]' : 'text-gray-500'} />
+                                                <span className="font-medium">{item.label}</span>
                                             </span>
-                                            {item.badge > 0 && <span className="rounded-full bg-[#efe1ca] px-2 py-0.5 text-[11px] font-semibold text-[#9a641f]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.badge}</span>}
+                                            {item.badge > 0 && (
+                                                <span className="rounded-full bg-[#efe1ca] px-2 py-0.5 text-[10px] font-semibold text-[#9a641f] dark:bg-amber-900/30 dark:text-amber-300">
+                                                    {item.badge}
+                                                </span>
+                                            )}
                                         </button>
                                     );
                                 })}
 
-                                <div className="mt-4 pt-4 border-t border-[#ece5db]">
-                                    <p className="px-4 py-2 text-xs font-semibold tracking-wide text-[#a86f25]">SITE MENU</p>
+                                <div className="mt-3 pt-3 border-t border-[#ece5db] dark:border-gray-700">
+                                    <p className="px-3 py-1.5 text-[10px] font-semibold tracking-wide text-[#a86f25] dark:text-amber-400">SITE MENU</p>
                                     {siteMenuItems.map((item) => {
                                         const Icon = item.icon;
                                         return (
                                             <Link
                                                 key={item.path}
                                                 to={item.path}
-                                                className="flex items-center gap-3 rounded-md px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-[#faf7f2] dark:text-gray-200 dark:hover:bg-gray-700 transition-all"
-                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                className="flex items-center gap-2.5 sm:gap-3 rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 text-left text-sm font-medium text-gray-700 hover:bg-[#faf7f2] dark:text-gray-200 dark:hover:bg-gray-700 transition-all"
                                             >
-                                                <Icon size={19} className="text-gray-500" />
+                                                <Icon size={18} className="text-gray-500" />
                                                 <span>{item.label}</span>
                                             </Link>
                                         );
                                     })}
                                 </div>
 
-                                <div className="my-3 border-t border-[#ece5db]" />
-                                <button onClick={handleLogout} className="flex w-full items-center gap-3 rounded-md px-4 py-3 text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-600 dark:text-gray-200" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                    <FiLogOut size={19} /> Logout
+                                <div className="my-2 border-t border-[#ece5db] dark:border-gray-700" />
+                                <button 
+                                    onClick={handleLogout} 
+                                    className="flex w-full items-center gap-2.5 sm:gap-3 rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-600 dark:text-gray-200 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                                >
+                                    <FiLogOut size={18} /> Logout
                                 </button>
                             </nav>
                         </div>
                     </aside>
 
-                    {/* Mobile Menu Button */}
+                    {/* ============================================================
+                        MOBILE MENU BUTTON
+                    ============================================================ */}
                     <div className="lg:hidden fixed bottom-4 right-4 z-50">
                         <button
                             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                            className="bg-black text-white p-4 rounded-full shadow-lg hover:bg-[#b98237] transition-all"
+                            className="bg-black text-white p-3.5 rounded-full shadow-lg hover:bg-[#b98237] transition-all"
+                            aria-label="Toggle menu"
                         >
-                            <FiMenu size={24} />
+                            <FiMenu size={22} />
                         </button>
                     </div>
 
-                    {/* Mobile Sidebar */}
+                    {/* ============================================================
+                        MOBILE SIDEBAR (Slide-in)
+                    ============================================================ */}
                     <AnimatePresence>
                         {isMobileMenuOpen && (
-                            <motion.div
-                                initial={{ x: '100%' }}
-                                animate={{ x: 0 }}
-                                exit={{ x: '100%' }}
-                                className="fixed inset-y-0 right-0 w-80 bg-white dark:bg-gray-800 shadow-2xl z-50 lg:hidden overflow-y-auto"
-                            >
-                                <div className="p-6 border-b dark:border-gray-700 flex justify-between items-center">
-                                    <h2 className="text-xl font-bold" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Menu</h2>
-                                    <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
-                                        <FiX size={24} />
-                                    </button>
-                                </div>
-                                <nav className="p-4">
-                                    <div className="mb-4">
-                                        <p className="text-xs font-semibold tracking-wide text-[#a86f25] mb-2">MY ACCOUNT</p>
-                                        {sidebarNav.map((item) => {
-                                            const Icon = item.icon;
-                                            return (
-                                                <button
-                                                    key={item.id}
-                                                    onClick={() => {
-                                                        setActiveTab(item.id);
-                                                        setIsMobileMenuOpen(false);
-                                                    }}
-                                                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl mb-1 transition-all ${activeTab === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' : 'text-gray-700 dark:text-gray-300'}`}
-                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
-                                                >
-                                                    <div className="flex items-center gap-3">
-                                                        <Icon size={20} />
-                                                        <span className="font-medium" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.label}</span>
-                                                    </div>
-                                                    {item.badge > 0 && (
-                                                        <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-600 rounded-full text-xs">
-                                                            {item.badge}
-                                                        </span>
-                                                    )}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-
-                                    <div className="border-t dark:border-gray-700 pt-4">
-                                        <p className="text-xs font-semibold tracking-wide text-[#a86f25] mb-2">SITE MENU</p>
-                                        {siteMenuItems.map((item) => {
-                                            const Icon = item.icon;
-                                            return (
-                                                <Link
-                                                    key={item.path}
-                                                    to={item.path}
-                                                    onClick={() => setIsMobileMenuOpen(false)}
-                                                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all"
-                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
-                                                >
-                                                    <Icon size={20} className="text-gray-500" />
-                                                    <span>{item.label}</span>
-                                                </Link>
-                                            );
-                                        })}
-                                    </div>
-
-                                    <div className="border-t dark:border-gray-700 my-4 pt-4">
-                                        <button
-                                            onClick={handleLogout}
-                                            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 mt-2"
-                                            style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                            <>
+                                <motion.div
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+                                    onClick={() => setIsMobileMenuOpen(false)}
+                                />
+                                <motion.div
+                                    initial={{ x: '100%' }}
+                                    animate={{ x: 0 }}
+                                    exit={{ x: '100%' }}
+                                    transition={{ type: 'spring', damping: 25 }}
+                                    className="fixed inset-y-0 right-0 w-[85vw] max-w-sm bg-white dark:bg-gray-800 shadow-2xl z-50 lg:hidden overflow-y-auto"
+                                >
+                                    <div className="p-4 sm:p-5 border-b dark:border-gray-700 flex justify-between items-center">
+                                        <h2 className="text-lg font-bold dark:text-white">Menu</h2>
+                                        <button 
+                                            onClick={() => setIsMobileMenuOpen(false)} 
+                                            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
                                         >
-                                            <FiLogOut size={20} />
-                                            <span>Logout</span>
+                                            <FiX size={22} />
                                         </button>
                                     </div>
-                                </nav>
-                            </motion.div>
+                                    <nav className="p-3 sm:p-4">
+                                        <div className="mb-3">
+                                            <p className="text-xs font-semibold tracking-wide text-[#a86f25] dark:text-amber-400 mb-2">MY ACCOUNT</p>
+                                            {sidebarNav.map((item) => {
+                                                const Icon = item.icon;
+                                                return (
+                                                    <button
+                                                        key={item.id}
+                                                        onClick={() => {
+                                                            setActiveTab(item.id);
+                                                            setIsMobileMenuOpen(false);
+                                                        }}
+                                                        className={`w-full flex items-center justify-between px-3 py-3 rounded-xl mb-1 transition-all text-sm ${
+                                                            activeTab === item.id 
+                                                                ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' 
+                                                                : 'text-gray-700 dark:text-gray-300'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-3">
+                                                            <Icon size={19} />
+                                                            <span className="font-medium">{item.label}</span>
+                                                        </div>
+                                                        {item.badge > 0 && (
+                                                            <span className="px-2 py-0.5 bg-gray-200 dark:bg-gray-600 rounded-full text-xs">
+                                                                {item.badge}
+                                                            </span>
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="border-t dark:border-gray-700 pt-3">
+                                            <p className="text-xs font-semibold tracking-wide text-[#a86f25] dark:text-amber-400 mb-2">SITE MENU</p>
+                                            {siteMenuItems.map((item) => {
+                                                const Icon = item.icon;
+                                                return (
+                                                    <Link
+                                                        key={item.path}
+                                                        to={item.path}
+                                                        onClick={() => setIsMobileMenuOpen(false)}
+                                                        className="flex items-center gap-3 px-3 py-3 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all text-sm"
+                                                    >
+                                                        <Icon size={19} className="text-gray-500" />
+                                                        <span>{item.label}</span>
+                                                    </Link>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="border-t dark:border-gray-700 my-3 pt-3">
+                                            <button
+                                                onClick={handleLogout}
+                                                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all text-sm"
+                                            >
+                                                <FiLogOut size={19} />
+                                                <span>Logout</span>
+                                            </button>
+                                        </div>
+                                    </nav>
+                                </motion.div>
+                            </>
                         )}
                     </AnimatePresence>
 
-                    {/* Main Content */}
+                    {/* ============================================================
+                        MAIN CONTENT - MOBILE RESPONSIVE
+                    ============================================================ */}
                     <div className="flex-1 min-w-0">
-                        {/* Overview Tab */}
+                        
+                        {/* ==================== OVERVIEW TAB ==================== */}
                         {activeTab === "overview" && (
                             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-                                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                                
+                                {/* Header */}
+                                <div className="flex flex-col sm:flex-row justify-between gap-3 sm:items-center">
                                     <div>
-                                        <h1 className="font-serif text-2xl sm:text-3xl lg:text-4xl text-gray-950 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>My Profile</h1>
-                                        <p className="mt-1 text-xs sm:text-sm text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Manage your personal information and account details</p>
+                                        <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-950 dark:text-white">My Profile</h1>
+                                        <p className="mt-0.5 text-xs sm:text-sm text-gray-500 dark:text-gray-400">Manage your personal information and account details</p>
                                     </div>
-                                    <button onClick={() => setIsEditingProfile(true)} className="inline-flex items-center justify-center gap-2 bg-black px-4 sm:px-6 py-2 sm:py-3 text-xs font-semibold tracking-wide text-white hover:bg-[#b98237] rounded-xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                        <FiEdit2 size={16} /> EDIT PROFILE
+                                    <button 
+                                        onClick={() => setIsEditingProfile(true)} 
+                                        className="inline-flex items-center justify-center gap-2 bg-black px-4 py-2.5 text-xs font-semibold tracking-wide text-white hover:bg-[#b98237] rounded-xl transition-all w-full sm:w-auto"
+                                    >
+                                        <FiEdit2 size={15} /> EDIT PROFILE
                                     </button>
                                 </div>
 
-                                <section className="rounded-md border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
-                                    <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr] xl:items-center">
-                                        <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-5">
+                                {/* Profile Card */}
+                                <section className="rounded-xl border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="flex flex-col md:flex-row gap-6 md:items-center">
+                                        <div className="flex flex-col items-center sm:flex-row sm:gap-5">
                                             <div className="relative shrink-0">
                                                 {user.profileImage || user.avatar ? (
-                                                    <img src={user.profileImage || user.avatar} alt={`${user.firstName} ${user.lastName}`} className="h-24 w-24 sm:h-28 sm:w-28 lg:h-32 lg:w-32 rounded-full object-cover" />
+                                                    <img 
+                                                        src={user.profileImage || user.avatar} 
+                                                        alt={`${user.firstName} ${user.lastName}`} 
+                                                        className="h-20 w-20 sm:h-24 sm:w-24 md:h-28 md:w-28 rounded-full object-cover" 
+                                                    />
                                                 ) : (
-                                                    <div className="flex h-24 w-24 sm:h-28 sm:w-28 lg:h-32 lg:w-32 items-center justify-center rounded-full bg-[#171717] font-serif text-3xl sm:text-4xl text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                    <div className="flex h-20 w-20 sm:h-24 sm:w-24 md:h-28 md:w-28 items-center justify-center rounded-full bg-[#171717] text-2xl sm:text-3xl text-white">
                                                         {user.firstName?.charAt(0)}{user.lastName?.charAt(0)}
                                                     </div>
                                                 )}
                                             </div>
                                             <div className="text-center sm:text-left">
-                                                <h2 className="font-serif text-2xl sm:text-3xl text-gray-950 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{user.firstName} {user.lastName}</h2>
-                                                <p className="mt-3 sm:mt-4 flex items-center justify-center sm:justify-start gap-2 text-xs sm:text-sm text-gray-600 dark:text-gray-300" style={{ fontFamily: "'Times New Roman', Times, serif" }}><FiMail className="text-[#b98237]" /> {user.email}</p>
-                                                <p className="mt-1 sm:mt-2 flex items-center justify-center sm:justify-start gap-2 text-xs sm:text-sm text-gray-600 dark:text-gray-300" style={{ fontFamily: "'Times New Roman', Times, serif" }}><FiPhone className="text-[#b98237]" /> {user.phone || user.phoneNumber || 'Add phone number'}</p>
+                                                <h2 className="text-xl sm:text-2xl font-bold text-gray-950 dark:text-white">{user.firstName} {user.lastName}</h2>
+                                                <p className="mt-1 flex items-center justify-center sm:justify-start gap-2 text-xs sm:text-sm text-gray-600 dark:text-gray-300">
+                                                    <FiMail className="text-[#b98237]" /> {user.email}
+                                                </p>
+                                                <p className="mt-0.5 flex items-center justify-center sm:justify-start gap-2 text-xs sm:text-sm text-gray-600 dark:text-gray-300">
+                                                    <FiPhone className="text-[#b98237]" /> {user.phone || user.phoneNumber || 'Add phone number'}
+                                                </p>
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-3 divide-x divide-[#e8e1d6] border-t border-[#e8e1d6] pt-6 xl:border-l xl:border-t-0 xl:pl-7 xl:pt-0">
-                                            <button onClick={() => setActiveTab('orders')} className="px-2 sm:px-3 text-center">
-                                                <FiShoppingBag className="mx-auto text-xl sm:text-2xl text-[#b98237]" />
-                                                <p className="mt-2 font-serif text-2xl sm:text-3xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{stats.totalOrders}</p>
-                                                <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Orders</p>
+                                        <div className="grid grid-cols-3 divide-x divide-[#e8e1d6] border-t border-[#e8e1d6] pt-4 md:border-l md:border-t-0 md:pl-6 md:pt-0 dark:divide-gray-700 dark:border-gray-700">
+                                            <button onClick={() => setActiveTab('orders')} className="px-2 text-center">
+                                                <FiShoppingBag className="mx-auto text-xl text-[#b98237]" />
+                                                <p className="mt-1 font-bold text-lg sm:text-xl">{stats.totalOrders}</p>
+                                                <p className="text-[10px] text-gray-500">Orders</p>
                                             </button>
-                                            <button onClick={() => setActiveTab('wishlist')} className="px-2 sm:px-3 text-center">
-                                                <FiHeart className="mx-auto text-xl sm:text-2xl text-[#b98237]" />
-                                                <p className="mt-2 font-serif text-2xl sm:text-3xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{stats.savedItems}</p>
-                                                <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Wishlist</p>
+                                            <button onClick={() => setActiveTab('wishlist')} className="px-2 text-center">
+                                                <FiHeart className="mx-auto text-xl text-[#b98237]" />
+                                                <p className="mt-1 font-bold text-lg sm:text-xl">{stats.savedItems}</p>
+                                                <p className="text-[10px] text-gray-500">Wishlist</p>
                                             </button>
-                                            <div className="px-2 sm:px-3 text-center">
-                                                <FiStar className="mx-auto text-xl sm:text-2xl text-[#b98237]" />
-                                                <p className="mt-2 font-serif text-2xl sm:text-3xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{user.reviewCount || user.reviews?.length || 0}</p>
-                                                <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Reviews</p>
+                                            <div className="px-2 text-center">
+                                                <FiStar className="mx-auto text-xl text-[#b98237]" />
+                                                <p className="mt-1 font-bold text-lg sm:text-xl">{user.reviewCount || user.reviews?.length || 0}</p>
+                                                <p className="text-[10px] text-gray-500">Reviews</p>
                                             </div>
                                         </div>
                                     </div>
                                 </section>
 
-                                <section className="rounded-md border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
-                                    <div className="mb-4 sm:mb-5 flex items-center justify-between">
-                                        <h2 className="font-serif text-xl sm:text-2xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Personal Information</h2>
-                                        <button onClick={() => setIsEditingProfile(true)} className="text-xs font-semibold text-[#a86f25] hover:underline" style={{ fontFamily: "'Times New Roman', Times, serif" }}>EDIT</button>
+                                {/* Personal Information */}
+                                <section className="rounded-xl border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h2 className="text-lg sm:text-xl font-bold">Personal Information</h2>
+                                        <button onClick={() => setIsEditingProfile(true)} className="text-xs font-semibold text-[#a86f25] hover:underline">EDIT</button>
                                     </div>
-                                    <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 md:grid-cols-3">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                                         {[
                                             ['Full Name', `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Not provided'],
                                             ['Phone Number', user.phone || user.phoneNumber || 'Not provided'],
@@ -1830,74 +1877,97 @@ const Profile = () => {
                                             ['Date of Birth', user.dateOfBirth ? formatDate(user.dateOfBirth) : 'Not provided'],
                                             ['Member Since', stats.memberSince ? formatDate(stats.memberSince) : 'Not available']
                                         ].map(([label, value]) => (
-                                            <div key={label} className="border-b border-[#eee8df] pb-3">
-                                                <p className="text-xs font-medium text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{label}</p>
-                                                <p className="mt-1 sm:mt-2 text-sm text-gray-900 dark:text-gray-100 break-words" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{value}</p>
+                                            <div key={label} className="border-b border-[#eee8df] pb-2 dark:border-gray-700">
+                                                <p className="text-xs font-medium text-gray-500">{label}</p>
+                                                <p className="mt-0.5 text-sm text-gray-900 dark:text-gray-100 break-words">{value}</p>
                                             </div>
                                         ))}
                                     </div>
                                 </section>
 
-                                <section className="rounded-md border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
-                                    <div className="mb-4 sm:mb-5 flex items-center justify-between">
-                                        <div className="flex items-center gap-3">
-                                            <h2 className="font-serif text-xl sm:text-2xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Default Address</h2>
-                                            <span className="rounded-full bg-[#f5ecdd] px-2 sm:px-3 py-1 text-[10px] sm:text-[11px] text-[#a86f25]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Default</span>
+                                {/* Default Address */}
+                                <section className="rounded-xl border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <h2 className="text-lg sm:text-xl font-bold">Default Address</h2>
+                                            <span className="rounded-full bg-[#f5ecdd] px-2 py-0.5 text-[10px] text-[#a86f25]">Default</span>
                                         </div>
-                                        <button onClick={() => setActiveTab('addresses')} className="inline-flex items-center gap-1 sm:gap-2 border border-[#ddd3c4] px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold hover:border-[#b98237] hover:text-[#a86f25] rounded-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}><FiEdit2 size={14} /> EDIT</button>
+                                        <button onClick={() => setActiveTab('addresses')} className="inline-flex items-center gap-1 border border-[#ddd3c4] px-3 py-1.5 text-xs font-semibold hover:border-[#b98237] hover:text-[#a86f25] rounded-lg">
+                                            <FiEdit2 size={13} /> EDIT
+                                        </button>
                                     </div>
                                     {addresses.find(address => address.isDefault) || addresses[0] ? (() => {
                                         const address = addresses.find(address => address.isDefault) || addresses[0];
-                                        return <div className="flex gap-3 sm:gap-4">
-                                            <div className="flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-md bg-[#fbf6ee] text-[#b98237]"><FiMapPin size={20} /></div>
-                                            <div className="text-xs sm:text-sm leading-5 sm:leading-6 text-gray-700 dark:text-gray-300">
-                                                <p className="font-semibold text-gray-950 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.label || 'Home'}</p>
-                                                <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.street}</p>
-                                                <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>{[address.city, address.state, address.zipCode].filter(Boolean).join(', ')}</p>
-                                                <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.country}</p>
-                                                {address.phone && <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.phone}</p>}
+                                        return (
+                                            <div className="flex gap-3">
+                                                <div className="flex h-10 w-10 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-md bg-[#fbf6ee] text-[#b98237]">
+                                                    <FiMapPin size={18} />
+                                                </div>
+                                                <div className="text-xs sm:text-sm leading-5 text-gray-700 dark:text-gray-300">
+                                                    <p className="font-semibold text-gray-950 dark:text-white">{address.label || 'Home'}</p>
+                                                    <p>{address.street}</p>
+                                                    <p>{[address.city, address.state, address.zipCode].filter(Boolean).join(', ')}</p>
+                                                    <p>{address.country}</p>
+                                                    {address.phone && <p>{address.phone}</p>}
+                                                </div>
                                             </div>
-                                        </div>;
+                                        );
                                     })() : (
                                         <div className="flex flex-col items-start gap-3 text-sm text-gray-500">
-                                            <p style={{ fontFamily: "'Times New Roman', Times, serif" }}>No address has been added yet.</p>
-                                            <button onClick={() => setActiveTab('addresses')} className="bg-black px-4 sm:px-5 py-2 sm:py-2.5 text-xs font-semibold text-white hover:bg-[#b98237] rounded-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>ADD ADDRESS</button>
+                                            <p>No address has been added yet.</p>
+                                            <button onClick={() => setActiveTab('addresses')} className="bg-black px-4 py-2 text-xs font-semibold text-white hover:bg-[#b98237] rounded-lg">
+                                                ADD ADDRESS
+                                            </button>
                                         </div>
                                     )}
                                 </section>
 
-                                <section className="rounded-md border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
-                                    <div className="flex items-center justify-between">
-                                        <h2 className="font-serif text-xl sm:text-2xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Recent Orders</h2>
-                                        <button onClick={() => setActiveTab('orders')} className="inline-flex items-center gap-1 sm:gap-2 border border-[#ddd3c4] px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold hover:border-[#b98237] hover:text-[#a86f25] rounded-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>VIEW ALL ORDERS <FiArrowRight size={14} /></button>
+                                {/* Recent Orders */}
+                                <section className="rounded-xl border border-[#e8e1d6] bg-white p-4 sm:p-6 shadow-[0_6px_24px_rgba(28,24,18,0.04)] dark:border-gray-700 dark:bg-gray-800">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <h2 className="text-lg sm:text-xl font-bold">Recent Orders</h2>
+                                        <button onClick={() => setActiveTab('orders')} className="inline-flex items-center gap-1 border border-[#ddd3c4] px-3 py-1.5 text-xs font-semibold hover:border-[#b98237] hover:text-[#a86f25] rounded-lg">
+                                            VIEW ALL <FiArrowRight size={13} />
+                                        </button>
                                     </div>
-                                    <div className="mt-4 divide-y divide-[#eee8df]">
+                                    <div className="mt-3 divide-y divide-[#eee8df] dark:divide-gray-700">
                                         {orders.slice(0, 3).map(order => (
-                                            <div key={order.id} className="flex flex-col justify-between gap-3 py-4 sm:flex-row sm:items-center">
-                                                <div><p className="text-xs sm:text-sm font-semibold" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Order #{order.id}</p><p className="mt-1 text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatDate(order.date)}</p></div>
-                                                <div className="flex items-center gap-3 sm:gap-4"><span className={`rounded-full px-2 sm:px-3 py-1 text-[10px] sm:text-[11px] font-semibold ${getOrderStatusBadge(getEffectiveOrderStatus(order))}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>{getOrderStatusLabel(getEffectiveOrderStatus(order)).toUpperCase()}</span><strong className="text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(order.total)}</strong></div>
+                                            <div key={order.id} className="flex flex-col sm:flex-row justify-between gap-2 py-3 sm:items-center">
+                                                <div>
+                                                    <p className="text-xs sm:text-sm font-semibold">Order #{order.id}</p>
+                                                    <p className="text-xs text-gray-500">{formatDate(order.date)}</p>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${getOrderStatusBadge(getEffectiveOrderStatus(order))}`}>
+                                                        {getOrderStatusLabel(getEffectiveOrderStatus(order)).toUpperCase()}
+                                                    </span>
+                                                    <strong className="text-sm">{formatPrice(order.total)}</strong>
+                                                </div>
                                             </div>
                                         ))}
-                                        {orders.length === 0 && <div className="py-8 text-center text-sm text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No orders yet. <Link to="/collections/all" className="font-semibold text-[#a86f25]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Start shopping</Link></div>}
+                                        {orders.length === 0 && (
+                                            <div className="py-6 text-center text-sm text-gray-500">
+                                                No orders yet. <Link to="/collections/all" className="font-semibold text-[#a86f25]">Start shopping</Link>
+                                            </div>
+                                        )}
                                     </div>
                                 </section>
                             </motion.div>
                         )}
 
-                        {/* Orders Tab */}
+                        {/* ==================== ORDERS TAB ==================== */}
                         {activeTab === "orders" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
-                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-3 sm:p-4 md:p-6"
                             >
-                                <h2 className="text-xl sm:text-2xl font-bold mb-6 flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                <h2 className="text-lg sm:text-xl md:text-2xl font-bold mb-4 flex items-center gap-2">
                                     <FiShoppingBag className="text-blue-600" /> My Orders ({orders.length})
                                 </h2>
 
-                                <div className="flex flex-wrap gap-3 sm:gap-4 mb-6 pb-4 border-b dark:border-gray-700">
-                                    <div className="flex-1 min-w-[180px] sm:min-w-[200px]">
+                                <div className="flex flex-wrap gap-2 mb-4 pb-3 border-b dark:border-gray-700">
+                                    <div className="flex-1 min-w-[150px] sm:min-w-[180px]">
                                         <div className="relative">
                                             <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                                             <input
@@ -1905,16 +1975,14 @@ const Profile = () => {
                                                 placeholder="Search orders..."
                                                 value={searchOrder}
                                                 onChange={(e) => setSearchOrder(e.target.value)}
-                                                className="w-full pl-9 sm:pl-10 pr-3 sm:pr-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 text-sm"
-                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                className="w-full pl-8 pr-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500"
                                             />
                                         </div>
                                     </div>
                                     <select
                                         value={orderFilter}
                                         onChange={(e) => setOrderFilter(e.target.value)}
-                                        className="px-3 sm:px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 text-sm"
-                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                        className="px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 flex-1 sm:flex-none"
                                     >
                                         <option value="all">All Orders</option>
                                         <option value="pending">Pending</option>
@@ -1926,25 +1994,24 @@ const Profile = () => {
                                     <select
                                         value={orderSort}
                                         onChange={(e) => setOrderSort(e.target.value)}
-                                        className="px-3 sm:px-4 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 text-sm"
-                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                        className="px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 flex-1 sm:flex-none"
                                     >
-                                        <option value="newest">Newest First</option>
-                                        <option value="oldest">Oldest First</option>
-                                        <option value="highest">Highest Amount</option>
+                                        <option value="newest">Newest</option>
+                                        <option value="oldest">Oldest</option>
+                                        <option value="highest">Highest</option>
                                     </select>
                                 </div>
 
                                 {filteredOrders.length === 0 ? (
-                                    <div className="text-center py-12 sm:py-16">
-                                        <FiShoppingBag className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500 text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No orders found</p>
-                                        <Link to="/collections/all" className="inline-block mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition-all text-sm" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                    <div className="text-center py-10 sm:py-12">
+                                        <FiShoppingBag className="w-14 h-14 sm:w-16 sm:h-16 text-gray-300 mx-auto mb-3" />
+                                        <p className="text-gray-500 text-sm sm:text-base">No orders found</p>
+                                        <Link to="/collections/all" className="inline-block mt-3 bg-blue-600 text-white px-5 py-2 rounded-xl hover:bg-blue-700 transition-all text-sm">
                                             Start Shopping →
                                         </Link>
                                     </div>
                                 ) : (
-                                    <div className="space-y-4">
+                                    <div className="space-y-3 sm:space-y-4">
                                         {filteredOrders.map((order) => {
                                             const orderStatus = getEffectiveOrderStatus(order);
                                             const isRefunded = orderStatus === "refunded";
@@ -1953,171 +2020,97 @@ const Profile = () => {
                                             const isCancelled = normalizeOrderStatus(orderStatus) === "cancelled";
 
                                             return (
-                                                <div key={order.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-xl p-4 sm:p-5 hover:shadow-lg transition-all">
-                                                    <div className="flex flex-wrap justify-between items-start mb-4">
+                                                <div key={order.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-xl p-3 sm:p-4 hover:shadow-lg transition-all">
+                                                    <div className="flex flex-wrap justify-between items-start gap-2 mb-3">
                                                         <div>
-                                                            <p className="font-bold text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Order #{order.id}</p>
-                                                            <p className="text-xs sm:text-sm text-gray-500 flex items-center gap-1 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                            <p className="font-bold text-sm sm:text-base">Order #{order.id}</p>
+                                                            <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
                                                                 <FiCalendar size={12} /> {formatDate(order.date)}
                                                             </p>
                                                         </div>
                                                         <div className="text-right">
-                                                            <span className={`px-2 sm:px-3 py-1 rounded-full text-[10px] sm:text-xs font-semibold ${getOrderStatusBadge(orderStatus)}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${getOrderStatusBadge(orderStatus)}`}>
                                                                 {orderStatus?.toUpperCase()}
                                                             </span>
-                                                            <p className="text-lg sm:text-xl font-bold text-blue-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(order.total)}</p>
+                                                            <p className="text-base sm:text-lg font-bold text-blue-600 mt-0.5">{formatPrice(order.total)}</p>
                                                         </div>
                                                     </div>
 
-                                                    <div className="space-y-2">
+                                                    <div className="space-y-1.5">
                                                         {getOrderItems(order).slice(0, 2).map((item, idx) => (
-                                                            <div key={idx} className="flex items-center gap-2 sm:gap-3 p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                                                                <img src={item.image} alt={item.name} className="w-10 h-10 sm:w-12 sm:h-12 object-cover rounded-lg" />
+                                                            <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                                                                <img 
+                                                                    src={item.image} 
+                                                                    alt={item.name} 
+                                                                    className="w-10 h-10 sm:w-12 sm:h-12 object-cover rounded-lg" 
+                                                                    onError={(e) => { e.target.src = '/images/no-image.svg'; }}
+                                                                />
                                                                 <div className="flex-1 min-w-0">
-                                                                    <p className="font-medium text-sm sm:text-base truncate" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.name}</p>
-                                                                    <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Qty: {item.quantity} | {formatPrice(item.price)}</p>
+                                                                    <p className="font-medium text-sm truncate">{item.name}</p>
+                                                                    <p className="text-[10px] text-gray-500">Qty: {item.quantity} | {formatPrice(item.price)}</p>
                                                                 </div>
                                                             </div>
                                                         ))}
                                                         {order.itemsList?.length > 2 && (
-                                                            <p className="text-[10px] sm:text-xs text-gray-500 text-center" style={{ fontFamily: "'Times New Roman', Times, serif" }}>+{order.itemsList.length - 2} more items</p>
+                                                            <p className="text-[10px] text-gray-500 text-center">+{order.itemsList.length - 2} more items</p>
                                                         )}
                                                     </div>
 
-                                                    <div className="pt-4 border-t mt-4">
+                                                    <div className="pt-3 border-t mt-3">
                                                         <div className="flex flex-wrap gap-2">
                                                             {!isDelivered && !isCancelled && (
                                                                 <button
                                                                     onClick={() => setTrackingOrder(order)}
-                                                                    className="inline-flex items-center gap-2 rounded-xl bg-black px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-[#b98237]"
-                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                    className="inline-flex items-center gap-1.5 rounded-xl bg-black px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#b98237]"
                                                                 >
-                                                                    <FiTruck /> Track Order
+                                                                    <FiTruck size={13} /> Track Order
                                                                 </button>
                                                             )}
 
                                                             {isDelivered && (
                                                                 <button
                                                                     onClick={() => setTrackingOrder(order)}
-                                                                    className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-green-700"
-                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                    className="inline-flex items-center gap-1.5 rounded-xl bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-green-700"
                                                                 >
-                                                                    <FiCheckCircle /> Delivery Complete
+                                                                    <FiCheckCircle size={13} /> Delivery Complete
                                                                 </button>
                                                             )}
 
                                                             <Link
                                                                 to={`/product/${order.itemsList?.[0]?.id}`}
-                                                                className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-gray-700 transition hover:border-black hover:text-black dark:text-gray-200"
-                                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:border-black hover:text-black dark:text-gray-200"
                                                                 onClick={() => window.scrollTo(0, 0)}
                                                             >
-                                                                <FiEye /> View Details
+                                                                <FiEye size={13} /> View
                                                             </Link>
 
                                                             {isDelivered && !isRefunded && !isReturnInProgress && (
                                                                 <button
                                                                     onClick={() => navigateToProductReview(order.itemsList?.[0]?.id, order.itemsList?.[0]?.name, order.id)}
-                                                                    className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-amber-700"
-                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-700"
                                                                 >
-                                                                    <FiStar /> Write a Review
+                                                                    <FiStar size={13} /> Review
                                                                 </button>
                                                             )}
 
                                                             <button
                                                                 type="button"
                                                                 onClick={() => deleteOrderFromHistory(order)}
-                                                                className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-gray-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-gray-600 dark:text-gray-300"
-                                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-gray-600 dark:text-gray-300"
                                                             >
-                                                                <FiTrash2 /> Delete
+                                                                <FiTrash2 size={13} /> Delete
                                                             </button>
 
                                                             {!isCancelled && !isDelivered && !isRefunded && !isReturnInProgress && (
                                                                 <button
                                                                     onClick={() => cancelOrder(order.id)}
                                                                     disabled={cancellingOrderId === order.id}
-                                                                    className="inline-flex items-center gap-2 rounded-xl border border-red-300 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
-                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
                                                                 >
-                                                                    <FiX /> {cancellingOrderId === order.id ? "Cancelling..." : "Cancel Order"}
+                                                                    <FiX size={13} /> {cancellingOrderId === order.id ? "Cancelling..." : "Cancel"}
                                                                 </button>
                                                             )}
                                                         </div>
-
-                                                        {isRefunded && (
-                                                            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 sm:p-4 dark:border-emerald-900/30 dark:bg-emerald-900/10">
-                                                                <div className="flex items-start gap-3">
-                                                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
-                                                                        <FiCreditCard />
-                                                                    </div>
-                                                                    <div>
-                                                                        <p className="text-sm font-bold text-emerald-800 dark:text-emerald-300">Order Refunded</p>
-                                                                        <p className="mt-1 text-xs leading-5 text-emerald-700 dark:text-emerald-400">The return has been completed and the refund has been processed. Open Returns & Refunds for the complete refund timeline.</p>
-                                                                        <button onClick={() => { setActiveTab("returns"); navigate("/profile?tab=returns"); }} className="mt-3 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white">View Refund Details</button>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        )}
-
-                                                        {isReturnInProgress && (
-                                                            <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-3 sm:p-4 dark:border-orange-900/30 dark:bg-orange-900/10">
-                                                                <div className="flex items-start gap-3">
-                                                                    <FiRefreshCw className="mt-0.5 shrink-0 text-orange-600" />
-                                                                    <div>
-                                                                        <p className="text-sm font-bold text-orange-800 dark:text-orange-300">{orderStatus === "refund_processing" ? "Refund Processing" : "Return In Progress"}</p>
-                                                                        <p className="mt-1 text-xs leading-5 text-orange-700 dark:text-orange-400">This order has an active return. Open Returns & Refunds to see pickup, verification and refund updates.</p>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        )}
-
-                                                        {isDelivered && (
-                                                            <div className="mt-4 rounded-2xl bg-green-50 p-3 sm:p-4 dark:bg-green-900/10">
-                                                                <div className="mb-3 flex items-center gap-3">
-                                                                    <div className="flex h-8 w-8 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-full bg-green-600 text-white">
-                                                                        <FiCheckCircle />
-                                                                    </div>
-                                                                    <div>
-                                                                        <p className="text-xs sm:text-sm font-bold text-green-800 dark:text-green-300" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Order Delivered!</p>
-                                                                        <p className="text-[10px] sm:text-xs text-green-700 dark:text-green-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>You can now request a return for eligible items.</p>
-                                                                    </div>
-                                                                </div>
-                                                                <div className="space-y-3">
-                                                                    {getOrderItems(order).map((item, itemIndex) => {
-                                                                        const alreadyReturned = hasReturnRequestForItem(getOrderIdentifier(order), getItemIdentifier(item));
-                                                                        return (
-                                                                            <div key={`${getOrderIdentifier(order)}-${getItemIdentifier(item)}-${itemIndex}`} className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between dark:border-gray-600 dark:bg-gray-800">
-                                                                                <div className="flex min-w-0 items-center gap-3">
-                                                                                    {item.image ? (
-                                                                                        <img src={item.image} alt={item.name} className="h-12 w-12 sm:h-14 sm:w-14 shrink-0 rounded-lg object-cover" />
-                                                                                    ) : (
-                                                                                        <div className="flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
-                                                                                            <FiPackage className="text-gray-400" />
-                                                                                        </div>
-                                                                                    )}
-                                                                                    <div className="min-w-0">
-                                                                                        <p className="truncate text-xs sm:text-sm font-semibold" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{item.name}</p>
-                                                                                        <p className="mt-1 text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Qty {item.quantity || 1}{item.size ? ` · ${item.size}` : ""}{item.color ? ` · ${item.color}` : ""}</p>
-                                                                                    </div>
-                                                                                </div>
-                                                                                <div className="flex flex-wrap gap-2">
-                                                                                    <button
-                                                                                        onClick={() => openReturnForItem(order, item)}
-                                                                                        disabled={alreadyReturned}
-                                                                                        className="inline-flex items-center gap-1.5 rounded-lg border border-orange-300 px-2 sm:px-3 py-1.5 sm:py-2 text-[10px] sm:text-xs font-bold text-orange-700 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
-                                                                                    >
-                                                                                        <FiCornerDownLeft /> {alreadyReturned ? "Return Requested" : "Return Item"}
-                                                                                    </button>
-                                                                                </div>
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </div>
-                                                        )}
                                                     </div>
                                                 </div>
                                             );
@@ -2127,177 +2120,77 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* Returns Tab */}
-                        {activeTab === "returns" && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
-                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
-                            >
-                                <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-                                    <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                        <FiShield className="text-orange-600" /> Returns & Refunds ({returnRequests.length})
-                                    </h2>
-                                    <span className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Refunds take up to 7 business days</span>
-                                </div>
-
-                                {returnRequests.length === 0 ? (
-                                    <div className="text-center py-12 sm:py-16">
-                                        <FiShield className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500 text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No return requests yet</p>
-                                        <p className="text-xs sm:text-sm text-gray-400 mt-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>When you request a return, it will appear here with full tracking</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-4 sm:space-y-6">
-                                        {returnRequests.map((returnReq) => (
-                                            <div
-                                                key={returnReq.id}
-                                                className="border-2 rounded-xl p-4 sm:p-5 cursor-pointer hover:shadow-lg transition-all"
-                                                onClick={() => setSelectedReturnRequest(returnReq)}
-                                            >
-                                                <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
-                                                    <div className="flex gap-3 min-w-0">
-                                                        {returnReq.productImage && (
-                                                            <img src={returnReq.productImage} alt={returnReq.productName} className="w-14 h-14 sm:w-16 sm:h-16 object-cover rounded-lg shrink-0" />
-                                                        )}
-                                                        <div className="min-w-0">
-                                                            <p className="font-medium text-sm sm:text-base truncate" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{returnReq.productName}</p>
-                                                            <p className="text-[10px] sm:text-xs text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Return ID: #{returnReq.id}</p>
-                                                            {returnReq.refundMethod && (
-                                                                <p className="text-[10px] sm:text-xs text-green-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Refund: {returnReq.refundMethod.method}</p>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                    <div className="text-right shrink-0">
-                                                        <div className="flex items-center gap-1 justify-end">
-                                                            {getReturnStatusIcon(returnReq.status)}
-                                                            <span className={`px-2 py-1 rounded-full text-[10px] sm:text-xs font-semibold ${getReturnStatusBadge(returnReq.status)}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                                {getReturnStatusText(returnReq.status)}
-                                                            </span>
-                                                        </div>
-                                                        <p className="text-base sm:text-lg font-bold text-green-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(returnReq.refundAmount)}</p>
-                                                        {returnReq.status === 'refund_processing' && (
-                                                            <p className="text-[10px] sm:text-xs text-orange-600 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                                ⏳ Processing (7 business days)
-                                                            </p>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                <div className="mt-4">
-                                                    <div className="flex justify-between text-[10px] sm:text-xs text-gray-500 mb-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                        <span>Requested</span>
-                                                        <span>Pickup</span>
-                                                        <span>Collected</span>
-                                                        <span>Verified</span>
-                                                        <span>Refunded</span>
-                                                    </div>
-                                                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                                        <div
-                                                            className="h-full bg-gradient-to-r from-yellow-500 via-blue-500 to-green-500 rounded-full transition-all duration-500"
-                                                            style={{ width: `${returnStages[returnReq.status]?.progress || 0}%` }}
-                                                        ></div>
-                                                    </div>
-                                                </div>
-
-                                                <div className="mt-3 text-[10px] sm:text-xs text-gray-500 flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                    <FiInfo size={12} />
-                                                    <span>Click to view full tracking history and refund details</span>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </motion.div>
-                        )}
-
-                        {/* ============================================================
-                        WISHLIST TAB - FIXED with centralized favorites
-                        ============================================================ */}
+                        {/* ==================== WISHLIST TAB ==================== */}
                         {activeTab === "wishlist" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
-                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-3 sm:p-4 md:p-6"
                             >
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+                                    <h2 className="text-lg sm:text-xl md:text-2xl font-bold flex items-center gap-2">
                                         <FiHeart className="text-red-500" /> My Wishlist ({favorites.length})
                                     </h2>
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-1.5">
                                         <button 
-                                            onClick={() => {
-                                                if (user?.email) {
-                                                    refreshFavorites(true);
-                                                    toast.success("Wishlist refreshed");
-                                                }
-                                            }} 
+                                            onClick={() => { if (user?.email) { refreshFavorites(true); toast.success("Wishlist refreshed"); } }} 
                                             className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-all"
-                                            title="Refresh Wishlist"
                                         >
-                                            <FiRefreshCw size={16} />
+                                            <FiRefreshCw size={15} />
                                         </button>
                                         <button onClick={() => setWishlistView("grid")} className={`p-2 rounded-lg ${wishlistView === "grid" ? "bg-blue-100 text-blue-600" : "bg-gray-100"}`}>
-                                            <FiGrid size={18} />
+                                            <FiGrid size={17} />
                                         </button>
                                         <button onClick={() => setWishlistView("list")} className={`p-2 rounded-lg ${wishlistView === "list" ? "bg-blue-100 text-blue-600" : "bg-gray-100"}`}>
-                                            <FiList size={18} />
+                                            <FiList size={17} />
                                         </button>
                                     </div>
                                 </div>
 
                                 {favorites.length === 0 ? (
-                                    <div className="text-center py-12 sm:py-16">
-                                        <FiHeart className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500 text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Your wishlist is empty</p>
-                                        <p className="text-xs sm:text-sm text-gray-400 mt-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Products you add to favorites will appear here</p>
-                                        <Link to="/collections/all" className="inline-block mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition-all" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                    <div className="text-center py-10 sm:py-12">
+                                        <FiHeart className="w-14 h-14 sm:w-16 sm:h-16 text-gray-300 mx-auto mb-3" />
+                                        <p className="text-gray-500 text-sm sm:text-base">Your wishlist is empty</p>
+                                        <p className="text-xs text-gray-400 mt-1">Products you add to favorites will appear here</p>
+                                        <Link to="/collections/all" className="inline-block mt-3 bg-blue-600 text-white px-5 py-2 rounded-xl hover:bg-blue-700 transition-all text-sm">
                                             Explore Products →
                                         </Link>
                                     </div>
                                 ) : wishlistView === "grid" ? (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                                         {favorites.map((product) => (
-                                            <div key={product.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-2xl p-4 hover:shadow-xl transition-all group">
+                                            <div key={product.id} className="border-2 border-gray-100 dark:border-gray-700 rounded-xl p-3 hover:shadow-xl transition-all group">
                                                 <div className="relative">
                                                     <img
                                                         src={product.image || '/images/no-image.svg'}
                                                         alt={product.name}
-                                                        className="w-full h-48 object-cover rounded-xl mb-3 group-hover:scale-105 transition-transform duration-300"
+                                                        className="w-full h-40 sm:h-48 object-cover rounded-lg mb-2 group-hover:scale-105 transition-transform duration-300"
                                                         onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                     />
                                                     <button 
                                                         onClick={() => removeFromFavorites(product.id)} 
-                                                        className="absolute top-2 right-2 bg-white rounded-full p-2 shadow-md hover:scale-110 transition-transform"
+                                                        className="absolute top-2 right-2 bg-white rounded-full p-1.5 shadow-md hover:scale-110 transition-transform"
                                                     >
-                                                        <FiTrash2 size={16} className="text-red-500" />
+                                                        <FiTrash2 size={14} className="text-red-500" />
                                                     </button>
                                                 </div>
-                                                <h3 className="font-semibold text-gray-800 dark:text-white text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.name}</h3>
-                                                <p className="text-gray-500 text-xs sm:text-sm mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.brand || "Zamed"}</p>
-                                                <p className="text-blue-600 font-bold text-base sm:text-xl mt-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(product.price)}</p>
-                                                <div className="flex gap-3 mt-4">
+                                                <h3 className="font-semibold text-gray-800 dark:text-white text-sm">{product.name}</h3>
+                                                <p className="text-gray-500 text-xs mt-0.5">{product.brand || "Zamed"}</p>
+                                                <p className="text-blue-600 font-bold text-base mt-1">{formatPrice(product.price)}</p>
+                                                <div className="flex gap-2 mt-2">
                                                     <button 
                                                         onClick={() => {
-                                                            // Find the product in favorites list
                                                             const fullProduct = favorites.find(p => String(p.id) === String(product.id));
-                                                            if (fullProduct) {
-                                                                addToCartFromFavorites(fullProduct);
-                                                            } else {
-                                                                toast.error("Product not found");
-                                                            }
+                                                            if (fullProduct) addToCartFromFavorites(fullProduct);
+                                                            else toast.error("Product not found");
                                                         }} 
-                                                        className="flex-1 bg-gray-900 text-white py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-medium hover:bg-gray-800 transition-all" 
-                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                        className="flex-1 bg-gray-900 text-white py-1.5 rounded-lg text-xs font-medium hover:bg-gray-800 transition-all"
                                                     >
                                                         Add to Cart
                                                     </button>
                                                     <Link
                                                         to={`/product/${product.id}`}
-                                                        className="px-3 sm:px-5 py-2 sm:py-2.5 border-2 border-gray-300 text-gray-700 rounded-xl text-xs sm:text-sm font-medium hover:border-blue-600 hover:text-blue-600 transition-all"
-                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                        className="px-3 py-1.5 border-2 border-gray-300 text-gray-700 rounded-lg text-xs font-medium hover:border-blue-600 hover:text-blue-600 transition-all"
                                                         onClick={() => window.scrollTo(0, 0)}
                                                     >
                                                         View
@@ -2307,44 +2200,42 @@ const Profile = () => {
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="space-y-3">
+                                    <div className="space-y-2">
                                         {favorites.map((product) => (
-                                            <div key={product.id} className="flex items-center gap-4 p-4 border rounded-xl hover:shadow-md transition-all">
+                                            <div key={product.id} className="flex flex-wrap items-center gap-3 p-3 border rounded-xl hover:shadow-md transition-all">
                                                 <img
                                                     src={product.image || '/images/no-image.svg'}
                                                     alt={product.name}
-                                                    className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-lg"
+                                                    className="w-14 h-14 sm:w-16 sm:h-16 object-cover rounded-lg"
                                                     onError={(e) => { e.target.src = '/images/no-image.svg'; }}
                                                 />
-                                                <div className="flex-1">
-                                                    <h3 className="font-semibold text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.name}</h3>
-                                                    <p className="text-xs sm:text-sm text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{product.brand || "Zamed"}</p>
-                                                    <p className="text-blue-600 font-bold text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{formatPrice(product.price)}</p>
+                                                <div className="flex-1 min-w-[120px]">
+                                                    <h3 className="font-semibold text-sm">{product.name}</h3>
+                                                    <p className="text-xs text-gray-500">{product.brand || "Zamed"}</p>
+                                                    <p className="text-blue-600 font-bold text-sm">{formatPrice(product.price)}</p>
                                                 </div>
-                                                <div className="flex gap-2">
+                                                <div className="flex flex-wrap gap-1.5">
                                                     <button 
                                                         onClick={() => {
                                                             const fullProduct = favorites.find(p => String(p.id) === String(product.id));
                                                             if (fullProduct) addToCartFromFavorites(fullProduct);
                                                         }} 
-                                                        className="px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-900 text-white rounded-lg text-xs sm:text-sm hover:bg-gray-800" 
-                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                        className="px-3 py-1 bg-gray-900 text-white rounded-lg text-xs hover:bg-gray-800"
                                                     >
                                                         Add to Cart
                                                     </button>
                                                     <Link
                                                         to={`/product/${product.id}`}
                                                         onClick={() => window.scrollTo(0, 0)}
-                                                        className="px-3 sm:px-4 py-1.5 sm:py-2 border border-gray-300 text-gray-700 rounded-lg text-xs sm:text-sm hover:border-blue-600 hover:text-blue-600 transition-all"
-                                                        style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                        className="px-3 py-1 border border-gray-300 text-gray-700 rounded-lg text-xs hover:border-blue-600 hover:text-blue-600 transition-all"
                                                     >
                                                         View
                                                     </Link>
                                                     <button 
                                                         onClick={() => removeFromFavorites(product.id)} 
-                                                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
+                                                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
                                                     >
-                                                        <FiTrash2 size={18} />
+                                                        <FiTrash2 size={15} />
                                                     </button>
                                                 </div>
                                             </div>
@@ -2354,32 +2245,31 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* Coupons Tab */}
+                        {/* ==================== COUPONS TAB ==================== */}
                         {activeTab === "coupons" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
-                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-3 sm:p-4 md:p-6"
                             >
-                                <div className="flex items-center justify-between mb-6">
-                                    <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                                    <h2 className="text-lg sm:text-xl md:text-2xl font-bold flex items-center gap-2">
                                         <FiTag className="text-green-600" /> My Coupons ({userCoupons.length})
                                     </h2>
                                     {userCoupons.length > 0 && (
-                                        <span className="text-xs sm:text-sm text-gray-500 dark:text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                        <span className="text-xs text-gray-500">
                                             {userCoupons.filter(c => !c.used && (!c.endDate || new Date(c.endDate) > new Date())).length} active
                                         </span>
                                     )}
                                 </div>
                                 {userCoupons.length === 0 ? (
-                                    <div className="text-center py-12 sm:py-16">
-                                        <FiTag className="w-16 h-16 sm:w-20 sm:h-20 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500 text-base sm:text-lg" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No coupons available</p>
-                                        <p className="text-xs sm:text-sm text-gray-400 mt-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Coupons will appear here when you receive special offers</p>
+                                    <div className="text-center py-10 sm:py-12">
+                                        <FiTag className="w-14 h-14 sm:w-16 sm:h-16 text-gray-300 mx-auto mb-3" />
+                                        <p className="text-gray-500 text-sm sm:text-base">No coupons available</p>
+                                        <p className="text-xs text-gray-400 mt-1">Coupons will appear here when you receive special offers</p>
                                     </div>
                                 ) : (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                                         {userCoupons.map((coupon) => {
                                             const isExpired = coupon.endDate && new Date(coupon.endDate) < new Date();
                                             const isUsed = coupon.used === true;
@@ -2390,81 +2280,74 @@ const Profile = () => {
                                                     key={coupon.id || coupon.code}
                                                     initial={{ opacity: 0, scale: 0.95 }}
                                                     animate={{ opacity: 1, scale: 1 }}
-                                                    whileHover={{ y: -4 }}
-                                                    className="overflow-hidden rounded-2xl border border-[#e6dccb] bg-white shadow-[0_8px_25px_rgba(40,28,10,0.06)] transition-all hover:shadow-lg dark:border-gray-700 dark:bg-gray-800"
+                                                    whileHover={{ y: -3 }}
+                                                    className="overflow-hidden rounded-xl border border-[#e6dccb] bg-white shadow-[0_8px_25px_rgba(40,28,10,0.06)] transition-all hover:shadow-lg dark:border-gray-700 dark:bg-gray-800"
                                                 >
                                                     <div
-                                                        className={`relative overflow-hidden bg-gradient-to-br ${cardAccent(coupon.discountType)} p-5 text-white`}
+                                                        className={`relative overflow-hidden bg-gradient-to-br ${cardAccent(coupon.discountType)} p-4 text-white`}
                                                         style={getCouponBackgroundStyle(coupon)}
                                                     >
-                                                        {coupon.backgroundImage && getCouponBackgroundStyle(coupon) && (
-                                                            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/20" />
-                                                        )}
                                                         <div className="relative z-[1]">
-                                                            <div className="flex items-start justify-between gap-4">
+                                                            <div className="flex items-start justify-between gap-2">
                                                                 <div>
-                                                                    <p className="text-[10px] font-semibold tracking-[0.2em] text-[#e6bd70]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                    <p className="text-[9px] font-semibold tracking-[0.2em] text-[#e6bd70]">
                                                                         {isActive ? "ACTIVE OFFER" : isExpired ? "EXPIRED" : "USED"}
                                                                     </p>
-                                                                    <h3 className="mt-2 font-serif text-xl sm:text-2xl lg:text-3xl" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{getDiscountLabel(coupon)}</h3>
-                                                                    <p className="mt-1 text-sm text-white/65 line-clamp-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{coupon.title || coupon.description}</p>
+                                                                    <h3 className="mt-1 font-serif text-lg sm:text-xl">{getDiscountLabel(coupon)}</h3>
+                                                                    <p className="mt-0.5 text-sm text-white/65 line-clamp-1">{coupon.title || coupon.description}</p>
                                                                 </div>
-                                                                <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase ${isActive ? "bg-emerald-400/20 text-emerald-300" : isExpired ? "bg-red-400/20 text-red-300" : "bg-white/10 text-white/60"}`} style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                                <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${isActive ? "bg-emerald-400/20 text-emerald-300" : isExpired ? "bg-red-400/20 text-red-300" : "bg-white/10 text-white/60"}`}>
                                                                     {isActive ? "Active" : isExpired ? "Expired" : "Used"}
                                                                 </span>
                                                             </div>
-                                                            <div className="mt-4 flex items-center justify-between rounded-xl border border-white/15 bg-black/20 px-4 py-2.5">
-                                                                <span className="font-mono text-sm sm:text-base font-bold tracking-[0.12em]" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{coupon.code}</span>
+                                                            <div className="mt-3 flex items-center justify-between rounded-lg border border-white/15 bg-black/20 px-3 py-1.5">
+                                                                <span className="font-mono text-xs font-bold tracking-[0.12em]">{coupon.code}</span>
                                                                 <button
                                                                     onClick={() => {
                                                                         navigator.clipboard.writeText(coupon.code);
                                                                         toast.success(`Coupon code ${coupon.code} copied!`);
                                                                     }}
-                                                                    className="rounded-lg p-1.5 text-[#e8bf75] transition hover:bg-white/10"
+                                                                    className="rounded-lg p-1 text-[#e8bf75] transition hover:bg-white/10"
                                                                 >
-                                                                    <FiCopy size={16} />
+                                                                    <FiCopy size={14} />
                                                                 </button>
                                                             </div>
                                                         </div>
                                                     </div>
 
-                                                    <div className="p-5">
-                                                        <p className="text-sm leading-6 text-gray-500 dark:text-gray-400 line-clamp-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                            {coupon.description || "Premium discount for ZAMED customers."}
-                                                        </p>
-                                                        <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                                                            <div className="rounded-xl bg-[#faf7f1] p-2.5 dark:bg-gray-700/50">
-                                                                <span className="text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Minimum order</span>
-                                                                <p className="mt-0.5 font-semibold text-gray-900 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                    <div className="p-3 sm:p-4">
+                                                        <p className="text-sm text-gray-500 line-clamp-2">{coupon.description || "Premium discount for ZAMED customers."}</p>
+                                                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                                                            <div className="rounded-lg bg-[#faf7f1] p-2 dark:bg-gray-700/50">
+                                                                <span className="text-gray-400">Minimum order</span>
+                                                                <p className="mt-0.5 font-semibold text-gray-900 dark:text-white">
                                                                     {coupon.minPurchase > 0 ? `${currencySymbol}${coupon.minPurchase}` : "No minimum"}
                                                                 </p>
                                                             </div>
-                                                            <div className="rounded-xl bg-[#faf7f1] p-2.5 dark:bg-gray-700/50">
-                                                                <span className="text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Valid until</span>
-                                                                <p className="mt-0.5 font-semibold text-gray-900 dark:text-white" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                                            <div className="rounded-lg bg-[#faf7f1] p-2 dark:bg-gray-700/50">
+                                                                <span className="text-gray-400">Valid until</span>
+                                                                <p className="mt-0.5 font-semibold text-gray-900 dark:text-white">
                                                                     {coupon.endDate ? new Date(coupon.endDate).toLocaleDateString() : "No expiry"}
                                                                 </p>
                                                             </div>
                                                         </div>
 
-                                                        <div className="mt-4 flex flex-wrap gap-2">
+                                                        <div className="mt-3 flex flex-wrap gap-2">
                                                             <button
                                                                 onClick={() => {
                                                                     navigator.clipboard.writeText(coupon.code);
                                                                     toast.success(`Coupon code ${coupon.code} copied!`);
                                                                 }}
-                                                                className="flex-1 rounded-xl bg-[#171511] px-4 py-2.5 text-xs sm:text-sm font-semibold text-white transition hover:bg-[#b47a29] flex items-center justify-center gap-2"
-                                                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                className="flex-1 rounded-lg bg-[#171511] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#b47a29] flex items-center justify-center gap-1.5"
                                                             >
-                                                                <FiCopy size={14} /> Copy Code
+                                                                <FiCopy size={13} /> Copy Code
                                                             </button>
                                                             {isActive && (
                                                                 <Link
                                                                     to="/collections/all"
-                                                                    className="flex-1 rounded-xl border border-[#ded4c5] px-4 py-2.5 text-xs sm:text-sm font-semibold text-gray-700 transition hover:border-[#b47a29] hover:text-[#a36d23] flex items-center justify-center gap-2 dark:border-gray-600 dark:text-gray-300"
-                                                                    style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                                                    className="flex-1 rounded-lg border border-[#ded4c5] px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:border-[#b47a29] hover:text-[#a36d23] flex items-center justify-center gap-1.5 dark:border-gray-600 dark:text-gray-300"
                                                                 >
-                                                                    Shop Now <FiArrowRight size={14} />
+                                                                    Shop <FiArrowRight size={13} />
                                                                 </Link>
                                                             )}
                                                         </div>
@@ -2477,44 +2360,135 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* Notifications Tab */}
+                        {/* ============================================================
+                            RETURNS TAB
+                        ============================================================ */}
+                        {activeTab === "returns" && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-3 sm:p-4 md:p-6"
+                            >
+                                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                                    <h2 className="text-lg sm:text-xl md:text-2xl font-bold flex items-center gap-2">
+                                        <FiShield className="text-orange-600" /> Returns & Refunds ({returnRequests.length})
+                                    </h2>
+                                    <span className="text-[10px] text-gray-500">Refunds take up to 7 business days</span>
+                                </div>
+
+                                {returnRequests.length === 0 ? (
+                                    <div className="text-center py-10 sm:py-12">
+                                        <FiShield className="w-14 h-14 sm:w-16 sm:h-16 text-gray-300 mx-auto mb-3" />
+                                        <p className="text-gray-500 text-sm sm:text-base">No return requests yet</p>
+                                        <p className="text-xs text-gray-400 mt-1">When you request a return, it will appear here with full tracking</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3 sm:space-y-4">
+                                        {returnRequests.map((returnReq) => (
+                                            <div
+                                                key={returnReq.id}
+                                                className="border-2 rounded-xl p-3 sm:p-4 cursor-pointer hover:shadow-lg transition-all"
+                                                onClick={() => setSelectedReturnRequest(returnReq)}
+                                            >
+                                                <div className="flex flex-wrap justify-between items-start gap-2 mb-3">
+                                                    <div className="flex gap-3 min-w-0">
+                                                        {returnReq.productImage && (
+                                                            <img src={returnReq.productImage} alt={returnReq.productName} className="w-12 h-12 sm:w-14 sm:h-14 object-cover rounded-lg shrink-0" />
+                                                        )}
+                                                        <div className="min-w-0">
+                                                            <p className="font-medium text-sm truncate">{returnReq.productName}</p>
+                                                            <p className="text-[10px] text-gray-500">Return ID: #{returnReq.id}</p>
+                                                            {returnReq.refundMethod && (
+                                                                <p className="text-[10px] text-green-600 mt-0.5">Refund: {returnReq.refundMethod.method}</p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <div className="flex items-center gap-1 justify-end">
+                                                            {getReturnStatusIcon(returnReq.status)}
+                                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${getReturnStatusBadge(returnReq.status)}`}>
+                                                                {getReturnStatusText(returnReq.status)}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-base font-bold text-green-600 mt-0.5">{formatPrice(returnReq.refundAmount)}</p>
+                                                        {returnReq.status === 'refund_processing' && (
+                                                            <p className="text-[10px] text-orange-600 mt-0.5">⏳ Processing (7 days)</p>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div className="mt-2">
+                                                    <div className="flex justify-between text-[10px] text-gray-500 mb-0.5">
+                                                        <span>Requested</span>
+                                                        <span>Pickup</span>
+                                                        <span>Collected</span>
+                                                        <span>Verified</span>
+                                                        <span>Refunded</span>
+                                                    </div>
+                                                    <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                                        <div
+                                                            className="h-full bg-gradient-to-r from-yellow-500 via-blue-500 to-green-500 rounded-full transition-all duration-500"
+                                                            style={{ width: `${returnStages[returnReq.status]?.progress || 0}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                <div className="mt-2 text-[10px] text-gray-500 flex items-center gap-1.5">
+                                                    <FiInfo size={12} />
+                                                    <span>Click to view full tracking history and refund details</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </motion.div>
+                        )}
+
+                        {/* ============================================================
+                            NOTIFICATIONS TAB
+                        ============================================================ */}
                         {activeTab === "notifications" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800"
-                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                className="rounded-xl border border-gray-200 bg-white p-3 shadow-xl sm:p-4 md:p-6 dark:border-gray-700 dark:bg-gray-800"
                             >
-                                <div className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-end sm:justify-between dark:border-gray-700">
-                                    <div><h2 className="text-2xl font-bold">Notifications</h2><p className="mt-1 text-sm text-gray-500">Open any notification to view the related order, return, offer, product, security page or support section.</p></div>
-                                    <div className="flex flex-wrap gap-2">
-                                        {[["all", `All (${notifications.length})`], ["unread", `Unread (${notifications.filter(n => !n.read).length})`], ["read", `Read (${notifications.filter(n => n.read).length})`]].map(([v, l]) =>
-                                            <button key={v} onClick={() => setNotificationFilter(v)} className={`rounded-full px-4 py-2 text-xs font-bold ${notificationFilter === v ? "bg-black text-white" : "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"}`}>{l}</button>
-                                        )}
+                                <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between dark:border-gray-700">
+                                    <div>
+                                        <h2 className="text-lg sm:text-xl font-bold">Notifications</h2>
+                                        <p className="mt-0.5 text-xs text-gray-500">Open any notification to view related content</p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {[["all", `All (${notifications.length})`], ["unread", `Unread (${notifications.filter(n => !n.read).length})`], ["read", `Read (${notifications.filter(n => n.read).length})`]].map(([v, l]) => (
+                                            <button key={v} onClick={() => setNotificationFilter(v)} className={`rounded-full px-3 py-1 text-[10px] font-bold ${notificationFilter === v ? "bg-black text-white" : "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"}`}>{l}</button>
+                                        ))}
                                     </div>
                                 </div>
-                                <div className="mt-4 flex justify-end gap-2">
-                                    {notifications.some(n => !n.read) && <button onClick={markAllNotificationsAsRead} className="rounded-xl bg-black px-4 py-2 text-xs font-bold text-white">Mark all as read</button>}
-                                    {notifications.some(n => n.read) && <button onClick={clearReadNotifications} className="rounded-xl border px-4 py-2 text-xs font-bold text-red-600">Clear read</button>}
+                                <div className="mt-3 flex justify-end gap-1.5 flex-wrap">
+                                    {notifications.some(n => !n.read) && <button onClick={markAllNotificationsAsRead} className="rounded-lg bg-black px-3 py-1 text-[10px] font-bold text-white">Mark all as read</button>}
+                                    {notifications.some(n => n.read) && <button onClick={clearReadNotifications} className="rounded-lg border px-3 py-1 text-[10px] font-bold text-red-600">Clear read</button>}
                                 </div>
-                                <div className="mt-5 space-y-3">
+                                <div className="mt-3 space-y-2">
                                     {filteredNotifications.length === 0 ? (
-                                        <div className="py-14 text-center text-gray-500"><FiBell className="mx-auto mb-3 h-12 w-12 text-gray-300" />No {notificationFilter === "all" ? "" : notificationFilter} notifications</div>
+                                        <div className="py-10 text-center text-gray-500">
+                                            <FiBell className="mx-auto mb-2 h-10 w-10 text-gray-300" />
+                                            No {notificationFilter === "all" ? "" : notificationFilter} notifications
+                                        </div>
                                     ) : (
                                         filteredNotifications.map(notif => (
-                                            <div key={getNotificationId(notif)} className={`rounded-2xl border p-4 ${notif.read ? "bg-gray-50 dark:bg-gray-700/30" : "border-amber-300 bg-amber-50/70 dark:bg-amber-900/10"}`}>
-                                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                                            <div key={getNotificationId(notif)} className={`rounded-xl border p-3 ${notif.read ? "bg-gray-50 dark:bg-gray-700/30" : "border-amber-300 bg-amber-50/70 dark:bg-amber-900/10"}`}>
+                                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                                                     <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-2">
-                                                            <p className="font-bold">{notif.title}</p>
-                                                            {!notif.read && <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">UNREAD</span>}
+                                                        <div className="flex flex-wrap items-center gap-1.5">
+                                                            <p className="font-bold text-sm">{notif.title}</p>
+                                                            {!notif.read && <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-white">UNREAD</span>}
                                                         </div>
-                                                        <p className="mt-1 text-sm text-gray-500">{notif.message}</p>
-                                                        <p className="mt-2 text-xs text-gray-400">{formatDateTime(notif.date || notif.createdAt || new Date())}</p>
+                                                        <p className="mt-0.5 text-xs text-gray-500">{notif.message}</p>
+                                                        <p className="mt-0.5 text-[10px] text-gray-400">{formatDateTime(notif.date || notif.createdAt || new Date())}</p>
                                                     </div>
-                                                    <div className="flex gap-2">
-                                                        <button onClick={() => viewNotificationDetails(notif)} className="rounded-xl bg-black px-4 py-2.5 text-xs font-bold text-white">View details</button>
-                                                        <button onClick={() => notif.read ? markNotificationAsUnread(getNotificationId(notif)) : markNotificationAsRead(getNotificationId(notif))} className="rounded-xl border px-3 py-2.5 text-xs font-bold">{notif.read ? "Mark unread" : "Mark read"}</button>
+                                                    <div className="flex gap-1.5">
+                                                        <button onClick={() => viewNotificationDetails(notif)} className="rounded-lg bg-black px-3 py-1 text-[10px] font-bold text-white">View</button>
+                                                        <button onClick={() => notif.read ? markNotificationAsUnread(getNotificationId(notif)) : markNotificationAsRead(getNotificationId(notif))} className="rounded-lg border px-3 py-1 text-[10px] font-bold">{notif.read ? "Unread" : "Read"}</button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -2524,131 +2498,172 @@ const Profile = () => {
                             </motion.div>
                         )}
 
-                        {/* Addresses Tab */}
+                        {/* ============================================================
+                            ADDRESSES TAB
+                        ============================================================ */}
                         {activeTab === "addresses" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-4 sm:p-6"
-                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-3 sm:p-4 md:p-6"
                             >
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
+                                    <h2 className="text-lg sm:text-xl md:text-2xl font-bold flex items-center gap-2">
                                         <FiMapPin className="text-green-600" /> My Addresses
                                     </h2>
-                                    <button onClick={() => setShowAddAddress(true)} className="px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white rounded-lg text-xs sm:text-sm font-medium hover:bg-blue-700 transition-all flex items-center gap-2" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                        <FiPlus size={14} /> Add New
+                                    <button onClick={() => setShowAddAddress(true)} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition-all flex items-center gap-1.5">
+                                        <FiPlus size={13} /> Add New
                                     </button>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                                     {addresses.map((address) => (
-                                        <div key={address.id} className={`border-2 rounded-xl p-4 ${address.isDefault ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700'}`}>
-                                            <div className="flex justify-between items-start mb-2">
-                                                <div className="flex items-center gap-2">
+                                        <div key={address.id} className={`border-2 rounded-xl p-3 ${address.isDefault ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700'}`}>
+                                            <div className="flex flex-wrap justify-between items-start gap-1 mb-1.5">
+                                                <div className="flex items-center gap-1.5">
                                                     {address.isDefault && (
-                                                        <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] rounded-full" style={{ fontFamily: "'Times New Roman', Times, serif" }}>Default</span>
+                                                        <span className="px-1.5 py-0.5 bg-blue-600 text-white text-[9px] rounded-full">Default</span>
                                                     )}
                                                 </div>
-                                                <div className="flex gap-2">
+                                                <div className="flex gap-1.5">
                                                     {!address.isDefault && (
-                                                        <button onClick={() => setDefaultAddress(address.id)} className="text-[10px] sm:text-xs text-blue-600 hover:underline" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-                                                            Set Default
-                                                        </button>
+                                                        <button onClick={() => setDefaultAddress(address.id)} className="text-[10px] text-blue-600 hover:underline">Set Default</button>
                                                     )}
                                                     <button onClick={() => deleteAddress(address.id)} className="text-red-500 hover:text-red-700">
-                                                        <FiTrash2 size={16} />
+                                                        <FiTrash2 size={14} />
                                                     </button>
                                                 </div>
                                             </div>
-                                            <p className="font-medium text-sm sm:text-base" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.street}</p>
-                                            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.city}, {address.state}</p>
-                                            <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400" style={{ fontFamily: "'Times New Roman', Times, serif" }}>{address.zipCode}, {address.country}</p>
-                                            {address.phone && <p className="text-xs sm:text-sm text-gray-500 mt-1" style={{ fontFamily: "'Times New Roman', Times, serif" }}>📞 {address.phone}</p>}
+                                            <p className="font-medium text-sm">{address.street}</p>
+                                            <p className="text-xs text-gray-600">{address.city}, {address.state}</p>
+                                            <p className="text-xs text-gray-600">{address.zipCode}, {address.country}</p>
+                                            {address.phone && <p className="text-xs text-gray-500 mt-0.5">📞 {address.phone}</p>}
                                         </div>
                                     ))}
                                 </div>
 
                                 {addresses.length === 0 && (
-                                    <div className="text-center py-12">
-                                        <FiMapPin className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                                        <p className="text-gray-500" style={{ fontFamily: "'Times New Roman', Times, serif" }}>No addresses saved yet</p>
+                                    <div className="text-center py-10">
+                                        <FiMapPin className="w-14 h-14 text-gray-300 mx-auto mb-2" />
+                                        <p className="text-gray-500">No addresses saved yet</p>
                                     </div>
                                 )}
                             </motion.div>
                         )}
 
-                        {/* Security Tab */}
+                        {/* ============================================================
+                            SECURITY TAB
+                        ============================================================ */}
                         {activeTab === "security" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800"
-                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                className="rounded-xl border border-gray-200 bg-white p-3 shadow-xl sm:p-4 md:p-6 dark:border-gray-700 dark:bg-gray-800"
                             >
-                                <h2 className="text-2xl font-bold flex items-center gap-2"><FiLock /> Security</h2>
-                                <p className="mt-1 text-sm text-gray-500">Manage password, two-factor authentication, alerts and sessions.</p>
-                                <form onSubmit={handleChangePassword} className="mt-6 rounded-2xl border p-4 dark:border-gray-700">
-                                    <div className="flex justify-between"><h3 className="font-bold">Change Password</h3><button type="button" onClick={() => setShowPasswords(v => !v)}><FiEye /></button></div>
-                                    <div className="mt-4 grid gap-3 lg:grid-cols-3">
-                                        {[["currentPassword", "Current password"], ["newPassword", "New password"], ["confirmPassword", "Confirm new password"]].map(([k, p]) =>
-                                            <input key={k} type={showPasswords ? "text" : "password"} value={passwordForm[k]} onChange={e => setPasswordForm(x => ({ ...x, [k]: e.target.value }))} placeholder={p} className="rounded-xl border px-4 py-3 text-sm dark:border-gray-600 dark:bg-gray-700" />
-                                        )}
+                                <h2 className="text-lg sm:text-xl font-bold flex items-center gap-2"><FiLock /> Security</h2>
+                                <p className="mt-0.5 text-xs text-gray-500">Manage password, two-factor authentication, alerts and sessions.</p>
+
+                                <form onSubmit={handleChangePassword} className="mt-4 rounded-xl border p-3 dark:border-gray-700">
+                                    <div className="flex flex-wrap justify-between items-center gap-1">
+                                        <h3 className="font-bold text-sm">Change Password</h3>
+                                        <button type="button" onClick={() => setShowPasswords(v => !v)}><FiEye size={16} /></button>
                                     </div>
-                                    <button disabled={changingPassword} className="mt-4 rounded-xl bg-black px-5 py-3 text-sm font-bold text-white">{changingPassword ? "Updating..." : "Update Password"}</button>
+                                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                                        {[["currentPassword", "Current"], ["newPassword", "New"], ["confirmPassword", "Confirm"]].map(([k, p]) => (
+                                            <input key={k} type={showPasswords ? "text" : "password"} value={passwordForm[k]} onChange={e => setPasswordForm(x => ({ ...x, [k]: e.target.value }))} placeholder={p} className="rounded-lg border px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" />
+                                        ))}
+                                    </div>
+                                    <button disabled={changingPassword} className="mt-3 rounded-lg bg-black px-4 py-2 text-xs font-bold text-white">{changingPassword ? "Updating..." : "Update Password"}</button>
                                 </form>
-                                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                                    <div className="rounded-2xl border p-4 dark:border-gray-700"><h3 className="font-bold">Two-Factor Authentication</h3><p className="mt-1 text-sm text-gray-500">Status: {securityPrefs.twoFactorEnabled ? "Enabled" : "Disabled"}</p><button onClick={toggleTwoFactor} disabled={securityActionLoading} className="mt-4 rounded-xl border px-4 py-2.5 text-sm font-bold">{securityPrefs.twoFactorEnabled ? "Disable 2FA" : "Enable 2FA"}</button></div>
-                                    <div className="rounded-2xl border p-4 dark:border-gray-700"><h3 className="font-bold">Security Alerts</h3>
-                                        {[["loginAlerts", "Login alerts"], ["securityEmails", "Security emails"]].map(([k, l]) =>
-                                            <label key={k} className="mt-3 flex justify-between"><span>{l}</span><input type="checkbox" checked={securityPrefs[k]} onChange={e => persistSecurityPrefs({ ...securityPrefs, [k]: e.target.checked })} /></label>
-                                        )}
+
+                                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                    <div className="rounded-xl border p-3 dark:border-gray-700">
+                                        <h3 className="font-bold text-sm">Two-Factor Auth</h3>
+                                        <p className="text-xs text-gray-500">Status: {securityPrefs.twoFactorEnabled ? "Enabled" : "Disabled"}</p>
+                                        <button onClick={toggleTwoFactor} disabled={securityActionLoading} className="mt-2 rounded-lg border px-3 py-1 text-xs font-bold">{securityPrefs.twoFactorEnabled ? "Disable" : "Enable"}</button>
+                                    </div>
+                                    <div className="rounded-xl border p-3 dark:border-gray-700">
+                                        <h3 className="font-bold text-sm">Security Alerts</h3>
+                                        {[["loginAlerts", "Login alerts"], ["securityEmails", "Security emails"]].map(([k, l]) => (
+                                            <label key={k} className="mt-2 flex justify-between text-xs">
+                                                <span>{l}</span>
+                                                <input type="checkbox" checked={securityPrefs[k]} onChange={e => persistSecurityPrefs({ ...securityPrefs, [k]: e.target.checked })} />
+                                            </label>
+                                        ))}
                                     </div>
                                 </div>
-                                <div className="mt-5 rounded-2xl border p-4 dark:border-gray-700">
-                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                        <div><h3 className="font-bold">Current Session</h3><p className="text-sm text-gray-500">Browser • Active now</p></div>
-                                        <button onClick={logoutOtherSessions} disabled={securityActionLoading} className="rounded-xl border border-red-200 px-4 py-2.5 text-sm font-bold text-red-600">Sign out other sessions</button>
+
+                                <div className="mt-4 rounded-xl border p-3 dark:border-gray-700">
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <h3 className="font-bold text-sm">Current Session</h3>
+                                            <p className="text-xs text-gray-500">Browser • Active now</p>
+                                        </div>
+                                        <button onClick={logoutOtherSessions} disabled={securityActionLoading} className="rounded-lg border border-red-200 px-3 py-1 text-xs font-bold text-red-600">Sign out other sessions</button>
                                     </div>
                                 </div>
                             </motion.div>
                         )}
 
-                        {/* Settings Tab */}
+                        {/* ============================================================
+                            SETTINGS TAB
+                        ============================================================ */}
                         {activeTab === "settings" && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="space-y-5"
-                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                className="space-y-4"
                             >
-                                <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 dark:border-gray-700 dark:bg-gray-800">
-                                    <h2 className="text-2xl font-bold flex items-center gap-2"><FiSettings /> Settings</h2>
-                                    <p className="mt-1 text-sm text-gray-500">Manage communication and shopping preferences.</p>
-                                    <div className="mt-5">
-                                        {[["emailNotifications", "Email Notifications"], ["smsAlerts", "SMS Alerts"], ["orderUpdates", "Order Updates"], ["promotionalOffers", "Offers & Promotions"], ["wishlistAlerts", "Wishlist Alerts"]].map(([k, l]) =>
-                                            <label key={k} className="flex items-center justify-between border-b py-4 last:border-0 dark:border-gray-700"><span className="font-bold">{l}</span><input type="checkbox" checked={accountPrefs[k]} onChange={e => persistAccountPrefs({ ...accountPrefs, [k]: e.target.checked })} /></label>
-                                        )}
+                                <section className="rounded-xl border border-gray-200 bg-white p-3 shadow-xl sm:p-4 md:p-6 dark:border-gray-700 dark:bg-gray-800">
+                                    <h2 className="text-lg sm:text-xl font-bold flex items-center gap-2"><FiSettings /> Settings</h2>
+                                    <p className="text-xs text-gray-500">Manage communication and shopping preferences.</p>
+                                    <div className="mt-3">
+                                        {[["emailNotifications", "Email Notifications"], ["smsAlerts", "SMS Alerts"], ["orderUpdates", "Order Updates"], ["promotionalOffers", "Offers & Promotions"], ["wishlistAlerts", "Wishlist Alerts"]].map(([k, l]) => (
+                                            <label key={k} className="flex items-center justify-between border-b py-3 last:border-0 dark:border-gray-700">
+                                                <span className="font-bold text-sm">{l}</span>
+                                                <input type="checkbox" checked={accountPrefs[k]} onChange={e => persistAccountPrefs({ ...accountPrefs, [k]: e.target.checked })} />
+                                            </label>
+                                        ))}
                                     </div>
                                 </section>
-                                <section className="grid gap-4 md:grid-cols-2">
-                                    <div className="rounded-3xl border bg-white p-5 dark:border-gray-700 dark:bg-gray-800"><FiDownload className="text-2xl" /><h3 className="mt-3 font-bold">Download My Data</h3><button onClick={downloadAccountData} className="mt-4 rounded-xl border px-4 py-2.5 text-sm font-bold">Download Data</button></div>
-                                    <div className="rounded-3xl border bg-white p-5 dark:border-gray-700 dark:bg-gray-800"><FiMoon className="text-2xl" /><h3 className="mt-3 font-bold">Appearance</h3><button onClick={() => { const next = !darkMode; setDarkMode(next); localStorage.setItem("theme", next ? "dark" : "light"); document.documentElement.classList.toggle("dark", next); }} className="mt-4 rounded-xl bg-black px-4 py-2.5 text-sm font-bold text-white">{darkMode ? "Light Mode" : "Dark Mode"}</button></div>
+
+                                <section className="grid gap-3 sm:grid-cols-2">
+                                    <div className="rounded-xl border bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+                                        <FiDownload className="text-xl" />
+                                        <h3 className="mt-2 font-bold text-sm">Download My Data</h3>
+                                        <button onClick={downloadAccountData} className="mt-2 rounded-lg border px-3 py-1 text-xs font-bold">Download</button>
+                                    </div>
+                                    <div className="rounded-xl border bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+                                        <FiMoon className="text-xl" />
+                                        <h3 className="mt-2 font-bold text-sm">Appearance</h3>
+                                        <button onClick={() => { const next = !darkMode; setDarkMode(next); localStorage.setItem("theme", next ? "dark" : "light"); document.documentElement.classList.toggle("dark", next); }} className="mt-2 rounded-lg bg-black px-3 py-1 text-xs font-bold text-white">
+                                            {darkMode ? "Light Mode" : "Dark Mode"}
+                                        </button>
+                                    </div>
                                 </section>
-                                <section className="rounded-3xl border border-red-200 bg-red-50 p-5 dark:bg-red-900/10"><h3 className="font-bold text-red-700">Delete Account</h3><p className="mt-1 text-sm text-red-600">Type DELETE to confirm permanent deletion.</p><button onClick={handleDeleteAccount} disabled={deletingAccount} className="mt-4 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white">{deletingAccount ? "Deleting..." : "Delete Account"}</button></section>
+
+                                <section className="rounded-xl border border-red-200 bg-red-50 p-4 dark:bg-red-900/10">
+                                    <h3 className="font-bold text-red-700 text-sm">Delete Account</h3>
+                                    <p className="text-xs text-red-600">Type DELETE to confirm permanent deletion.</p>
+                                    <button onClick={handleDeleteAccount} disabled={deletingAccount} className="mt-2 rounded-lg bg-red-600 px-4 py-1.5 text-xs font-bold text-white">
+                                        {deletingAccount ? "Deleting..." : "Delete Account"}
+                                    </button>
+                                </section>
                             </motion.div>
                         )}
                     </div>
                 </div>
 
-                {/* RETURN ITEM MODAL */}
+                {/* ============================================================
+                    RETURN ITEM MODAL - Mobile Responsive
+                ============================================================ */}
                 <AnimatePresence>
                     {selectedItemForReturn && (
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-3 sm:p-4 backdrop-blur-sm"
+                            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm"
                             onMouseDown={(event) => {
                                 if (event.target === event.currentTarget) {
                                     resetReturnForm();
@@ -2659,98 +2674,99 @@ const Profile = () => {
                                 initial={{ opacity: 0, y: 24, scale: 0.97 }}
                                 animate={{ opacity: 1, y: 0, scale: 1 }}
                                 exit={{ opacity: 0, y: 15, scale: 0.98 }}
-                                className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-4 shadow-2xl sm:p-6 dark:bg-gray-800"
-                                style={{ fontFamily: "'Times New Roman', Times, serif" }}
+                                className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-gray-800"
                             >
-                                <div className="flex items-start justify-between gap-4 border-b border-gray-100 pb-4 dark:border-gray-700">
+                                <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3 dark:border-gray-700">
                                     <div className="min-w-0">
-                                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-orange-600">Returns & Refunds</p>
-                                        <h2 className="mt-1 text-xl font-bold sm:text-2xl">Return Item</h2>
-                                        <p className="mt-1 truncate text-sm text-gray-500">{selectedItemForReturn.productName}</p>
+                                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-600">Returns & Refunds</p>
+                                        <h2 className="mt-0.5 text-lg font-bold sm:text-xl">Return Item</h2>
+                                        <p className="mt-0.5 truncate text-xs text-gray-500">{selectedItemForReturn.productName}</p>
                                     </div>
-                                    <button type="button" onClick={resetReturnForm} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300" aria-label="Close return form"><FiX /></button>
+                                    <button type="button" onClick={resetReturnForm} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500 transition hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300">
+                                        <FiX size={18} />
+                                    </button>
                                 </div>
 
-                                <div className="mt-5 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-700/40">
+                                <div className="mt-4 flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-700/40">
                                     {selectedItemForReturn.productImage ? (
-                                        <img src={selectedItemForReturn.productImage} alt={selectedItemForReturn.productName} className="h-16 w-16 shrink-0 rounded-xl object-cover" />
+                                        <img src={selectedItemForReturn.productImage} alt={selectedItemForReturn.productName} className="h-14 w-14 shrink-0 rounded-lg object-cover" />
                                     ) : (
-                                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-white dark:bg-gray-700"><FiPackage className="text-gray-400" /></div>
+                                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-white dark:bg-gray-700"><FiPackage className="text-gray-400" /></div>
                                     )}
                                     <div className="min-w-0">
-                                        <p className="truncate font-bold">{selectedItemForReturn.productName}</p>
-                                        <p className="mt-1 text-xs text-gray-500">Order #{selectedItemForReturn.orderId}</p>
-                                        <p className="mt-1 text-xs text-gray-500">Paid by: <strong>{selectedItemForReturn.paymentMethod}</strong></p>
+                                        <p className="truncate font-bold text-sm">{selectedItemForReturn.productName}</p>
+                                        <p className="text-[10px] text-gray-500">Order #{selectedItemForReturn.orderId}</p>
+                                        <p className="text-[10px] text-gray-500">Paid by: <strong>{selectedItemForReturn.paymentMethod}</strong></p>
                                     </div>
                                 </div>
 
-                                <div className="mt-5 space-y-5">
+                                <div className="mt-4 space-y-4">
                                     <div>
-                                        <label className="mb-2 block text-sm font-bold">Reason for return</label>
-                                        <select value={returnReason} onChange={event => setReturnReason(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700">
+                                        <label className="mb-1.5 block text-xs font-bold">Reason for return</label>
+                                        <select value={returnReason} onChange={event => setReturnReason(event.target.value)} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700">
                                             <option value="">Select a reason</option>
                                             {returnReasons.map(reason => <option key={reason} value={reason}>{reason}</option>)}
                                         </select>
                                     </div>
 
                                     <div>
-                                        <label className="mb-2 block text-sm font-bold">Additional details</label>
-                                        <textarea rows={3} value={returnComment} onChange={event => setReturnComment(event.target.value)} placeholder="Tell us more about the return..." className="w-full resize-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700" />
+                                        <label className="mb-1.5 block text-xs font-bold">Additional details</label>
+                                        <textarea rows={2} value={returnComment} onChange={event => setReturnComment(event.target.value)} placeholder="Tell us more..." className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-orange-500 dark:border-gray-600 dark:bg-gray-700" />
                                     </div>
 
-                                    <div className="rounded-2xl border border-gray-200 p-4 dark:border-gray-600">
-                                        <div className="mb-3 flex items-center gap-2"><FiDollarSign className="text-green-600" /><h3 className="font-bold">Refund method</h3></div>
+                                    <div className="rounded-xl border border-gray-200 p-3 dark:border-gray-600">
+                                        <div className="mb-2 flex items-center gap-1.5"><FiDollarSign className="text-green-600" /><h3 className="font-bold text-sm">Refund method</h3></div>
                                         {selectedItemForReturn.isCashOrder ? (
-                                            <div className="space-y-3">
-                                                <p className="text-sm leading-6 text-gray-500">This order was paid by cash. Choose how you want to receive your approved refund.</p>
-                                                <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${returnMethod === "bank_transfer" ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700" : "border-gray-200 dark:border-gray-600"}`}>
+                                            <div className="space-y-2">
+                                                <p className="text-xs text-gray-500">This order was paid by cash. Choose how you want to receive your approved refund.</p>
+                                                <label className={`flex cursor-pointer items-start gap-2 rounded-lg border p-3 transition ${returnMethod === "bank_transfer" ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700" : "border-gray-200 dark:border-gray-600"}`}>
                                                     <input type="radio" name="returnMethod" value="bank_transfer" checked={returnMethod === "bank_transfer"} onChange={event => setReturnMethod(event.target.value)} className="mt-1 accent-black" />
-                                                    <div><p className="font-bold">Bank transfer</p><p className="mt-1 text-xs leading-5 text-gray-500">Send the refund directly to your bank account. Processing can take up to 7 days after approval.</p></div>
+                                                    <div><p className="font-bold text-sm">Bank transfer</p><p className="mt-0.5 text-xs text-gray-500">Send refund to bank account. Takes up to 7 days.</p></div>
                                                 </label>
-                                                <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${returnMethod === "shop_pickup" ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700" : "border-gray-200 dark:border-gray-600"}`}>
+                                                <label className={`flex cursor-pointer items-start gap-2 rounded-lg border p-3 transition ${returnMethod === "shop_pickup" ? "border-black bg-gray-50 dark:border-white dark:bg-gray-700" : "border-gray-200 dark:border-gray-600"}`}>
                                                     <input type="radio" name="returnMethod" value="shop_pickup" checked={returnMethod === "shop_pickup"} onChange={event => setReturnMethod(event.target.value)} className="mt-1 accent-black" />
-                                                    <div><p className="font-bold">Collect refund from shop</p><p className="mt-1 text-xs leading-5 text-gray-500">Choose a date and time to collect the approved refund from the Zamed shop.</p></div>
+                                                    <div><p className="font-bold text-sm">Collect from shop</p><p className="mt-0.5 text-xs text-gray-500">Choose date/time to collect approved refund.</p></div>
                                                 </label>
                                             </div>
                                         ) : (
-                                            <div className="rounded-xl bg-green-50 p-4 text-sm text-green-900 dark:bg-green-900/20 dark:text-green-300">
-                                                <div className="flex items-center gap-2 font-bold"><FiCreditCard /> Original payment method</div>
-                                                <p className="mt-1 text-xs leading-5">Your refund will be returned to the payment method used for this order. Processing can take up to 7 days after approval.</p>
+                                            <div className="rounded-lg bg-green-50 p-3 text-sm text-green-900 dark:bg-green-900/20 dark:text-green-300">
+                                                <div className="flex items-center gap-1.5 font-bold"><FiCreditCard /> Original payment method</div>
+                                                <p className="mt-0.5 text-xs">Refund will be returned to the payment method used. Takes up to 7 days.</p>
                                             </div>
                                         )}
                                     </div>
 
                                     {returnMethod === "bank_transfer" && selectedItemForReturn.isCashOrder && (
-                                        <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900/40 dark:bg-blue-900/10">
-                                            <h3 className="font-bold">Bank details</h3>
-                                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                                <input type="text" value={accountHolderName} onChange={event => setAccountHolderName(event.target.value)} placeholder="Account holder name" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
-                                                <input type="text" value={bankName} onChange={event => setBankName(event.target.value)} placeholder="Bank name" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
-                                                <input type="text" inputMode="numeric" value={accountNumber} onChange={event => setAccountNumber(event.target.value.replace(/[^0-9]/g, ""))} placeholder="Account number" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
-                                                <input type="text" value={bankBranch} onChange={event => setBankBranch(event.target.value)} placeholder="Sort code / branch" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+                                        <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3 dark:border-blue-900/40 dark:bg-blue-900/10">
+                                            <h3 className="font-bold text-sm">Bank details</h3>
+                                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                                <input type="text" value={accountHolderName} onChange={event => setAccountHolderName(event.target.value)} placeholder="Account holder" className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+                                                <input type="text" value={bankName} onChange={event => setBankName(event.target.value)} placeholder="Bank name" className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+                                                <input type="text" inputMode="numeric" value={accountNumber} onChange={event => setAccountNumber(event.target.value.replace(/[^0-9]/g, ""))} placeholder="Account number" className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+                                                <input type="text" value={bankBranch} onChange={event => setBankBranch(event.target.value)} placeholder="Branch" className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700" />
                                             </div>
                                         </div>
                                     )}
 
                                     {returnMethod === "shop_pickup" && selectedItemForReturn.isCashOrder && (
-                                        <div className="rounded-2xl border border-orange-200 bg-orange-50/50 p-4 dark:border-orange-900/40 dark:bg-orange-900/10">
-                                            <h3 className="font-bold">Shop collection</h3>
-                                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                                <div><label className="mb-1 block text-xs font-bold">Collection date</label><input type="date" min={new Date().toISOString().split("T")[0]} value={shopPickupDate} onChange={event => setShopPickupDate(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700" /></div>
-                                                <div><label className="mb-1 block text-xs font-bold">Collection time</label><input type="time" value={shopPickupTime} onChange={event => setShopPickupTime(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700" /></div>
+                                        <div className="rounded-xl border border-orange-200 bg-orange-50/50 p-3 dark:border-orange-900/40 dark:bg-orange-900/10">
+                                            <h3 className="font-bold text-sm">Shop collection</h3>
+                                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                                <div><label className="mb-0.5 block text-[10px] font-bold">Collection date</label><input type="date" min={new Date().toISOString().split("T")[0]} value={shopPickupDate} onChange={event => setShopPickupDate(event.target.value)} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></div>
+                                                <div><label className="mb-0.5 block text-[10px] font-bold">Collection time</label><input type="time" value={shopPickupTime} onChange={event => setShopPickupTime(event.target.value)} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></div>
                                             </div>
                                         </div>
                                     )}
 
-                                    <div className="flex items-start gap-3 rounded-2xl bg-orange-50 p-4 text-sm text-orange-900 dark:bg-orange-900/20 dark:text-orange-200">
+                                    <div className="flex items-start gap-2 rounded-xl bg-orange-50 p-3 text-sm text-orange-900 dark:bg-orange-900/20 dark:text-orange-200">
                                         <FiClock className="mt-0.5 shrink-0 text-orange-600" />
-                                        <div><p className="font-bold">Refund processing</p><p className="mt-1 text-xs leading-5">After the returned product is received and approved, bank/original-payment refunds can take up to 7 days.</p></div>
+                                        <div><p className="font-bold text-sm">Refund processing</p><p className="mt-0.5 text-xs">After approval, refunds can take up to 7 days.</p></div>
                                     </div>
                                 </div>
 
-                                <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row">
-                                    <button type="button" onClick={resetReturnForm} className="flex-1 rounded-xl border border-gray-200 py-3 text-sm font-bold dark:border-gray-600">Cancel</button>
-                                    <button type="button" onClick={submitReturnRequest} disabled={isSubmittingReturn} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-black py-3 text-sm font-bold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50">
+                                <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row">
+                                    <button type="button" onClick={resetReturnForm} className="flex-1 rounded-lg border border-gray-200 py-2.5 text-xs font-bold dark:border-gray-600">Cancel</button>
+                                    <button type="button" onClick={submitReturnRequest} disabled={isSubmittingReturn} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-black py-2.5 text-xs font-bold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50">
                                         {isSubmittingReturn ? <><FiLoader className="animate-spin" /> Submitting...</> : <><FiCornerDownLeft /> Submit Return</>}
                                     </button>
                                 </div>
