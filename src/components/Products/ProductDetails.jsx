@@ -28,6 +28,13 @@ import ProductReviews from "./ProductReviews";
 // ============================================================
 // FIX: Use the existing imageLoader instead of custom functions
 // ============================================================
+const API_URL = (
+    import.meta.env.VITE_API_URL ||
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+        ? "http://localhost:5000/api"
+        : "https://zamed-backend-1.onrender.com/api")
+).replace(/\/$/, "");
+
 const fallbackProductImage = getWorkingImage(0);
 
 const ProductDetails = () => {
@@ -68,7 +75,6 @@ const ProductDetails = () => {
     // Load settings from localStorage
     const loadSettings = () => {
         const siteSettings = JSON.parse(localStorage.getItem('site_settings') || '{}');
-        console.log('🔄 ProductDetails - Loading settings:', siteSettings);
         setSettings(prev => ({
             ...prev,
             ...siteSettings,
@@ -92,7 +98,6 @@ const ProductDetails = () => {
         loadSettings();
 
         const handleSettingsUpdate = () => {
-            console.log('🔄 ProductDetails - Settings updated, reloading...');
             loadSettings();
         };
 
@@ -102,32 +107,14 @@ const ProductDetails = () => {
             }
         };
 
-        window.addEventListener(
-            'settingsSaved',
-            handleSettingsUpdate
-        );
-        window.addEventListener(
-            'siteInfoUpdated',
-            handleSettingsUpdate
-        );
-        window.addEventListener(
-            'storage',
-            handleStorageUpdate
-        );
+        window.addEventListener('settingsSaved', handleSettingsUpdate);
+        window.addEventListener('siteInfoUpdated', handleSettingsUpdate);
+        window.addEventListener('storage', handleStorageUpdate);
 
         return () => {
-            window.removeEventListener(
-                'settingsSaved',
-                handleSettingsUpdate
-            );
-            window.removeEventListener(
-                'siteInfoUpdated',
-                handleSettingsUpdate
-            );
-            window.removeEventListener(
-                'storage',
-                handleStorageUpdate
-            );
+            window.removeEventListener('settingsSaved', handleSettingsUpdate);
+            window.removeEventListener('siteInfoUpdated', handleSettingsUpdate);
+            window.removeEventListener('storage', handleStorageUpdate);
         };
     }, []);
 
@@ -158,7 +145,7 @@ const ProductDetails = () => {
         }
     }, [id]);
 
-    // Keep the customer product page synchronized with Admin > Products.
+    // Keep the customer product page synchronized
     useEffect(() => {
         const refreshProduct = () => {
             loadProduct();
@@ -175,24 +162,12 @@ const ProductDetails = () => {
             }
         };
 
-        window.addEventListener(
-            "productsUpdated",
-            refreshProduct
-        );
-        window.addEventListener(
-            "storage",
-            handleProductStorage
-        );
+        window.addEventListener("productsUpdated", refreshProduct);
+        window.addEventListener("storage", handleProductStorage);
 
         return () => {
-            window.removeEventListener(
-                "productsUpdated",
-                refreshProduct
-            );
-            window.removeEventListener(
-                "storage",
-                handleProductStorage
-            );
+            window.removeEventListener("productsUpdated", refreshProduct);
+            window.removeEventListener("storage", handleProductStorage);
         };
     }, [id]);
 
@@ -220,19 +195,69 @@ const ProductDetails = () => {
     };
 
     // ============================================================
-    // FIX: Use loadProductImages from imageLoader.js
+    // FIX: Load product from MongoDB first, then fallback
     // ============================================================
     const loadProduct = async () => {
         setLoading(true);
         try {
-            // Get all products from productService
-            const allProducts = productService.getAllProducts();
-            
-            // Find the product
-            const foundProduct = allProducts.find(
-                item => String(item.id) === String(id)
-            );
-            
+            let foundProduct = null;
+            let allProducts = [];
+
+            // ✅ PRIMARY: Try to fetch from MongoDB/Cloudinary
+            try {
+                const response = await fetch(`${API_URL}/products/${encodeURIComponent(id)}`, {
+                    headers: { Accept: "application/json" }
+                });
+                if (response.ok) {
+                    const result = await response.json();
+                    const productData = result.product ?? result.data?.product ?? result.data ?? result;
+                    if (productData && typeof productData === 'object' && productData.name) {
+                        foundProduct = {
+                            ...productData,
+                            id: String(productData.id ?? productData._id ?? id)
+                        };
+                        console.log('✅ Product loaded from MongoDB:', foundProduct.name);
+                    }
+                }
+            } catch (apiError) {
+                console.warn('MongoDB fetch failed, trying fallback:', apiError);
+            }
+
+            // ✅ FALLBACK: Try productService/localStorage if MongoDB failed
+            if (!foundProduct) {
+                try {
+                    allProducts = productService.getAllProducts() || [];
+                    foundProduct = allProducts.find(item => String(item.id) === String(id));
+                    if (foundProduct) {
+                        console.log('✅ Product found in productService:', foundProduct.name);
+                    }
+                } catch (serviceError) {
+                    console.warn('Product service fallback failed:', serviceError);
+                }
+            }
+
+            // ✅ SECONDARY FALLBACK: Try localStorage keys
+            if (!foundProduct) {
+                const possibleKeys = ['shop_products', 'products', 'admin_products', 'product_data'];
+                for (const key of possibleKeys) {
+                    try {
+                        const stored = localStorage.getItem(key);
+                        if (stored) {
+                            const parsed = JSON.parse(stored);
+                            const products = Array.isArray(parsed) ? parsed : [];
+                            foundProduct = products.find(item => String(item.id) === String(id) || String(item._id) === String(id));
+                            if (foundProduct) {
+                                foundProduct.id = String(foundProduct.id ?? foundProduct._id ?? id);
+                                console.log('✅ Product found in localStorage:', key);
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        // Continue to next key
+                    }
+                }
+            }
+
             if (foundProduct) {
                 // ✅ Use loadProductImages from imageLoader.js
                 const loadedProduct = await loadProductImages(foundProduct);
@@ -250,17 +275,23 @@ const ProductDetails = () => {
                     }
                 }
                 
-                // Process related products using loadProductsImages
-                const related = allProducts.filter(p => 
+                // Process related products
+                let related = [];
+                if (allProducts.length === 0) {
+                    try {
+                        allProducts = productService.getAllProducts() || [];
+                    } catch (e) {
+                        // Continue with empty array
+                    }
+                }
+                related = allProducts.filter(p => 
                     p.id !== loadedProduct.id && 
                     (p.category === loadedProduct.category || p.gender === loadedProduct.gender)
                 );
                 
-                // ✅ Use loadProductsImages from imageLoader.js
                 const relatedWithImages = await loadProductsImages(
                     related.slice(0, settings.relatedProductsCount || 4)
                 );
-                
                 setRelatedProducts(relatedWithImages);
             } else {
                 toast.error("Product not found");
@@ -529,7 +560,7 @@ const ProductDetails = () => {
     const deliveryText = getShippingText();
     const returnText = getReturnPolicyText();
 
-    // Get product specifications from admin fields with safe handling
+    // Get product specifications from admin fields
     const productSpecs = {
         material: product.material || "",
         careInstructions: product.careInstructions || "",
@@ -601,7 +632,7 @@ const ProductDetails = () => {
                         </button>
                     </div>
                     
-                    {/* Color Thumbnail Gallery - Controlled by settings */}
+                    {/* Color Thumbnail Gallery */}
                     {settings.showProductColors && product.colors && product.colors.length > 0 && (
                         <div>
                             <p className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
@@ -662,7 +693,7 @@ const ProductDetails = () => {
                         )}
                     </div>
                     
-                    {/* Rating - Controlled by settings */}
+                    {/* Rating */}
                     {settings.showProductRatings && (
                         <div className="flex items-center justify-between flex-wrap gap-3">
                             <div className="flex items-center gap-2">
@@ -707,7 +738,7 @@ const ProductDetails = () => {
                         )}
                     </div>
                     
-                    {/* Selected Color Display - Controlled by settings */}
+                    {/* Selected Color Display */}
                     {settings.showProductColors && selectedColor && (
                         <div className="bg-gray-50 p-3 rounded-xl">
                             <p className="text-sm text-gray-600">Selected Color:</p>
@@ -718,7 +749,7 @@ const ProductDetails = () => {
                         </div>
                     )}
                     
-                    {/* Size Selection - Controlled by settings */}
+                    {/* Size Selection */}
                     {settings.showProductSizes && product.sizes && product.sizes.length > 0 && (
                         <div>
                             <h4 className="font-semibold text-gray-900 mb-3">Select Size</h4>
@@ -740,7 +771,7 @@ const ProductDetails = () => {
                         </div>
                     )}
                     
-                    {/* Color Selection Backup - Controlled by settings */}
+                    {/* Color Selection Backup */}
                     {settings.showProductColors && product.colors && product.colors.length > 0 && (
                         <div>
                             <h4 className="font-semibold text-gray-900 mb-3">Select Color</h4>
@@ -767,7 +798,7 @@ const ProductDetails = () => {
                         </div>
                     )}
                     
-                    {/* Size Guide - Controlled by settings */}
+                    {/* Size Guide */}
                     {settings.showSizeGuide &&
                         product.sizes &&
                         product.sizes.length > 0 && (
@@ -816,7 +847,7 @@ const ProductDetails = () => {
                         <ShoppingBag size={20} /> Add to Cart - {currencySymbol}{(product.price * quantity).toFixed(2)}
                     </button>
                     
-                    {/* Share Buttons - Controlled by settings */}
+                    {/* Share Buttons */}
                     {settings.showShareButtons && (
                         <div className="flex items-center gap-3 pt-2">
                             <span className="text-sm text-gray-500">Share:</span>
@@ -829,7 +860,7 @@ const ProductDetails = () => {
                         </div>
                     )}
                     
-                    {/* Tabs - Updated to include all product details */}
+                    {/* Tabs */}
                     <div className="border-t pt-6">
                         <div className="flex gap-6 border-b overflow-x-auto">
                             {["description", "details", "specifications", "shipping"].map(tab => (
@@ -917,7 +948,6 @@ const ProductDetails = () => {
                             )}
                             {activeTab === "specifications" && (
                                 <div className="space-y-4">
-                                    {/* Material */}
                                     {productSpecs.material && (
                                         <div className="border-b border-gray-100 pb-3">
                                             <h4 className="font-semibold text-gray-800 mb-1">Material</h4>
@@ -925,7 +955,6 @@ const ProductDetails = () => {
                                         </div>
                                     )}
                                     
-                                    {/* Care Instructions */}
                                     {productSpecs.careInstructions && (
                                         <div className="border-b border-gray-100 pb-3">
                                             <h4 className="font-semibold text-gray-800 mb-1">Care Instructions</h4>
@@ -933,7 +962,6 @@ const ProductDetails = () => {
                                         </div>
                                     )}
                                     
-                                    {/* Tags - Safely handle tags */}
                                     {productSpecs.tags && getTagsArray(productSpecs.tags).length > 0 && (
                                         <div className="border-b border-gray-100 pb-3">
                                             <h4 className="font-semibold text-gray-800 mb-1">Tags</h4>
@@ -947,7 +975,6 @@ const ProductDetails = () => {
                                         </div>
                                     )}
                                     
-                                    {/* If no specifications exist */}
                                     {product.weight && (
                                         <div className="border-b border-gray-100 pb-3">
                                             <h4 className="font-semibold text-gray-800 mb-1">
@@ -983,7 +1010,6 @@ const ProductDetails = () => {
                             )}
                             {activeTab === "shipping" && (
                                 <div className="space-y-3">
-                                    {/* Shipping Fee - From product */}
                                     <div className="flex items-center gap-3 text-sm text-gray-600">
                                         <Truck className="w-5 h-5 text-green-600" />
                                         <span>
@@ -991,7 +1017,6 @@ const ProductDetails = () => {
                                         </span>
                                     </div>
                                     
-                                    {/* Return Policy - From product */}
                                     <div className="flex items-center gap-3 text-sm text-gray-600">
                                         <RotateCcw className="w-5 h-5 text-blue-600" />
                                         <span>
@@ -1008,13 +1033,11 @@ const ProductDetails = () => {
                                         </div>
                                     )}
 
-                                    {/* Secure Payment */}
                                     <div className="flex items-center gap-3 text-sm text-gray-600">
                                         <Shield className="w-5 h-5 text-purple-600" />
                                         <span>Secure payment</span>
                                     </div>
                                     
-                                    {/* Additional shipping info from product */}
                                     {shippingList.length > 0 && (
                                         <div className="pt-2 border-t border-gray-100 mt-2">
                                             <p className="text-sm font-medium text-gray-700 mb-2">Shipping Information:</p>
@@ -1218,7 +1241,7 @@ const ProductDetails = () => {
                 </div>
             )}
 
-            {/* Related Products - Controlled by settings */}
+            {/* Related Products */}
             {settings.showRelatedProducts && relatedProducts.length > 0 && (
                 <div className="mt-16">
                     <h2 className="text-2xl font-bold mb-6">You May Also Like</h2>
@@ -1281,7 +1304,7 @@ const ProductDetails = () => {
                 </div>
             )}
             
-            {/* Product Reviews Section - Controlled by settings */}
+            {/* Product Reviews Section */}
             {settings.reviewSystemEnabled && (
                 <div id="reviews-section" className="mt-16">
                     <ProductReviews productId={product.id} productName={product.name} />

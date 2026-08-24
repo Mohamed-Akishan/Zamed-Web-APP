@@ -5,7 +5,9 @@ import { ChevronLeft, ChevronRight, Pause, Play, ArrowRight } from "lucide-react
 import { useSite } from "../../context/SiteContext";
 import { motion, AnimatePresence } from "framer-motion";
 
-// IndexedDB helper for loading images with better quality
+// ============================================================
+// FIX: IndexedDB helper for loading images
+// ============================================================
 const ImageStorage = {
     dbName: 'ZamedImageStore',
     storeName: 'images',
@@ -131,14 +133,15 @@ const Hero = () => {
     
     const heroRef = useRef(null);
 
-    // Load slides from IndexedDB with better quality
+    // ============================================================
+    // FIX: Load slides from IndexedDB AND localStorage
+    // ============================================================
     const loadSlides = async () => {
         setLoading(true);
         try {
             // Get data from multiple sources
             const siteInfoData = JSON.parse(localStorage.getItem('site_info') || '{}');
             const savedImages = JSON.parse(localStorage.getItem('site_images') || '{}');
-            const slideCache = JSON.parse(localStorage.getItem('slide_images_cache') || '{}');
             
             let slidesData = siteInfoData.slides || siteInfo?.slides || [];
             
@@ -158,53 +161,54 @@ const Hero = () => {
                 }
             }
 
+            // ============================================================
+            // FIX: Load images from IndexedDB using imageId
+            // ============================================================
             const slidesWithImages = await Promise.all(slidesData.map(async (slide, index) => {
-                let imageData = slide.image || null;
+                let imageData = null;
                 
-                // First check if we have a cached image
-                if (slideCache && slideCache[index]) {
-                    imageData = slideCache[index];
-                }
+                // 1. Check if slide has imageId (from Cloudinary/IndexedDB)
+                const imageId = slide.imageId || savedImages?.slides?.find(s => s.id === slide.id)?.imageId || null;
                 
-                // Then check IndexedDB by ID
-                if (!imageData && slide.imageId) {
+                if (imageId) {
                     try {
-                        const indexedImage = await ImageStorage.getImage(slide.imageId);
+                        // Try to get from IndexedDB
+                        const indexedImage = await ImageStorage.getImage(imageId);
                         if (indexedImage) {
                             imageData = indexedImage;
+                            console.log(`✅ Slide ${index} image loaded from IndexedDB`);
                         }
                     } catch (e) {
                         console.warn('Could not load slide image from IndexedDB:', e);
                     }
                 }
                 
-                // Then check savedImages
+                // 2. If no image from IndexedDB, check if slide has direct image URL
+                if (!imageData && slide.image) {
+                    // If it's a Cloudinary URL or data URL
+                    if (typeof slide.image === 'string' && 
+                        (slide.image.startsWith('http') || slide.image.startsWith('data:'))) {
+                        imageData = slide.image;
+                        console.log(`✅ Slide ${index} image loaded from direct URL`);
+                    }
+                }
+                
+                // 3. Check savedImages
                 if (!imageData && savedImages?.slides) {
                     const savedSlide = savedImages.slides.find(s => s.id === slide.id);
                     if (savedSlide && savedSlide.image) {
                         imageData = savedSlide.image;
+                        console.log(`✅ Slide ${index} image loaded from savedImages`);
                     }
                 }
                 
-                // Check slide's own image
-                if (!imageData && slide.image) {
-                    imageData = slide.image;
-                }
-                
-                // Last-resort compatibility with old low-quality cache.
-                if (!imageData && slideCache && slideCache[index]) {
-                    imageData = slideCache[index];
-                }
-
                 // Validate image data
                 if (imageData && typeof imageData === 'string') {
-                    // If it's a base64 image, make sure it's valid
-                    if (imageData.startsWith('data:image')) {
-                        // Keep as is
-                    } else if (imageData.startsWith('http')) {
-                        // Keep as is
+                    if (imageData.startsWith('data:image') || 
+                        imageData.startsWith('http') ||
+                        imageData.startsWith('https')) {
+                        // Valid image
                     } else {
-                        // Invalid image, use null
                         imageData = null;
                     }
                 } else {
@@ -213,7 +217,8 @@ const Hero = () => {
                 
                 return {
                     ...slide,
-                    image: imageData
+                    image: imageData,
+                    imageId: imageId || slide.imageId || null
                 };
             }));
             
@@ -340,14 +345,13 @@ const Hero = () => {
         setIsAutoPlaying(!isAutoPlaying);
     };
 
-    // Handle image load for current slide
     const handleImageLoad = (index) => {
         setImageLoaded(prev => ({ ...prev, [index]: true }));
     };
 
     if (loading) {
         return (
-            <div className="relative h-screen flex items-center justify-center bg-white" style={{ marginTop: 0 }}>
+            <div className="relative w-full h-screen flex items-center justify-center bg-white" style={{ marginTop: 0 }}>
                 <div className="text-center">
                     <div className="w-16 h-16 border-4 border-gray-200 border-t-black rounded-full animate-spin mx-auto mb-4"></div>
                     <p className="text-gray-400">Loading...</p>
@@ -358,7 +362,7 @@ const Hero = () => {
 
     if (slides.length === 0) {
         return (
-            <div className="relative h-screen flex items-center justify-center bg-white overflow-hidden" style={{ marginTop: 0 }}>
+            <div className="relative w-full h-screen flex items-center justify-center bg-white overflow-hidden" style={{ marginTop: 0 }}>
                 <div className="absolute inset-0 bg-gradient-to-br from-gray-50 via-white to-gray-50" />
                 <div className="relative z-10 text-center px-4">
                     <motion.div
@@ -408,7 +412,12 @@ const Hero = () => {
         <div 
             ref={heroRef}
             className="relative w-full overflow-hidden bg-black"
-            style={{ height: '100vh', maxHeight: '100vh', marginTop: 0 }}
+            style={{ 
+                height: '100vh', 
+                maxHeight: '100vh', 
+                marginTop: 0,
+                paddingTop: 0
+            }}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
@@ -459,13 +468,12 @@ const Hero = () => {
                                             }}
                                         />
                                         {/* Gradient overlay for better text readability */}
-                                        <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/10 to-black/50" />
-                                        <div className="absolute inset-0 bg-gradient-to-r from-black/30 to-transparent" />
+                                        <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/20 to-black/60" />
+                                        <div className="absolute inset-0 bg-gradient-to-r from-black/40 to-transparent" />
                                     </>
                                 ) : (
                                     <div className={`w-full h-full bg-gradient-to-r ${slide.color || 'from-gray-900 to-gray-700'}`}>
                                         <div className="absolute inset-0 bg-black/30" />
-                                        {/* Pattern overlay */}
                                         <div className="absolute inset-0 opacity-5" style={{
                                             backgroundImage: `radial-gradient(circle at 20% 50%, white 1px, transparent 1px)`,
                                             backgroundSize: '40px 40px'
@@ -485,7 +493,7 @@ const Hero = () => {
                                             className="mb-3 md:mb-4"
                                         >
                                             <span className="inline-block px-3 md:px-4 py-1 md:py-1.5 bg-white/10 backdrop-blur-sm border border-white/20 rounded-full text-white/80 text-xs md:text-sm font-medium">
-                                                Zamed Premium
+                                                {slide.badge || "Zamed Premium"}
                                             </span>
                                         </motion.div>
 
