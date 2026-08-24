@@ -34,6 +34,15 @@ const saveProductToBackend = async (product, productId = null) => {
     const token = getAuthToken();
     if (!token) throw new Error("Your admin session has expired. Please sign in again.");
 
+    // MongoDB owns these fields. Never send a browser-generated ID as _id.
+    const payload = { ...product };
+    delete payload._id;
+    delete payload.id;
+    delete payload.__v;
+
+    // The Product schema stores review documents, not a numeric review count.
+    payload.reviews = Array.isArray(product.reviews) ? product.reviews : [];
+
     const response = await fetch(
         productId
             ? `${API_URL}/products/${encodeURIComponent(productId)}`
@@ -44,7 +53,7 @@ const saveProductToBackend = async (product, productId = null) => {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${token}`
             },
-            body: JSON.stringify(product)
+            body: JSON.stringify(payload)
         }
     );
     const result = await response.json().catch(() => ({}));
@@ -676,7 +685,9 @@ const Products = () => {
             
             const productData = {
                 ...(editingProduct || {}),
-                id: editingProduct ? editingProduct.id : Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9),
+                ...(editingProduct
+                    ? { id: String(editingProduct.id ?? editingProduct._id ?? "") }
+                    : {}),
                 name: formData.name.trim(),
                 price: parseFloat(formData.price),
                 originalPrice: formData.originalPrice ? parseFloat(formData.originalPrice) : null,
@@ -692,7 +703,9 @@ const Products = () => {
                 colorImages: colorImagesObj,
                 colorImagePublicIds,
                 rating: formData.rating || 0,
-                reviews: editingProduct?.reviews || 0,
+                reviews: Array.isArray(editingProduct?.reviews)
+                    ? editingProduct.reviews
+                    : [],
                 isFeatured: formData.isFeatured || false,
                 isNewArrival: formData.isNewArrival || false,
                 inStock: Number(formData.stock) > 0,
