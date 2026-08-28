@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+// src/pages/Register.jsx
+
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   FiArrowRight,
@@ -89,6 +91,49 @@ const saveAuthenticatedUser = (user, token, fallback = {}) => {
   );
 
   return normalizedUser;
+};
+
+// ============================================================
+// RATE LIMITING FIX - Exponential Backoff with Retry
+// ============================================================
+const fetchWithExponentialBackoff = async (url, options = {}, maxRetries = 5) => {
+  let retries = 0;
+  let delay = 1000;
+
+  while (retries < maxRetries) {
+    try {
+      const response = await fetch(url, options);
+      
+      // If rate limited, wait and retry
+      if (response.status === 429) {
+        retries++;
+        const waitTime = delay * Math.pow(2, retries - 1);
+        console.log(`⏳ Rate limited, retry ${retries}/${maxRetries} after ${waitTime}ms`);
+        
+        // Show toast notification for user
+        if (retries === 1) {
+          toast.info("Server is busy. Retrying...", { duration: 3000 });
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      
+      return response;
+    } catch (error) {
+      // Network errors - retry with backoff
+      if (retries < maxRetries - 1) {
+        retries++;
+        const waitTime = delay * Math.pow(2, retries - 1);
+        console.log(`⚠️ Network error, retry ${retries}/${maxRetries} after ${waitTime}ms`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      throw error;
+    }
+  }
+  
+  throw new Error('Max retries exceeded. Please try again later.');
 };
 
 const DEFAULT_AUTH = {
@@ -225,6 +270,13 @@ const Register = () => {
   const [loading, setLoading] = useState(false);
   const [socialLoading, setSocialLoading] = useState("");
   const [errors, setErrors] = useState({});
+  const [retryCount, setRetryCount] = useState(0);
+
+  // ============================================================
+  // PREVENT DOUBLE SUBMISSION
+  // ============================================================
+  const submitLock = useRef(false);
+  const submitTimeoutRef = useRef(null);
 
   const passwordScore = useMemo(() => {
     const value = formData.password;
@@ -320,6 +372,9 @@ const Register = () => {
       window.removeEventListener("siteImagesUpdated", refresh);
       window.removeEventListener("settingsSaved", refresh);
       window.removeEventListener("storage", refresh);
+      if (submitTimeoutRef.current) {
+        clearTimeout(submitTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -377,59 +432,72 @@ const Register = () => {
     return Object.keys(nextErrors).length === 0;
   };
 
+  // ============================================================
+  // HANDLE SUBMIT WITH RATE LIMITING FIX
+  // ============================================================
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (!validate() || loading) return;
+    // Prevent double submission
+    if (submitLock.current || loading) {
+      toast.info("Please wait, your request is being processed...");
+      return;
+    }
 
+    if (!validate()) return;
+
+    submitLock.current = true;
     setLoading(true);
+    setRetryCount(0);
 
     try {
-      const response = await fetch(`${API_URL}/auth/register`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetchWithExponentialBackoff(
+        `${API_URL}/auth/register`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            firstName: formData.firstName.trim(),
+            lastName: formData.lastName.trim(),
+            email: formData.email.trim().toLowerCase(),
+            phone: formData.phone.trim(),
+            password: formData.password,
+            newsletter,
+          }),
         },
-        body: JSON.stringify({
-          firstName: formData.firstName.trim(),
-          lastName: formData.lastName.trim(),
-          email: formData.email.trim().toLowerCase(),
-          phone: formData.phone.trim(),
-          password: formData.password,
-          newsletter,
-        }),
-      });
+        3 // Max 3 retries
+      );
 
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        const message =
-          data.message ||
-          data.error ||
-          "Registration failed. Please try again.";
-
+        const message = data.message || data.error || "Registration failed. Please try again.";
         const normalizedMessage = String(message).toLowerCase();
 
+        // Handle rate limiting specifically
+        if (response.status === 429) {
+          toast.error("Too many requests. Please wait a moment and try again.");
+          setRetryCount(prev => prev + 1);
+          return;
+        }
+
+        // Handle duplicate account
         if (
           response.status === 400 &&
-          (
-            normalizedMessage.includes("already exists") ||
+          (normalizedMessage.includes("already exists") ||
             normalizedMessage.includes("already registered") ||
             normalizedMessage.includes("email exists") ||
-            normalizedMessage.includes("user exists")
-          )
+            normalizedMessage.includes("user exists"))
         ) {
-          toast.error(
-            "An account already exists with this email. Please sign in."
-          );
-
+          toast.error("An account already exists with this email. Please sign in.");
           navigate("/login", {
             replace: true,
             state: {
               registeredEmail: formData.email.trim().toLowerCase(),
             },
           });
-
           return;
         }
 
@@ -438,20 +506,15 @@ const Register = () => {
 
       const { user, token } = normalizeAuthResponse(data);
 
-      // Some backends create the customer successfully but intentionally
-      // do not issue a token from the register endpoint.
+      // No token - account created but need to login
       if (!token) {
-        toast.success(
-          "Account created successfully. Please sign in with your new account."
-        );
-
+        toast.success("Account created successfully. Please sign in with your new account.");
         navigate("/login", {
           replace: true,
           state: {
             registeredEmail: formData.email.trim().toLowerCase(),
           },
         });
-
         return;
       }
 
@@ -465,20 +528,49 @@ const Register = () => {
 
       localStorage.removeItem("redirectAfterLogin");
 
-      toast.success(
-        `Welcome${savedUser?.firstName ? `, ${savedUser.firstName}` : ""}!`
-      );
+      toast.success(`Welcome${savedUser?.firstName ? `, ${savedUser.firstName}` : ""}!`);
 
-      // Force providers/profile/header to initialise from the new session.
+      // Clear form
+      setFormData({
+        firstName: "",
+        lastName: "",
+        email: "",
+        phone: "",
+        password: "",
+        confirmPassword: "",
+      });
+      setAcceptedTerms(false);
+      setNewsletter(true);
+
+      // Redirect to home
       window.location.assign("/");
     } catch (error) {
       console.error("Registration error:", error);
-      toast.error(error.message || "Server error. Please try again later.");
+      
+      // Handle different error types
+      if (error.message?.includes('429') || error.message?.includes('Too Many')) {
+        toast.error("The server is busy. Please wait a few minutes and try again.");
+        setRetryCount(prev => prev + 1);
+      } else if (error.message?.includes('Network') || error.message?.includes('fetch')) {
+        toast.error("Network error. Please check your connection and try again.");
+      } else {
+        toast.error(error.message || "Server error. Please try again later.");
+      }
     } finally {
       setLoading(false);
+      // Release lock after a delay to prevent rapid resubmission
+      if (submitTimeoutRef.current) {
+        clearTimeout(submitTimeoutRef.current);
+      }
+      submitTimeoutRef.current = setTimeout(() => {
+        submitLock.current = false;
+      }, 3000);
     }
   };
 
+  // ============================================================
+  // SOCIAL LOGIN
+  // ============================================================
   const socialLogin = (provider) => {
     setSocialLoading(provider);
     localStorage.setItem("redirectAfterLogin", "/");
@@ -915,6 +1007,13 @@ const Register = () => {
                   </>
                 )}
               </motion.button>
+
+              {/* Rate limiting retry indicator */}
+              {retryCount > 0 && (
+                <p className="text-center text-xs text-amber-600">
+                  ⚠️ Retry attempt {retryCount}. The server is busy. Please be patient.
+                </p>
+              )}
             </form>
 
             {(auth.showGoogleLogin || auth.showFacebookLogin) && (
