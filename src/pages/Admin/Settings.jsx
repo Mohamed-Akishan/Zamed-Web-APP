@@ -7,7 +7,8 @@ import {
     FiHeart, FiLayout, FiType, FiMonitor, FiShoppingCart, FiSettings as FiSettingsIcon,
     FiFileText, FiList, FiTruck as FiTruckIcon, FiMapPin, FiPhone,
     FiTwitter, FiFacebook, FiInstagram, FiYoutube, FiLinkedin, FiCheck,
-    FiDollarSign, FiDroplet, FiAlignLeft, FiBold, FiItalic, FiUnderline
+    FiDollarSign, FiDroplet, FiAlignLeft, FiBold, FiItalic, FiUnderline,
+    FiUsers
 } from "react-icons/fi";
 import { toast } from "sonner";
 import ImageCropper from "../../components/Admin/ImageCropper";
@@ -33,7 +34,10 @@ const IMAGE_TYPES = [
     'registerBackground',
     'authSideImage',
     'loginPromoImage',
-    'registerPromoImage'
+    'registerPromoImage',
+    'genderMenBackground',
+    'genderWomenBackground',
+    'genderKidsBackground'
 ];
 
 const IMAGE_ID_FIELDS = IMAGE_TYPES.reduce((acc, type) => {
@@ -94,6 +98,22 @@ const Settings = () => {
         loginPromoImageId: null,
         registerPromoImage: null,
         registerPromoImageId: null,
+        // Gender Collection Backgrounds
+        genderMenBackground: null,
+        genderMenBackgroundId: null,
+        genderWomenBackground: null,
+        genderWomenBackgroundId: null,
+        genderKidsBackground: null,
+        genderKidsBackgroundId: null,
+        genderMenOverlayOpacity: 40,
+        genderWomenOverlayOpacity: 40,
+        genderKidsOverlayOpacity: 40,
+        genderMenTextColor: "#ffffff",
+        genderWomenTextColor: "#ffffff",
+        genderKidsTextColor: "#ffffff",
+        genderMenAccentColor: "#B9853F",
+        genderWomenAccentColor: "#C57887",
+        genderKidsAccentColor: "#93A562",
         slides: [
             { id: 1, title: "Zamed Premium Collection", subtitle: "Discover the latest fashion trends", buttonText: "Shop Now", buttonLink: "/collections/all", image: null, imageId: null, color: "from-blue-600", active: true, order: 1 },
             { id: 2, title: "Men's Premium Collection", subtitle: "Elevate your style with our new arrivals", buttonText: "Explore Men", buttonLink: "/collections/men", image: null, imageId: null, color: "from-gray-800", active: true, order: 2 },
@@ -201,7 +221,10 @@ const Settings = () => {
         registerBackground: null,
         authSideImage: null,
         loginPromoImage: null,
-        registerPromoImage: null
+        registerPromoImage: null,
+        genderMenBackground: null,
+        genderWomenBackground: null,
+        genderKidsBackground: null
     });
     const [slideImages, setSlideImages] = useState({});
     const [cropImage, setCropImage] = useState(null);
@@ -225,6 +248,9 @@ const Settings = () => {
     const authSideImageInputRef = useRef(null);
     const loginPromoImageInputRef = useRef(null);
     const registerPromoImageInputRef = useRef(null);
+    const genderMenInputRef = useRef(null);
+    const genderWomenInputRef = useRef(null);
+    const genderKidsInputRef = useRef(null);
     const slideInputRefs = useRef({});
 
     const fileInputRefs = {
@@ -236,6 +262,9 @@ const Settings = () => {
         authSideImage: authSideImageInputRef,
         loginPromoImage: loginPromoImageInputRef,
         registerPromoImage: registerPromoImageInputRef,
+        genderMenBackground: genderMenInputRef,
+        genderWomenBackground: genderWomenInputRef,
+        genderKidsBackground: genderKidsInputRef,
         slide: slideInputRefs.current
     };
 
@@ -292,6 +321,9 @@ const Settings = () => {
         if (String(type).startsWith('slide_')) {
             return { maxWidth: 7680, quality: 0.97, mimeType: 'image/jpeg' };
         }
+        if (['genderMenBackground', 'genderWomenBackground', 'genderKidsBackground'].includes(type)) {
+            return { maxWidth: 7680, quality: 0.97, mimeType: 'image/jpeg' };
+        }
         return { maxWidth: 4096, quality: 0.95, mimeType: null };
     };
 
@@ -334,7 +366,6 @@ const Settings = () => {
                 throw new Error(result.message || 'Cloudinary image upload failed.');
             }
 
-            // Return Cloudinary URL
             return {
                 type: 'cloudinary',
                 imageUrl: result.imageUrl,
@@ -478,6 +509,22 @@ const Settings = () => {
             loginPromoImageId: current.loginPromoImageId,
             registerPromoImage: current.registerPromoImage,
             registerPromoImageId: current.registerPromoImageId,
+            // Gender Collection Backgrounds
+            genderMenBackground: current.genderMenBackground,
+            genderMenBackgroundId: current.genderMenBackgroundId,
+            genderWomenBackground: current.genderWomenBackground,
+            genderWomenBackgroundId: current.genderWomenBackgroundId,
+            genderKidsBackground: current.genderKidsBackground,
+            genderKidsBackgroundId: current.genderKidsBackgroundId,
+            genderMenOverlayOpacity: current.genderMenOverlayOpacity,
+            genderWomenOverlayOpacity: current.genderWomenOverlayOpacity,
+            genderKidsOverlayOpacity: current.genderKidsOverlayOpacity,
+            genderMenTextColor: current.genderMenTextColor,
+            genderWomenTextColor: current.genderWomenTextColor,
+            genderKidsTextColor: current.genderKidsTextColor,
+            genderMenAccentColor: current.genderMenAccentColor,
+            genderWomenAccentColor: current.genderWomenAccentColor,
+            genderKidsAccentColor: current.genderKidsAccentColor,
             // Slides with Cloudinary URLs
             slides: (current.slides || []).map((slide) => ({
                 ...slide,
@@ -508,6 +555,12 @@ const Settings = () => {
             loginPromoImageId: current.loginPromoImageId,
             registerPromoImage: current.registerPromoImage,
             registerPromoImageId: current.registerPromoImageId,
+            genderMenBackground: current.genderMenBackground,
+            genderMenBackgroundId: current.genderMenBackgroundId,
+            genderWomenBackground: current.genderWomenBackground,
+            genderWomenBackgroundId: current.genderWomenBackgroundId,
+            genderKidsBackground: current.genderKidsBackground,
+            genderKidsBackgroundId: current.genderKidsBackgroundId,
             slides: (current.slides || []).map((slide) => ({
                 id: slide.id,
                 image: slide.image || null,
@@ -600,6 +653,21 @@ const Settings = () => {
                 loginPromoImageId: savedSiteInfo.loginPromoImageId || savedImages.loginPromoImageId || null,
                 registerPromoImage: savedSiteInfo.registerPromoImage || savedImages.registerPromoImage || null,
                 registerPromoImageId: savedSiteInfo.registerPromoImageId || savedImages.registerPromoImageId || null,
+                genderMenBackground: savedSiteInfo.genderMenBackground || savedImages.genderMenBackground || null,
+                genderMenBackgroundId: savedSiteInfo.genderMenBackgroundId || savedImages.genderMenBackgroundId || null,
+                genderWomenBackground: savedSiteInfo.genderWomenBackground || savedImages.genderWomenBackground || null,
+                genderWomenBackgroundId: savedSiteInfo.genderWomenBackgroundId || savedImages.genderWomenBackgroundId || null,
+                genderKidsBackground: savedSiteInfo.genderKidsBackground || savedImages.genderKidsBackground || null,
+                genderKidsBackgroundId: savedSiteInfo.genderKidsBackgroundId || savedImages.genderKidsBackgroundId || null,
+                genderMenOverlayOpacity: savedSiteInfo.genderMenOverlayOpacity || 40,
+                genderWomenOverlayOpacity: savedSiteInfo.genderWomenOverlayOpacity || 40,
+                genderKidsOverlayOpacity: savedSiteInfo.genderKidsOverlayOpacity || 40,
+                genderMenTextColor: savedSiteInfo.genderMenTextColor || "#ffffff",
+                genderWomenTextColor: savedSiteInfo.genderWomenTextColor || "#ffffff",
+                genderKidsTextColor: savedSiteInfo.genderKidsTextColor || "#ffffff",
+                genderMenAccentColor: savedSiteInfo.genderMenAccentColor || "#B9853F",
+                genderWomenAccentColor: savedSiteInfo.genderWomenAccentColor || "#C57887",
+                genderKidsAccentColor: savedSiteInfo.genderKidsAccentColor || "#93A562",
                 slides: savedSiteInfo.slides || savedImages.slides || savedSettings.slides || []
             };
 
@@ -612,7 +680,10 @@ const Settings = () => {
                 registerBackground: mergedSettings.registerBackground || null,
                 authSideImage: mergedSettings.authSideImage || null,
                 loginPromoImage: mergedSettings.loginPromoImage || null,
-                registerPromoImage: mergedSettings.registerPromoImage || null
+                registerPromoImage: mergedSettings.registerPromoImage || null,
+                genderMenBackground: mergedSettings.genderMenBackground || null,
+                genderWomenBackground: mergedSettings.genderWomenBackground || null,
+                genderKidsBackground: mergedSettings.genderKidsBackground || null
             });
 
             // Set slide images
@@ -953,13 +1024,21 @@ const Settings = () => {
     // ============================================================
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
-        const numericFields = new Set(['authOverlayOpacity', 'productsPerRow', 'itemsPerPage', 'animationDuration']);
+        const numericFields = new Set(['authOverlayOpacity', 'productsPerRow', 'itemsPerPage', 'animationDuration', 'genderMenOverlayOpacity', 'genderWomenOverlayOpacity', 'genderKidsOverlayOpacity']);
         const newValue = type === 'checkbox'
             ? checked
             : numericFields.has(name)
                 ? Number(value)
                 : value;
         setSettings(prev => ({ ...prev, [name]: newValue }));
+    };
+
+    // ============================================================
+    // HANDLE COLOR CHANGE
+    // ============================================================
+    const handleColorChange = (e) => {
+        const { name, value } = e.target;
+        setSettings(prev => ({ ...prev, [name]: value }));
     };
 
     // ============================================================
@@ -1033,8 +1112,8 @@ const Settings = () => {
     // ============================================================
     // IMAGE UPLOAD FIELD COMPONENT
     // ============================================================
-    const ImageUploadField = ({ label, type, preview, recommended }) => (
-        <div className="mb-4">
+    const ImageUploadField = ({ label, type, preview, recommended, className = "" }) => (
+        <div className={`mb-4 ${className}`}>
             <label className="block text-sm font-medium mb-2 dark:text-white">{label}</label>
             <div className="flex items-start space-x-4">
                 {preview ? (
@@ -1042,7 +1121,7 @@ const Settings = () => {
                         <img
                             src={preview}
                             alt={label}
-                            className={`${type === 'favicon' ? 'w-16 h-16' : ['loginBackground', 'registerBackground', 'authSideImage', 'loginPromoImage', 'registerPromoImage'].includes(type) ? 'w-52 h-32' : 'w-32 h-32'} object-cover rounded-lg border-2 border-gray-200 bg-gray-50 dark:bg-gray-700`}
+                            className={`${type === 'favicon' ? 'w-16 h-16' : ['loginBackground', 'registerBackground', 'authSideImage', 'loginPromoImage', 'registerPromoImage', 'genderMenBackground', 'genderWomenBackground', 'genderKidsBackground'].includes(type) ? 'w-52 h-32' : 'w-32 h-32'} object-cover rounded-lg border-2 border-gray-200 bg-gray-50 dark:bg-gray-700`}
                             onError={(e) => {
                                 console.warn('Image failed to load, using placeholder');
                                 e.target.src = PLACEHOLDER_IMAGE;
@@ -1068,7 +1147,7 @@ const Settings = () => {
                 ) : (
                     <div
                         onClick={() => fileInputRefs[type]?.current?.click()}
-                        className={`${type === 'favicon' ? 'w-16 h-16' : ['loginBackground', 'registerBackground', 'authSideImage', 'loginPromoImage', 'registerPromoImage'].includes(type) ? 'w-52 h-32' : 'w-32 h-32'} border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all`}
+                        className={`${type === 'favicon' ? 'w-16 h-16' : ['loginBackground', 'registerBackground', 'authSideImage', 'loginPromoImage', 'registerPromoImage', 'genderMenBackground', 'genderWomenBackground', 'genderKidsBackground'].includes(type) ? 'w-52 h-32' : 'w-32 h-32'} border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all`}
                     >
                         <FiUpload className="w-8 h-8 text-gray-400" />
                         <span className="text-xs text-gray-500 mt-1">Upload</span>
@@ -1090,8 +1169,6 @@ const Settings = () => {
         </div>
     );
 
-    // ... continue with tabs and render (same as before, but using the updated handlers) ...
-
     // ============================================================
     // RENDER
     // ============================================================
@@ -1099,6 +1176,7 @@ const Settings = () => {
         { id: "general", label: "General", icon: FiGlobe },
         { id: "hero", label: "Hero Slider", icon: FiImage },
         { id: "authentication", label: "Login & Register", icon: FiUser },
+        { id: "gender_collections", label: "Gender Collections", icon: FiUsers },
         { id: "products", label: "Products", icon: FiPackage },
         { id: "design", label: "Design", icon: FiLayout },
         { id: "typography", label: "Typography", icon: FiType },
@@ -1431,11 +1509,179 @@ const Settings = () => {
                 </div>
             )}
 
-            {/* ============================================================
-                REST OF THE TABS (Authentication, Products, Design, Typography, SEO)
-                - Keep the same as your current file
-                - Just update the ImageUploadField usage and handlers
-            ============================================================ */}
+            {/* Gender Collections Settings */}
+            {activeTab === "gender_collections" && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+                    <h2 className="text-xl font-semibold mb-4 border-b pb-2 dark:border-gray-700 flex items-center">
+                        <FiUsers className="mr-2 text-blue-600" /> Gender Collection Backgrounds
+                    </h2>
+                    <p className="text-sm text-gray-500 mb-6 dark:text-gray-400">
+                        Upload 3D-style background images for each gender collection card. These will be displayed with parallax effects.
+                    </p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* Men Collection */}
+                        <div className="border rounded-lg p-4 dark:border-gray-700">
+                            <h3 className="font-semibold text-lg mb-3 dark:text-white flex items-center gap-2">
+                                <span className="text-[#B9853F]">●</span> Men's Collection
+                            </h3>
+                            <ImageUploadField 
+                                label="Background Image" 
+                                type="genderMenBackground" 
+                                preview={imagePreviews.genderMenBackground} 
+                                recommended="1920×1080 or higher, dramatic fashion photography"
+                                className="mb-3"
+                            />
+                            <div className="space-y-2">
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Overlay Opacity</label>
+                                    <input
+                                        type="range"
+                                        name="genderMenOverlayOpacity"
+                                        min="0"
+                                        max="80"
+                                        value={settings.genderMenOverlayOpacity}
+                                        onChange={handleChange}
+                                        className="w-full"
+                                    />
+                                    <span className="text-xs text-gray-500">{settings.genderMenOverlayOpacity}%</span>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Text Color</label>
+                                    <input
+                                        type="color"
+                                        name="genderMenTextColor"
+                                        value={settings.genderMenTextColor}
+                                        onChange={handleColorChange}
+                                        className="w-full h-10 rounded-lg cursor-pointer"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Accent Color</label>
+                                    <input
+                                        type="color"
+                                        name="genderMenAccentColor"
+                                        value={settings.genderMenAccentColor}
+                                        onChange={handleColorChange}
+                                        className="w-full h-10 rounded-lg cursor-pointer"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Women Collection */}
+                        <div className="border rounded-lg p-4 dark:border-gray-700">
+                            <h3 className="font-semibold text-lg mb-3 dark:text-white flex items-center gap-2">
+                                <span className="text-[#C57887]">●</span> Women's Collection
+                            </h3>
+                            <ImageUploadField 
+                                label="Background Image" 
+                                type="genderWomenBackground" 
+                                preview={imagePreviews.genderWomenBackground} 
+                                recommended="1920×1080 or higher, elegant fashion photography"
+                                className="mb-3"
+                            />
+                            <div className="space-y-2">
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Overlay Opacity</label>
+                                    <input
+                                        type="range"
+                                        name="genderWomenOverlayOpacity"
+                                        min="0"
+                                        max="80"
+                                        value={settings.genderWomenOverlayOpacity}
+                                        onChange={handleChange}
+                                        className="w-full"
+                                    />
+                                    <span className="text-xs text-gray-500">{settings.genderWomenOverlayOpacity}%</span>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Text Color</label>
+                                    <input
+                                        type="color"
+                                        name="genderWomenTextColor"
+                                        value={settings.genderWomenTextColor}
+                                        onChange={handleColorChange}
+                                        className="w-full h-10 rounded-lg cursor-pointer"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Accent Color</label>
+                                    <input
+                                        type="color"
+                                        name="genderWomenAccentColor"
+                                        value={settings.genderWomenAccentColor}
+                                        onChange={handleColorChange}
+                                        className="w-full h-10 rounded-lg cursor-pointer"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Kids Collection */}
+                        <div className="border rounded-lg p-4 dark:border-gray-700">
+                            <h3 className="font-semibold text-lg mb-3 dark:text-white flex items-center gap-2">
+                                <span className="text-[#93A562]">●</span> Kids' Collection
+                            </h3>
+                            <ImageUploadField 
+                                label="Background Image" 
+                                type="genderKidsBackground" 
+                                preview={imagePreviews.genderKidsBackground} 
+                                recommended="1920×1080 or higher, playful family photography"
+                                className="mb-3"
+                            />
+                            <div className="space-y-2">
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Overlay Opacity</label>
+                                    <input
+                                        type="range"
+                                        name="genderKidsOverlayOpacity"
+                                        min="0"
+                                        max="80"
+                                        value={settings.genderKidsOverlayOpacity}
+                                        onChange={handleChange}
+                                        className="w-full"
+                                    />
+                                    <span className="text-xs text-gray-500">{settings.genderKidsOverlayOpacity}%</span>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Text Color</label>
+                                    <input
+                                        type="color"
+                                        name="genderKidsTextColor"
+                                        value={settings.genderKidsTextColor}
+                                        onChange={handleColorChange}
+                                        className="w-full h-10 rounded-lg cursor-pointer"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1 dark:text-white">Accent Color</label>
+                                    <input
+                                        type="color"
+                                        name="genderKidsAccentColor"
+                                        value={settings.genderKidsAccentColor}
+                                        onChange={handleColorChange}
+                                        className="w-full h-10 rounded-lg cursor-pointer"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                        <h4 className="font-semibold text-sm text-blue-700 dark:text-blue-300 flex items-center gap-2">
+                            <FiInfo size={16} /> How it works
+                        </h4>
+                        <ul className="text-xs text-blue-600 dark:text-blue-400 mt-2 space-y-1">
+                            <li>• Upload high-quality images for each gender collection card</li>
+                            <li>• The images will appear as 3D-style backgrounds with parallax effects</li>
+                            <li>• Adjust overlay opacity to control text readability</li>
+                            <li>• Customize text and accent colors to match your brand</li>
+                            <li>• Save settings and refresh the homepage to see changes</li>
+                        </ul>
+                    </div>
+                </div>
+            )}
 
             {/* Products Settings */}
             {activeTab === "products" && (
@@ -1607,7 +1853,7 @@ const Settings = () => {
                 </div>
             )}
 
-            {/* Authentication Tab - Keep your existing authentication tab code */}
+            {/* Authentication Tab */}
             {activeTab === "authentication" && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
                     <h2 className="text-xl font-semibold mb-4 border-b pb-2 dark:border-gray-700 flex items-center">
@@ -1703,7 +1949,10 @@ const Settings = () => {
                         cropType === 'logo' ||
                         cropType === 'footerLogo'
                             ? 1
-                            : cropType === 'slide'
+                            : cropType === 'slide' || 
+                              cropType === 'genderMenBackground' || 
+                              cropType === 'genderWomenBackground' || 
+                              cropType === 'genderKidsBackground'
                                 ? 16 / 9
                                 : null
                     }

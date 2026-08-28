@@ -40,6 +40,19 @@ const NewArrivals = () => {
     });
 
     // ============================================================
+    // Drag scroll state
+    // ============================================================
+    const [isDragging, setIsDragging] = useState(false);
+    const [startX, setStartX] = useState(0);
+    const [scrollLeft, setScrollLeft] = useState(0);
+    const [dragVelocity, setDragVelocity] = useState(0);
+    const [isAutoPlaying, setIsAutoPlaying] = useState(true);
+    const velocityRef = useRef(0);
+    const lastMoveTimeRef = useRef(0);
+    const lastMoveXRef = useRef(0);
+    const animationFrameRef = useRef(null);
+
+    // ============================================================
     // Use centralized favorites hook
     // ============================================================
     const { 
@@ -54,6 +67,7 @@ const NewArrivals = () => {
     const scrollContainerRef = useRef(null);
     const sectionRef = useRef(null);
     const { addToCart } = useCart();
+    const isScrollingRef = useRef(false);
 
     const loadSettings = useCallback(() => {
         try {
@@ -123,7 +137,7 @@ const NewArrivals = () => {
     }, []);
 
     // ============================================================
-    // FIX: Load new arrivals from MongoDB first, fallback to others
+    // Load new arrivals from MongoDB first, fallback to others
     // ============================================================
     const loadNewArrivals = useCallback(async () => {
         setLoading(true);
@@ -280,6 +294,185 @@ const NewArrivals = () => {
     }, [loadNewArrivals, loadSettings]);
 
     // ============================================================
+    // DRAG SCROLL - Mouse & Touch Support
+    // ============================================================
+    const getScrollContainer = () => scrollContainerRef.current;
+
+    const handleDragStart = (e) => {
+        const container = getScrollContainer();
+        if (!container) return;
+
+        // Stop auto-play while dragging
+        setIsAutoPlaying(false);
+        
+        // Cancel any ongoing velocity animation
+        if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
+        }
+
+        setIsDragging(true);
+        const clientX = e.type === 'mousedown' ? e.clientX : e.touches[0].clientX;
+        setStartX(clientX);
+        setScrollLeft(container.scrollLeft);
+        setDragVelocity(0);
+        velocityRef.current = 0;
+        lastMoveTimeRef.current = Date.now();
+        lastMoveXRef.current = clientX;
+
+        // Prevent text selection and default behaviors
+        container.style.userSelect = 'none';
+        container.style.pointerEvents = 'none';
+        
+        // Prevent page scroll on touch devices
+        if (e.type === 'touchstart') {
+            e.preventDefault();
+        }
+    };
+
+    const handleDragMove = (e) => {
+        if (!isDragging) return;
+
+        const container = getScrollContainer();
+        if (!container) return;
+
+        const clientX = e.type === 'mousemove' ? e.clientX : e.touches[0].clientX;
+        const deltaX = clientX - startX;
+        const newScrollLeft = scrollLeft - deltaX;
+        
+        // Calculate velocity for momentum
+        const now = Date.now();
+        const timeDelta = now - lastMoveTimeRef.current;
+        if (timeDelta > 0) {
+            const moveDelta = clientX - lastMoveXRef.current;
+            velocityRef.current = moveDelta / timeDelta;
+            setDragVelocity(velocityRef.current);
+        }
+        lastMoveTimeRef.current = now;
+        lastMoveXRef.current = clientX;
+
+        container.scrollLeft = newScrollLeft;
+
+        // Prevent page scroll on touch devices
+        if (e.type === 'touchmove') {
+            e.preventDefault();
+        }
+    };
+
+    const handleDragEnd = (e) => {
+        if (!isDragging) return;
+
+        const container = getScrollContainer();
+        if (!container) {
+            setIsDragging(false);
+            return;
+        }
+
+        setIsDragging(false);
+        container.style.userSelect = '';
+        container.style.pointerEvents = '';
+
+        // Apply momentum if velocity is significant
+        const velocity = velocityRef.current;
+        if (Math.abs(velocity) > 0.2) {
+            applyMomentum(velocity);
+        } else {
+            // Resume auto-play after a short delay
+            setTimeout(() => {
+                if (newArrivals.length > 3 && isVisible) {
+                    setIsAutoPlaying(true);
+                }
+            }, 3000);
+        }
+    };
+
+    const applyMomentum = (velocity) => {
+        const container = getScrollContainer();
+        if (!container) return;
+
+        const momentum = velocity * 25; // Increased for more momentum
+        const startScroll = container.scrollLeft;
+        const maxScroll = container.scrollWidth - container.clientWidth;
+        const target = Math.max(0, Math.min(maxScroll, startScroll + momentum));
+        const duration = Math.max(300, Math.min(800, Math.abs(momentum) * 0.8));
+        const startTime = performance.now();
+
+        // Cancel any existing animation
+        if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+        }
+
+        const animateMomentum = (currentTime) => {
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(1, elapsed / duration);
+            
+            // Ease out cubic
+            const easeOut = 1 - Math.pow(1 - progress, 3);
+            const currentScroll = startScroll + (target - startScroll) * easeOut;
+            container.scrollLeft = currentScroll;
+
+            if (progress < 1) {
+                animationFrameRef.current = requestAnimationFrame(animateMomentum);
+            } else {
+                container.scrollLeft = target;
+                animationFrameRef.current = null;
+                
+                // Resume auto-play after momentum ends
+                setTimeout(() => {
+                    if (newArrivals.length > 3 && isVisible && !isDragging) {
+                        setIsAutoPlaying(true);
+                    }
+                }, 2000);
+            }
+        };
+
+        animationFrameRef.current = requestAnimationFrame(animateMomentum);
+    };
+
+    // Mouse event handlers
+    const onMouseDown = (e) => {
+        // Only handle left click
+        if (e.button !== 0) return;
+        handleDragStart(e);
+    };
+
+    const onMouseMove = (e) => {
+        handleDragMove(e);
+    };
+
+    const onMouseUp = (e) => {
+        handleDragEnd(e);
+    };
+
+    const onMouseLeave = (e) => {
+        if (isDragging) {
+            handleDragEnd(e);
+        }
+    };
+
+    // Touch event handlers
+    const onTouchStart = (e) => {
+        handleDragStart(e);
+    };
+
+    const onTouchMove = (e) => {
+        handleDragMove(e);
+    };
+
+    const onTouchEnd = (e) => {
+        handleDragEnd(e);
+    };
+
+    // Clean up animation frame
+    useEffect(() => {
+        return () => {
+            if (animationFrameRef.current) {
+                cancelAnimationFrame(animationFrameRef.current);
+            }
+        };
+    }, []);
+
+    // ============================================================
     // Hover cycling through color images
     // ============================================================
     const startHoverCycle = (productId) => {
@@ -357,23 +550,85 @@ const NewArrivals = () => {
         }
     };
 
+    // ============================================================
+    // SMOOTH & FAST SCROLLING - FIXED
+    // ============================================================
     const scrollToLeft = () => {
-        if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollBy({ 
-                left: -360, 
-                behavior: "smooth" 
+        if (scrollContainerRef.current && !isScrollingRef.current) {
+            isScrollingRef.current = true;
+            const container = scrollContainerRef.current;
+            const cardWidth = container.querySelector('.min-w-\\[260px\\]')?.offsetWidth || 280;
+            const gap = 20; // gap-5 = 20px
+            
+            container.scrollBy({
+                left: -(cardWidth + gap),
+                behavior: 'smooth'
             });
+            
+            // Resume auto-play after manual scroll
+            setIsAutoPlaying(false);
+            setTimeout(() => {
+                isScrollingRef.current = false;
+                if (newArrivals.length > 3 && isVisible) {
+                    setIsAutoPlaying(true);
+                }
+            }, 400);
         }
     };
 
     const scrollToRight = () => {
-        if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollBy({ 
-                left: 360, 
-                behavior: "smooth" 
+        if (scrollContainerRef.current && !isScrollingRef.current) {
+            isScrollingRef.current = true;
+            const container = scrollContainerRef.current;
+            const cardWidth = container.querySelector('.min-w-\\[260px\\]')?.offsetWidth || 280;
+            const gap = 20; // gap-5 = 20px
+            
+            container.scrollBy({
+                left: cardWidth + gap,
+                behavior: 'smooth'
             });
+            
+            // Resume auto-play after manual scroll
+            setIsAutoPlaying(false);
+            setTimeout(() => {
+                isScrollingRef.current = false;
+                if (newArrivals.length > 3 && isVisible) {
+                    setIsAutoPlaying(true);
+                }
+            }, 400);
         }
     };
+
+    // Keyboard navigation
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'ArrowLeft') scrollToLeft();
+            if (e.key === 'ArrowRight') scrollToRight();
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
+    // Auto-play scroll - only when not dragging and auto-play is enabled
+    useEffect(() => {
+        if (newArrivals.length <= 3 || !isVisible || !isAutoPlaying || isDragging) return;
+        
+        const interval = setInterval(() => {
+            if (!isScrollingRef.current && !isDragging) {
+                const container = scrollContainerRef.current;
+                if (container) {
+                    const maxScroll = container.scrollWidth - container.clientWidth;
+                    if (container.scrollLeft >= maxScroll - 10) {
+                        container.scrollTo({ left: 0, behavior: 'smooth' });
+                    } else {
+                        scrollToRight();
+                    }
+                }
+            }
+        }, 5000);
+        
+        return () => clearInterval(interval);
+    }, [newArrivals.length, isVisible, isAutoPlaying, isDragging]);
 
     const handleColorClick = (productId, color, e) => {
         e.stopPropagation();
@@ -495,6 +750,9 @@ const NewArrivals = () => {
             <style>{`
                 .hide-scrollbar::-webkit-scrollbar { display: none; }
                 .hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+                .snap-scroll { scroll-snap-type: x mandatory; }
+                .dragging * { cursor: grabbing !important; }
+                .dragging .product-card { pointer-events: none; }
             `}</style>
             <div className="mx-auto max-w-[1500px] px-5 sm:px-8 lg:px-12">
                 <div className="relative mb-12 text-center md:mb-16">
@@ -509,32 +767,42 @@ const NewArrivals = () => {
 
                 {/* Products Grid */}
                 <div className="relative">
-                    {newArrivals.length > 3 && (
-                        <>
-                            <button 
-                                onClick={scrollToLeft} 
-                                aria-label="Previous new arrivals"
-                                className="absolute -left-5 top-[42%] z-20 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-[#c39a58] bg-white text-[#a9792e] shadow-lg transition hover:scale-110 lg:flex"
-                            >
-                                <ChevronLeft size={20} className="text-gray-700" />
-                            </button>
-                            <button 
-                                onClick={scrollToRight} 
-                                aria-label="Next new arrivals"
-                                className="absolute -right-5 top-[42%] z-20 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-[#c39a58] bg-white text-[#a9792e] shadow-lg transition hover:scale-110 lg:flex"
-                            >
-                                <ChevronRight size={20} className="text-gray-700" />
-                            </button>
-                        </>
-                    )}
+                    {/* Left Arrow - hidden on mobile */}
+                    <button 
+                        onClick={scrollToLeft} 
+                        aria-label="Previous new arrivals"
+                        className="absolute -left-3 top-[42%] z-20 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-[#c39a58] bg-white text-[#a9792e] shadow-lg transition hover:scale-110 hover:shadow-xl md:flex"
+                    >
+                        <ChevronLeft size={18} className="text-gray-700" />
+                    </button>
+                    
+                    {/* Right Arrow - hidden on mobile */}
+                    <button 
+                        onClick={scrollToRight} 
+                        aria-label="Next new arrivals"
+                        className="absolute -right-3 top-[42%] z-20 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-[#c39a58] bg-white text-[#a9792e] shadow-lg transition hover:scale-110 hover:shadow-xl md:flex"
+                    >
+                        <ChevronRight size={18} className="text-gray-700" />
+                    </button>
 
                     <motion.div 
                         ref={scrollContainerRef} 
-                        className="flex gap-6 lg:gap-7 overflow-x-auto scroll-smooth snap-x snap-mandatory pb-4 hide-scrollbar"
+                        className={`flex gap-4 sm:gap-5 lg:gap-6 overflow-x-auto scroll-smooth snap-x snap-mandatory pb-4 hide-scrollbar ${isDragging ? 'dragging' : ''}`}
                         variants={containerVariants}
                         initial="hidden"
                         animate={isVisible ? "visible" : "hidden"}
                         key={`newarrivals-${version}`}
+                        // Mouse events for drag
+                        onMouseDown={onMouseDown}
+                        onMouseMove={onMouseMove}
+                        onMouseUp={onMouseUp}
+                        onMouseLeave={onMouseLeave}
+                        // Touch events for mobile
+                        onTouchStart={onTouchStart}
+                        onTouchMove={onTouchMove}
+                        onTouchEnd={onTouchEnd}
+                        // Cursor style
+                        style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
                     >
                         {newArrivals.map((product) => {
                             const currentImage = currentImages[product.id] || product.image || fallbackProductImage;
@@ -552,19 +820,20 @@ const NewArrivals = () => {
                                     whileHover="hover"
                                     onHoverStart={() => handleMouseEnter(product.id)}
                                     onHoverEnd={() => handleMouseLeave(product.id)}
-                                    className="min-w-[280px] snap-start group cursor-pointer overflow-hidden rounded-2xl border border-[#eeeae4] bg-white shadow-[0_8px_28px_rgba(35,29,21,0.08)]"
+                                    className="product-card min-w-[230px] sm:min-w-[260px] lg:min-w-[300px] snap-start group cursor-pointer overflow-hidden rounded-2xl border border-[#eeeae4] bg-white shadow-[0_8px_28px_rgba(35,29,21,0.08)] transition-shadow hover:shadow-xl"
                                     onClick={() => handleProductClick(product.id)}
                                 >
                                     {/* Product Image */}
-                                    <div className="relative aspect-[3/4] overflow-hidden bg-white snap-start min-w-[280px] sm:min-w-[300px] lg:min-w-[340px]">
+                                    <div className="relative aspect-[3/4] overflow-hidden bg-[#faf8f5]">
                                         <img 
                                             src={currentImage} 
                                             alt={product.name} 
-                                            className="h-full w-full object-contain transition-transform duration-700 group-hover:scale-[1.035]"
+                                            className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.035]"
                                             onError={(e) => {
                                                 e.currentTarget.onerror = null;
                                                 e.currentTarget.src = fallbackProductImage;
                                             }}
+                                            draggable={false}
                                         />
                                         
                                         {/* Wishlist Heart Button */}
@@ -572,44 +841,44 @@ const NewArrivals = () => {
                                             type="button"
                                             aria-label={isFavorite ? `Remove ${product.name} from wishlist` : `Add ${product.name} to wishlist`}
                                             onClick={(e) => handleToggleFavorite(product, e)}
-                                            className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white/95 shadow-md backdrop-blur transition hover:scale-110"
+                                            className="absolute right-3 top-3 z-10 flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full bg-white/95 shadow-md backdrop-blur transition hover:scale-110"
                                         >
                                             <Heart 
-                                                size={21}
+                                                size={17}
                                                 strokeWidth={1.8}
                                                 className={isFavorite ? "fill-current text-red-500" : "text-[#292929]"}
                                             />
                                         </button>
 
-                                        {/* Quick Add Button - appears on hover */}
+                                        {/* Quick Add Button - appears on hover (desktop only) */}
                                         <button
                                             type="button"
                                             onClick={(e) => handleAddToCart(product, e)}
-                                            className="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full border border-[#b98a43] bg-white px-6 py-2.5 text-xs font-semibold tracking-wide text-[#25221e] shadow-lg transition-all duration-300 md:translate-y-3 md:opacity-0 md:group-hover:translate-y-0 md:group-hover:opacity-100"
+                                            className="absolute bottom-3 sm:bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full border border-[#b98a43] bg-white px-4 sm:px-5 py-1.5 sm:py-2 text-xs font-semibold tracking-wide text-[#25221e] shadow-lg transition-all duration-300 md:translate-y-3 md:opacity-0 md:group-hover:translate-y-0 md:group-hover:opacity-100"
                                         >
-                                            <ShoppingBag size={15} strokeWidth={1.7} />
+                                            <ShoppingBag size={13} strokeWidth={1.7} />
                                             Quick Add
                                         </button>
                                     </div>
                                     
                                     {/* Product Info */}
-                                    <div className="p-5">
+                                    <div className="p-3 sm:p-4 lg:p-5">
                                         {settings.showProductBrand && product.brand && (
-                                            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a9792e]">
+                                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#a9792e]">
                                                 {product.brand}
                                             </p>
                                         )}
-                                        <h3 className="truncate font-serif text-lg font-medium text-[#24211e]">
+                                        <h3 className="truncate font-serif text-sm sm:text-base lg:text-lg font-medium text-[#24211e]">
                                             {product.name}
                                         </h3>
                                         
                                         {settings.showProductRatings && (
-                                            <div className="mt-2 flex items-center gap-2">
+                                            <div className="mt-1.5 flex items-center gap-2">
                                                 <div className="flex items-center gap-0.5">
                                                     {[1, 2, 3, 4, 5].map((star) => (
                                                         <Star 
                                                             key={star} 
-                                                            size={12} 
+                                                            size={11} 
                                                             className={`${
                                                                 star <= Math.round(productRating)
                                                                     ? 'fill-current text-[#b1843d]'
@@ -626,30 +895,30 @@ const NewArrivals = () => {
                                             </div>
                                         )}
                                         
-                                        <div className="mt-3 flex items-center justify-between gap-3">
-                                            <span className="text-lg font-semibold text-[#1f1d1a]">
+                                        <div className="mt-2 flex items-center justify-between gap-3">
+                                            <span className="text-base sm:text-lg font-semibold text-[#1f1d1a]">
                                                 {currencySymbol}{Number(product.price || 0).toFixed(2)}
                                             </span>
                                             {settings.showSaleBadge && product.originalPrice && (
-                                                <span className="text-xs text-[#a09c96] line-through">
+                                                <span className="text-[10px] text-[#a09c96] line-through">
                                                     {currencySymbol}{Number(product.originalPrice || 0).toFixed(2)}
                                                 </span>
                                             )}
                                         </div>
                                         {settings.showProductColors && product.colors?.length > 0 && (
-                                            <div className="mt-4 flex items-center gap-2">
+                                            <div className="mt-3 flex items-center gap-1.5 flex-wrap">
                                                 {product.colors.slice(0, 4).map((color) => (
                                                     <button
                                                         type="button"
                                                         key={color}
                                                         aria-label={`Choose ${color}`}
                                                         onClick={(e) => handleColorClick(product.id, color, e)}
-                                                        className={`h-7 w-7 rounded-full border-2 p-0.5 transition hover:scale-110 ${currentColorName === color ? 'border-[#b1843d]' : 'border-[#ddd8d0]'}`}
+                                                        className={`h-5 w-5 sm:h-6 sm:w-6 rounded-full border-2 p-0.5 transition hover:scale-110 ${currentColorName === color ? 'border-[#b1843d]' : 'border-[#ddd8d0]'}`}
                                                     >
                                                         <span className="block h-full w-full rounded-full border border-black/5" style={{ backgroundColor: color.toLowerCase() }} />
                                                     </button>
                                                 ))}
-                                                {product.colors.length > 4 && <span className="text-xs text-[#817c75]">+{product.colors.length - 4}</span>}
+                                                {product.colors.length > 4 && <span className="text-[10px] text-[#817c75]">+{product.colors.length - 4}</span>}
                                             </div>
                                         )}
                                     </div>
@@ -666,10 +935,10 @@ const NewArrivals = () => {
                             navigate('/collections/all');
                             setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 100);
                         }}
-                        className="inline-flex items-center gap-3 rounded-full border border-[#b98a43] bg-white px-8 py-3 text-sm font-medium text-[#76531f] shadow-sm transition hover:bg-[#b98a43] hover:text-white"
+                        className="inline-flex items-center gap-3 rounded-full border border-[#b98a43] bg-white px-6 sm:px-8 py-2.5 sm:py-3 text-xs sm:text-sm font-medium text-[#76531f] shadow-sm transition hover:bg-[#b98a43] hover:text-white"
                     >
                         View All New Arrivals
-                        <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                        <ArrowRight size={15} className="group-hover:translate-x-1 transition-transform" />
                     </button>
                 </div>
             </div>
