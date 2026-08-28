@@ -1982,6 +1982,12 @@ const CollectionPage = () => {
     const handleToggleFavorite = (product, e) => {
         e.preventDefault();
         e.stopPropagation();
+        
+        if (!product || !product.id) {
+            toast.error('Product ID is missing');
+            return;
+        }
+        
         const result = toggleFavorite(product);
         if (!result.success) {
             toast.error(result.message);
@@ -2022,15 +2028,23 @@ const CollectionPage = () => {
     const fallbackProductImage = getWorkingImage(0);
 
     // ============================================================
-    // ProductCard Component - FULL IMAGE COVER (NO WHITE BORDERS)
+    // ProductCard Component - FULL IMAGE COVER
     // ============================================================
     const ProductCard = memo(({ product }) => {
         const _ = version;
-        const isFavorite = isFavorited(product.id);
+        
+        // ✅ FIX: Ensure we have a valid ID
+        const productId = product.id || product._id || String(product._id || '');
+        
+        if (!productId) {
+            console.warn('Product missing ID:', product);
+            return null;
+        }
 
+        const isFavorite = isFavorited(productId);
         const sale = product.originalPrice && Number(product.originalPrice) > Number(product.price);
 
-        const colorData = currentColorImages[product.id] || {};
+        const colorData = currentColorImages[productId] || {};
         const image = colorData.current || product.image || fallbackProductImage;
         
         const rating = Number(product.rating) || 0;
@@ -2038,22 +2052,33 @@ const CollectionPage = () => {
             ? product.reviews.length 
             : Number(product.reviews || 0);
 
+        const handleProductClick = () => {
+            if (!productId) {
+                toast.error('Product ID is missing');
+                return;
+            }
+            navigate(`/product/${productId}`);
+            setTimeout(() => {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }, 100);
+        };
+
         return (
             <div
-                onMouseEnter={() => handleMouseEnter(product.id)}
-                onMouseLeave={() => handleMouseLeave(product.id)}
+                onMouseEnter={() => handleMouseEnter(productId)}
+                onMouseLeave={() => handleMouseLeave(productId)}
                 className="group flex h-full flex-col overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
             >
-                <div className="relative aspect-square overflow-hidden bg-gray-100">
+                <div className="relative aspect-[3/4] overflow-hidden bg-white">
                     <button
                         type="button"
-                        onClick={() => navigate(`/product/${product.id}`)}
+                        onClick={handleProductClick}
                         className="h-full w-full"
                     >
                         <img
                             src={image}
                             alt={product.name}
-                            className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.05]"
+                            className="h-full w-full object-contain transition duration-500 group-hover:scale-[1.03]"
                             loading="lazy"
                             decoding="async"
                             onError={(event) => {
@@ -2106,7 +2131,7 @@ const CollectionPage = () => {
 
                     <button
                         type="button"
-                        onClick={() => navigate(`/product/${product.id}`)}
+                        onClick={handleProductClick}
                         className="text-left"
                     >
                         <h3 className="line-clamp-1 text-sm font-semibold text-gray-900 transition hover:text-black">
@@ -2128,7 +2153,7 @@ const CollectionPage = () => {
                             {reviewCount > 0 && (
                                 <button
                                     type="button"
-                                    onClick={() => navigate(`/product/${product.id}#reviews`)}
+                                    onClick={() => navigate(`/product/${productId}#reviews`)}
                                     className="flex items-center gap-0.5 text-[10px] text-gray-500"
                                 >
                                     <MessageCircle size={10} />
@@ -2178,7 +2203,7 @@ const CollectionPage = () => {
                         ) : (
                             <button
                                 type="button"
-                                onClick={() => navigate(`/product/${product.id}`)}
+                                onClick={handleProductClick}
                                 className="w-full rounded-lg bg-black py-2 text-xs font-bold text-white"
                             >
                                 View Product
