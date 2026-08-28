@@ -4,7 +4,6 @@ import {
     useMemo,
     useState,
     useRef,
-    useDeferredValue,
     memo
 } from "react";
 import {
@@ -1492,8 +1491,7 @@ const ActiveFilterChips = ({
             ))}
 
             {filters.inStockOnly && (
-                <Chip
-                    onRemove={() =>
+                <Chip                    onRemove={() =>
                         removeFilter("inStockOnly")
                     }
                     className="bg-green-100 text-green-800"
@@ -1547,7 +1545,7 @@ const ActiveFilterChips = ({
 };
 
 // ============================================================
-// MAIN CollectionPage Component - OPTIMIZED
+// MAIN CollectionPage Component
 // ============================================================
 const CollectionPage = () => {
     const { collection } = useParams();
@@ -1725,7 +1723,7 @@ const CollectionPage = () => {
     );
 
     // ============================================================
-    // loadProducts - OPTIMIZED with caching
+    // loadProducts with deduplication
     // ============================================================
     const loadProducts = useCallback(async () => {
         setLoading(true);
@@ -2023,7 +2021,7 @@ const CollectionPage = () => {
     const fallbackProductImage = getWorkingImage(0);
 
     // ============================================================
-    // ProductCard Component - MEMOIZED to prevent blinking
+    // ProductCard Component - FULL IMAGE, NO WHITE BORDERS
     // ============================================================
     const ProductCard = memo(({ product }) => {
         const _ = version;
@@ -2045,7 +2043,7 @@ const CollectionPage = () => {
                 onMouseLeave={() => handleMouseLeave(product.id)}
                 className="group flex h-full flex-col overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
             >
-                <div className="relative aspect-square overflow-hidden bg-white">
+                <div className="relative aspect-square overflow-hidden bg-gray-100">
                     <button
                         type="button"
                         onClick={() => navigate(`/product/${product.id}`)}
@@ -2054,7 +2052,7 @@ const CollectionPage = () => {
                         <img
                             src={image}
                             alt={product.name}
-                            className="h-full w-full object-contain p-2 transition duration-500 group-hover:scale-[1.03]"
+                            className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.05]"
                             loading="lazy"
                             decoding="async"
                             onError={(event) => {
@@ -2065,7 +2063,7 @@ const CollectionPage = () => {
                     </button>
 
                     {settings.showSaleBadge && sale && (
-                        <span className="absolute left-2 top-2 rounded-full bg-red-600 px-2 py-0.5 text-[9px] font-black text-white">
+                        <span className="absolute left-2 top-2 rounded-full bg-red-600 px-2 py-0.5 text-[9px] font-black text-white z-10">
                             SALE
                         </span>
                     )}
@@ -2073,7 +2071,7 @@ const CollectionPage = () => {
                     <button
                         type="button"
                         onClick={(e) => handleToggleFavorite(product, e)}
-                        className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-md"
+                        className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-md z-10"
                     >
                         <Heart
                             size={15}
@@ -2082,7 +2080,7 @@ const CollectionPage = () => {
                     </button>
 
                     {product.colors?.length > 0 && (
-                        <div className="absolute bottom-2 left-1/2 flex -translate-x-1/2 gap-1 rounded-full bg-white/90 px-2 py-1 shadow-sm backdrop-blur-sm">
+                        <div className="absolute bottom-2 left-1/2 flex -translate-x-1/2 gap-1 rounded-full bg-white/90 px-2 py-1 shadow-sm backdrop-blur-sm z-10">
                             {product.colors.slice(0, 5).map((color, idx) => (
                                 <span
                                     key={idx}
