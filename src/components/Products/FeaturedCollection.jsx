@@ -63,14 +63,18 @@ const FeaturedCollection = () => {
         });
     }, []);
 
+    // ============================================================
+    // FIX: Load featured products - PRIORITIZE MONGODB
+    // ============================================================
     const loadFeaturedProducts = useCallback(async () => {
         setLoading(true);
         try {
             let products = [];
             let apiSucceeded = false;
 
-            // Try MongoDB first
+            // ✅ PRIMARY: Fetch from MongoDB (Cloudinary images)
             try {
+                console.log('🔄 Fetching featured products from MongoDB...');
                 const response = await fetch(`${API_URL}/products`, {
                     headers: { Accept: "application/json" }
                 });
@@ -83,44 +87,28 @@ const FeaturedCollection = () => {
                         products = raw;
                         apiSucceeded = true;
                         console.log('✅ Featured products loaded from MongoDB:', products.length);
+                    } else {
+                        console.warn('⚠️ MongoDB returned empty product list');
                     }
+                } else {
+                    console.warn('⚠️ MongoDB response not OK:', response.status);
                 }
             } catch (apiError) {
-                console.warn("MongoDB fetch failed:", apiError);
+                console.warn("❌ MongoDB fetch failed:", apiError.message);
             }
 
-            // Fallback to productService
+            // ❌ REMOVED: Fallback to localStorage - this was causing wrong data!
+            // We only use MongoDB as the source of truth for images.
+            // If MongoDB fails, we show empty state instead of stale data.
+
             if (!apiSucceeded || products.length === 0) {
-                try {
-                    const serviceProducts = productService.getAllProducts() || [];
-                    if (Array.isArray(serviceProducts) && serviceProducts.length > 0) {
-                        products = serviceProducts;
-                        console.log('✅ Featured products loaded from productService:', products.length);
-                    }
-                } catch (serviceError) {
-                    console.warn("Product service fallback failed:", serviceError);
-                }
+                console.warn('⚠️ No products from MongoDB. Check your backend connection.');
+                setFeaturedProducts([]);
+                setLoading(false);
+                return;
             }
 
-            // Fallback to localStorage
-            if (!apiSucceeded && products.length === 0) {
-                const possibleKeys = ['shop_products', 'products', 'admin_products', 'product_data'];
-                for (const key of possibleKeys) {
-                    try {
-                        const stored = localStorage.getItem(key);
-                        if (stored) {
-                            const parsed = JSON.parse(stored);
-                            if (Array.isArray(parsed) && parsed.length > 0) {
-                                products = parsed;
-                                console.log('✅ Featured products loaded from localStorage:', key);
-                                break;
-                            }
-                        }
-                    } catch (e) {}
-                }
-            }
-
-            // ✅ FIX: Take first 6 products as featured (or filter by isFeatured)
+            // Filter featured products or take first 6
             let featured = products.filter(p => p.isFeatured === true);
             
             // If no featured products, take first 6
@@ -142,16 +130,29 @@ const FeaturedCollection = () => {
             const colorState = {};
             
             for (const product of featured) {
-                const loadedProduct = await loadProductImages(product);
+                // Ensure ID is set
+                const productId = product.id ?? product._id ?? String(product._id ?? '');
+                if (!productId) {
+                    console.warn('⚠️ Product missing ID, skipping:', product);
+                    continue;
+                }
+                
+                // Load images from Cloudinary
+                const loadedProduct = await loadProductImages({
+                    ...product,
+                    id: productId
+                });
+                
                 productsWithImages.push(loadedProduct);
                 
-                imageState[product.id] = loadedProduct.image || fallbackProductImage;
-                colorImageState[product.id] = loadedProduct.colorImages || {};
+                // Use Cloudinary image URL from loadedProduct
+                imageState[productId] = loadedProduct.image || fallbackProductImage;
+                colorImageState[productId] = loadedProduct.colorImages || {};
                 
                 if (product.colors && product.colors.length > 0) {
-                    colorState[product.id] = product.colors[0];
+                    colorState[productId] = product.colors[0];
                 } else {
-                    colorState[product.id] = null;
+                    colorState[productId] = null;
                 }
             }
             
@@ -162,7 +163,7 @@ const FeaturedCollection = () => {
             setCurrentIndex(0);
             
         } catch (error) {
-            console.error('Error loading featured products:', error);
+            console.error('❌ Error loading featured products:', error);
             setFeaturedProducts([]);
         } finally {
             setLoading(false);
@@ -210,7 +211,9 @@ const FeaturedCollection = () => {
         };
     }, [refreshFavorites]);
 
-    // ... (startHoverCycle, stopHoverCycle, handleMouseEnter, handleMouseLeave functions remain the same)
+    // ============================================================
+    // Hover cycling through color images
+    // ============================================================
     const startHoverCycle = (productId) => {
         stopHoverCycle(productId);
         
@@ -328,6 +331,10 @@ const FeaturedCollection = () => {
     };
 
     const handleProductClick = (productId) => {
+        if (!productId) {
+            console.warn('Attempted to navigate with undefined product ID');
+            return;
+        }
         navigate(`/product/${productId}`);
         setTimeout(() => {
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -442,9 +449,12 @@ const FeaturedCollection = () => {
                                 <ShoppingBag size={28} className="text-gray-400" />
                             </div>
                         </div>
-                        <h3 className="text-lg font-medium text-gray-700 mb-2">No Products Available</h3>
+                        <h3 className="text-lg font-medium text-gray-700 mb-2">No Featured Products</h3>
                         <p className="text-gray-400 text-sm max-w-md mx-auto">
-                            Add products in the admin panel to display them here.
+                            Mark products as featured in the admin panel to display them here.
+                        </p>
+                        <p className="text-xs text-gray-400 mt-1">
+                            Or check your backend connection: {API_URL}
                         </p>
                     </div>
                 ) : (
