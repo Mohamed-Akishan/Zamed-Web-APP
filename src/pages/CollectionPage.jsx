@@ -1491,7 +1491,8 @@ const ActiveFilterChips = ({
             ))}
 
             {filters.inStockOnly && (
-                <Chip                    onRemove={() =>
+                <Chip
+                    onRemove={() =>
                         removeFilter("inStockOnly")
                     }
                     className="bg-green-100 text-green-800"
@@ -2021,7 +2022,7 @@ const CollectionPage = () => {
     const fallbackProductImage = getWorkingImage(0);
 
     // ============================================================
-    // ProductCard Component - FULL IMAGE, NO WHITE BORDERS
+    // ProductCard Component - FULL IMAGE COVER (NO WHITE BORDERS)
     // ============================================================
     const ProductCard = memo(({ product }) => {
         const _ = version;
