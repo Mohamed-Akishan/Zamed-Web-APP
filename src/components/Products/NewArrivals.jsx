@@ -359,13 +359,19 @@ const NewArrivals = () => {
 
     const scrollToLeft = () => {
         if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollBy({ left: -320, behavior: 'smooth' });
+            scrollContainerRef.current.scrollBy({ 
+                left: -360, 
+                behavior: "smooth" 
+            });
         }
     };
 
     const scrollToRight = () => {
         if (scrollContainerRef.current) {
-            scrollContainerRef.current.scrollBy({ left: 320, behavior: 'smooth' });
+            scrollContainerRef.current.scrollBy({ 
+                left: 360, 
+                behavior: "smooth" 
+            });
         }
     };
 
@@ -486,6 +492,10 @@ const NewArrivals = () => {
 
     return (
         <section className="overflow-hidden bg-[#fdfcfb] py-16 md:py-24" ref={sectionRef}>
+            <style>{`
+                .hide-scrollbar::-webkit-scrollbar { display: none; }
+                .hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+            `}</style>
             <div className="mx-auto max-w-[1500px] px-5 sm:px-8 lg:px-12">
                 <div className="relative mb-12 text-center md:mb-16">
                     <Sparkles size={22} strokeWidth={1.4} className="mx-auto mb-3 text-[#ad7b2d]" />
@@ -520,7 +530,7 @@ const NewArrivals = () => {
 
                     <motion.div 
                         ref={scrollContainerRef} 
-                        className={`grid ${getGridCols()} gap-6 lg:gap-7`}
+                        className="flex gap-6 lg:gap-7 overflow-x-auto scroll-smooth snap-x snap-mandatory pb-4 hide-scrollbar"
                         variants={containerVariants}
                         initial="hidden"
                         animate={isVisible ? "visible" : "hidden"}
@@ -542,15 +552,15 @@ const NewArrivals = () => {
                                     whileHover="hover"
                                     onHoverStart={() => handleMouseEnter(product.id)}
                                     onHoverEnd={() => handleMouseLeave(product.id)}
-                                    className="group cursor-pointer overflow-hidden rounded-2xl border border-[#eeeae4] bg-white shadow-[0_8px_28px_rgba(35,29,21,0.08)]"
+                                    className="min-w-[280px] snap-start group cursor-pointer overflow-hidden rounded-2xl border border-[#eeeae4] bg-white shadow-[0_8px_28px_rgba(35,29,21,0.08)]"
                                     onClick={() => handleProductClick(product.id)}
                                 >
                                     {/* Product Image */}
-                                    <div className="relative aspect-square overflow-hidden bg-[#f4f1ec]">
+                                    <div className="relative aspect-[3/4] overflow-hidden bg-white snap-start min-w-[280px] sm:min-w-[300px] lg:min-w-[340px]">
                                         <img 
                                             src={currentImage} 
                                             alt={product.name} 
-                                            className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.035]"
+                                            className="h-full w-full object-contain transition-transform duration-700 group-hover:scale-[1.035]"
                                             onError={(e) => {
                                                 e.currentTarget.onerror = null;
                                                 e.currentTarget.src = fallbackProductImage;
