@@ -1,3 +1,5 @@
+// src/services/api.js
+
 const API_URL =
   import.meta.env.VITE_API_URL ||
   (window.location.hostname === 'localhost' ||
@@ -7,11 +9,21 @@ const API_URL =
       ? 'https://zamed-backend-1.onrender.com/api'
       : 'https://zamed-backend-1.onrender.com/api');
 
+// ============================================================
+// RATE LIMITING FIX - Exponential Backoff with Retry
+// ============================================================
+const MAX_RETRIES = 3;
+const BASE_DELAY = 2000;
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Get token from localStorage
 const getToken = () => localStorage.getItem('token');
 
-// API request helper
-const apiRequest = async (endpoint, options = {}) => {
+// ============================================================
+// API REQUEST HELPER WITH RATE LIMITING
+// ============================================================
+const apiRequest = async (endpoint, options = {}, retryCount = 0) => {
     const token = getToken();
     const headers = {
         'Content-Type': 'application/json',
@@ -19,19 +31,88 @@ const apiRequest = async (endpoint, options = {}) => {
         ...options.headers
     };
     
-    const response = await fetch(`${API_URL}${endpoint}`, {
-        ...options,
-        headers
-    });
-    
-    const data = await response.json();
-    if (!response.ok) {
-        throw new Error(data.message || 'Something went wrong');
+    try {
+        const response = await fetch(`${API_URL}${endpoint}`, {
+            ...options,
+            headers
+        });
+        
+        // Handle rate limiting (429)
+        if (response.status === 429) {
+            if (retryCount < MAX_RETRIES) {
+                const delay = BASE_DELAY * Math.pow(2, retryCount);
+                console.log(`⏳ Rate limited on ${endpoint}. Retry ${retryCount + 1}/${MAX_RETRIES} after ${delay}ms`);
+                
+                // Dispatch event for UI feedback
+                window.dispatchEvent(new CustomEvent('apiRateLimited', {
+                    detail: { 
+                        retry: retryCount + 1, 
+                        maxRetries: MAX_RETRIES,
+                        endpoint 
+                    }
+                }));
+                
+                await sleep(delay);
+                return apiRequest(endpoint, options, retryCount + 1);
+            }
+            
+            // Max retries exceeded
+            const error = new Error('Server is busy. Please try again later.');
+            error.status = 429;
+            error.retries = retryCount;
+            throw error;
+        }
+        
+        // Handle other non-OK responses
+        if (!response.ok) {
+            let errorData;
+            try {
+                errorData = await response.json();
+            } catch {
+                errorData = { message: response.statusText || 'Something went wrong' };
+            }
+            
+            const error = new Error(errorData.message || 'Something went wrong');
+            error.status = response.status;
+            error.data = errorData;
+            throw error;
+        }
+        
+        // Parse successful response
+        const data = await response.json();
+        return data;
+        
+    } catch (error) {
+        // Handle network errors with retry
+        if (error.message?.includes('fetch') || 
+            error.message?.includes('Network') ||
+            error.message?.includes('Failed to fetch')) {
+            
+            if (retryCount < MAX_RETRIES) {
+                const delay = BASE_DELAY * Math.pow(2, retryCount);
+                console.log(`🌐 Network error on ${endpoint}. Retry ${retryCount + 1}/${MAX_RETRIES} after ${delay}ms`);
+                
+                window.dispatchEvent(new CustomEvent('apiNetworkError', {
+                    detail: { 
+                        retry: retryCount + 1, 
+                        maxRetries: MAX_RETRIES,
+                        endpoint 
+                    }
+                }));
+                
+                await sleep(delay);
+                return apiRequest(endpoint, options, retryCount + 1);
+            }
+        }
+        
+        // Re-throw the error
+        throw error;
     }
-    return data;
 };
 
-// ============ AUTH APIs ============
+// ============================================================
+// AUTH APIs
+// ============================================================
 export const authAPI = {
     register: (userData) => apiRequest('/auth/register', {
         method: 'POST',
@@ -48,7 +129,9 @@ export const authAPI = {
     })
 };
 
-// ============ PRODUCT APIs ============
+// ============================================================
+// PRODUCT APIs
+// ============================================================
 export const productAPI = {
     getAll: (params = {}) => {
         const query = new URLSearchParams(params).toString();
@@ -59,7 +142,7 @@ export const productAPI = {
     getNewArrivals: () => apiRequest('/products/new-arrivals'),
     getByGender: (gender) => apiRequest(`/products/gender/${gender}`),
     getByCategory: (category) => apiRequest(`/products/category/${category}`),
-    search: (query) => apiRequest(`/products/search?q=${query}`),
+    search: (query) => apiRequest(`/products/search?q=${encodeURIComponent(query)}`),
     create: (productData) => apiRequest('/products', {
         method: 'POST',
         body: JSON.stringify(productData)
@@ -73,7 +156,9 @@ export const productAPI = {
     })
 };
 
-// ============ ORDER APIs ============
+// ============================================================
+// ORDER APIs
+// ============================================================
 export const orderAPI = {
     create: (orderData) => apiRequest('/orders', {
         method: 'POST',
@@ -95,7 +180,9 @@ export const orderAPI = {
     })
 };
 
-// ============ USER APIs ============
+// ============================================================
+// USER APIs
+// ============================================================
 export const userAPI = {
     getProfile: () => apiRequest('/users/profile'),
     getAll: () => apiRequest('/users'),
@@ -122,7 +209,9 @@ export const userAPI = {
     })
 };
 
-// ============ CATEGORY APIs ============
+// ============================================================
+// CATEGORY APIs
+// ============================================================
 export const categoryAPI = {
     getAll: () => apiRequest('/categories'),
     getById: (id) => apiRequest(`/categories/${id}`),
@@ -142,7 +231,9 @@ export const categoryAPI = {
     })
 };
 
-// ============ REVIEW APIs ============
+// ============================================================
+// REVIEW APIs
+// ============================================================
 export const reviewAPI = {
     add: (productId, data) => apiRequest(`/reviews/${productId}`, {
         method: 'POST',
@@ -160,7 +251,9 @@ export const reviewAPI = {
     })
 };
 
-// ============ RETURN APIs ============
+// ============================================================
+// RETURN APIs
+// ============================================================
 export const returnAPI = {
     create: (returnData) => apiRequest('/returns', {
         method: 'POST',
@@ -175,14 +268,18 @@ export const returnAPI = {
     })
 };
 
-// ============ DASHBOARD APIs ============
+// ============================================================
+// DASHBOARD APIs
+// ============================================================
 export const dashboardAPI = {
     getStats: () => apiRequest('/dashboard/stats'),
     getSalesChart: (days = 7) => apiRequest(`/dashboard/sales-chart?days=${days}`),
     getTopProducts: (limit = 10) => apiRequest(`/dashboard/top-products?limit=${limit}`)
 };
 
-// ============ UPLOAD APIs ============
+// ============================================================
+// UPLOAD APIs
+// ============================================================
 export const uploadAPI = {
     uploadImage: async (imageData, filename) => {
         const token = getToken();
@@ -201,7 +298,9 @@ export const uploadAPI = {
     })
 };
 
-// ============ COUPON APIs ============
+// ============================================================
+// COUPON APIs
+// ============================================================
 export const couponAPI = {
     getAll: () => apiRequest('/coupons'),
     getById: (id) => apiRequest(`/coupons/${id}`),
@@ -219,7 +318,9 @@ export const couponAPI = {
     validate: (code) => apiRequest(`/coupons/validate/${code}`)
 };
 
-// ============ SETTINGS APIs ============
+// ============================================================
+// SETTINGS APIs
+// ============================================================
 export const settingsAPI = {
     getSettings: () => apiRequest('/settings'),
     updateSettings: (settings) => apiRequest('/settings', {
@@ -233,7 +334,61 @@ export const settingsAPI = {
     })
 };
 
-// Default export
+// ============================================================
+// SUPPORT APIs
+// ============================================================
+export const supportAPI = {
+    sendMessage: (data) => apiRequest('/support/contact', {
+        method: 'POST',
+        body: JSON.stringify(data)
+    }),
+    getTickets: () => apiRequest('/support/tickets'),
+    getTicketById: (id) => apiRequest(`/support/tickets/${id}`),
+    replyToTicket: (id, message) => apiRequest(`/support/tickets/${id}/reply`, {
+        method: 'POST',
+        body: JSON.stringify({ message })
+    }),
+    closeTicket: (id) => apiRequest(`/support/tickets/${id}/close`, {
+        method: 'PUT'
+    })
+};
+
+// ============================================================
+// NEWSLETTER APIs
+// ============================================================
+export const newsletterAPI = {
+    subscribe: (email) => apiRequest('/newsletter/subscribe', {
+        method: 'POST',
+        body: JSON.stringify({ email })
+    }),
+    unsubscribe: (email) => apiRequest('/newsletter/unsubscribe', {
+        method: 'POST',
+        body: JSON.stringify({ email })
+    }),
+    getAllSubscribers: () => apiRequest('/newsletter/subscribers'),
+    sendNewsletter: (data) => apiRequest('/newsletter/send', {
+        method: 'POST',
+        body: JSON.stringify(data)
+    })
+};
+
+// ============================================================
+// WISHLIST APIs (Alias for Favorites)
+// ============================================================
+export const wishlistAPI = {
+    getWishlist: () => apiRequest('/users/favorites'),
+    addToWishlist: (productId) => apiRequest(`/users/favorites/${productId}`, {
+        method: 'POST'
+    }),
+    removeFromWishlist: (productId) => apiRequest(`/users/favorites/${productId}`, {
+        method: 'DELETE'
+    }),
+    isInWishlist: (productId) => apiRequest(`/users/favorites/check/${productId}`)
+};
+
+// ============================================================
+// DEFAULT EXPORT
+// ============================================================
 export default {
     auth: authAPI,
     products: productAPI,
@@ -245,5 +400,8 @@ export default {
     dashboard: dashboardAPI,
     upload: uploadAPI,
     coupons: couponAPI,
-    settings: settingsAPI
+    settings: settingsAPI,
+    support: supportAPI,
+    newsletter: newsletterAPI,
+    wishlist: wishlistAPI
 };
