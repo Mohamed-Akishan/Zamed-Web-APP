@@ -51,6 +51,7 @@ const NewArrivals = () => {
     const lastMoveTimeRef = useRef(0);
     const lastMoveXRef = useRef(0);
     const animationFrameRef = useRef(null);
+    const scrollTimeoutRef = useRef(null);
 
     // ============================================================
     // Use centralized favorites hook
@@ -145,7 +146,6 @@ const NewArrivals = () => {
             let products = [];
             let apiSucceeded = false;
 
-            // ✅ PRIMARY: Fetch from MongoDB
             try {
                 const response = await fetch(`${API_URL}/products`, {
                     headers: { Accept: "application/json" }
@@ -158,27 +158,23 @@ const NewArrivals = () => {
                     if (Array.isArray(raw) && raw.length > 0) {
                         products = raw;
                         apiSucceeded = true;
-                        console.log('✅ New arrivals loaded from MongoDB:', products.length);
                     }
                 }
             } catch (apiError) {
-                console.warn("MongoDB fetch failed for new arrivals:", apiError);
+                console.warn("MongoDB fetch failed:", apiError);
             }
 
-            // ✅ FALLBACK: productService if API failed
             if (!apiSucceeded || products.length === 0) {
                 try {
                     const serviceProducts = productService.getAllProducts() || [];
                     if (Array.isArray(serviceProducts) && serviceProducts.length > 0) {
                         products = serviceProducts;
-                        console.log('✅ New arrivals loaded from productService:', products.length);
                     }
                 } catch (serviceError) {
                     console.warn("Product service fallback failed:", serviceError);
                 }
             }
 
-            // ✅ SECONDARY FALLBACK: localStorage
             if (!apiSucceeded && products.length === 0) {
                 const possibleKeys = ['shop_products', 'products', 'admin_products', 'product_data'];
                 for (const key of possibleKeys) {
@@ -188,21 +184,16 @@ const NewArrivals = () => {
                             const parsed = JSON.parse(stored);
                             if (Array.isArray(parsed) && parsed.length > 0) {
                                 products = parsed;
-                                console.log('✅ New arrivals loaded from localStorage:', key);
                                 break;
                             }
                         }
-                    } catch (e) {
-                        // Continue to next key
-                    }
+                    } catch (e) {}
                 }
             }
 
-            // ✅ FIX: Filter new arrivals - if none, show some products anyway
             let uniqueProducts = [];
             const seenIds = new Set();
             
-            // First try to get products with isNewArrival flag
             products.forEach(product => {
                 const productId = String(product.id ?? product._id ?? "");
                 if (productId && !seenIds.has(productId) && product.isNewArrival === true) {
@@ -211,9 +202,7 @@ const NewArrivals = () => {
                 }
             });
 
-            // If no new arrivals, show some products (first 6 after featured)
             if (uniqueProducts.length === 0) {
-                console.log('ℹ️ No new arrivals found, showing some products');
                 const featuredProducts = products.filter(p => p.isFeatured === true);
                 const startIndex = featuredProducts.length > 0 ? featuredProducts.length : 0;
                 const fallbackProducts = products.slice(startIndex, startIndex + 6);
@@ -228,7 +217,6 @@ const NewArrivals = () => {
             }
 
             if (uniqueProducts.length === 0) {
-                console.log('ℹ️ No products available for new arrivals');
                 setNewArrivals([]);
                 setLoading(false);
                 return;
@@ -294,7 +282,7 @@ const NewArrivals = () => {
     }, [loadNewArrivals, loadSettings]);
 
     // ============================================================
-    // DRAG SCROLL - Mouse & Touch Support
+    // DRAG SCROLL
     // ============================================================
     const getScrollContainer = () => scrollContainerRef.current;
 
@@ -302,10 +290,8 @@ const NewArrivals = () => {
         const container = getScrollContainer();
         if (!container) return;
 
-        // Stop auto-play while dragging
         setIsAutoPlaying(false);
         
-        // Cancel any ongoing velocity animation
         if (animationFrameRef.current) {
             cancelAnimationFrame(animationFrameRef.current);
             animationFrameRef.current = null;
@@ -320,11 +306,9 @@ const NewArrivals = () => {
         lastMoveTimeRef.current = Date.now();
         lastMoveXRef.current = clientX;
 
-        // Prevent text selection and default behaviors
         container.style.userSelect = 'none';
         container.style.pointerEvents = 'none';
         
-        // Prevent page scroll on touch devices
         if (e.type === 'touchstart') {
             e.preventDefault();
         }
@@ -340,7 +324,6 @@ const NewArrivals = () => {
         const deltaX = clientX - startX;
         const newScrollLeft = scrollLeft - deltaX;
         
-        // Calculate velocity for momentum
         const now = Date.now();
         const timeDelta = now - lastMoveTimeRef.current;
         if (timeDelta > 0) {
@@ -353,7 +336,6 @@ const NewArrivals = () => {
 
         container.scrollLeft = newScrollLeft;
 
-        // Prevent page scroll on touch devices
         if (e.type === 'touchmove') {
             e.preventDefault();
         }
@@ -372,66 +354,28 @@ const NewArrivals = () => {
         container.style.userSelect = '';
         container.style.pointerEvents = '';
 
-        // Apply momentum if velocity is significant
         const velocity = velocityRef.current;
         if (Math.abs(velocity) > 0.2) {
-            applyMomentum(velocity);
-        } else {
-            // Resume auto-play after a short delay
-            setTimeout(() => {
-                if (newArrivals.length > 3 && isVisible) {
-                    setIsAutoPlaying(true);
-                }
-            }, 3000);
-        }
-    };
-
-    const applyMomentum = (velocity) => {
-        const container = getScrollContainer();
-        if (!container) return;
-
-        const momentum = velocity * 25; // Increased for more momentum
-        const startScroll = container.scrollLeft;
-        const maxScroll = container.scrollWidth - container.clientWidth;
-        const target = Math.max(0, Math.min(maxScroll, startScroll + momentum));
-        const duration = Math.max(300, Math.min(800, Math.abs(momentum) * 0.8));
-        const startTime = performance.now();
-
-        // Cancel any existing animation
-        if (animationFrameRef.current) {
-            cancelAnimationFrame(animationFrameRef.current);
-        }
-
-        const animateMomentum = (currentTime) => {
-            const elapsed = currentTime - startTime;
-            const progress = Math.min(1, elapsed / duration);
+            const momentum = velocity * 25;
+            const startScroll = container.scrollLeft;
+            const maxScroll = container.scrollWidth - container.clientWidth;
+            const target = Math.max(0, Math.min(maxScroll, startScroll + momentum));
             
-            // Ease out cubic
-            const easeOut = 1 - Math.pow(1 - progress, 3);
-            const currentScroll = startScroll + (target - startScroll) * easeOut;
-            container.scrollLeft = currentScroll;
-
-            if (progress < 1) {
-                animationFrameRef.current = requestAnimationFrame(animateMomentum);
-            } else {
-                container.scrollLeft = target;
-                animationFrameRef.current = null;
-                
-                // Resume auto-play after momentum ends
-                setTimeout(() => {
-                    if (newArrivals.length > 3 && isVisible && !isDragging) {
-                        setIsAutoPlaying(true);
-                    }
-                }, 2000);
+            container.scrollTo({
+                left: target,
+                behavior: 'smooth'
+            });
+        }
+        
+        setTimeout(() => {
+            if (newArrivals.length > 3 && isVisible) {
+                setIsAutoPlaying(true);
             }
-        };
-
-        animationFrameRef.current = requestAnimationFrame(animateMomentum);
+        }, 2000);
     };
 
     // Mouse event handlers
     const onMouseDown = (e) => {
-        // Only handle left click
         if (e.button !== 0) return;
         handleDragStart(e);
     };
@@ -463,11 +407,14 @@ const NewArrivals = () => {
         handleDragEnd(e);
     };
 
-    // Clean up animation frame
+    // Clean up
     useEffect(() => {
         return () => {
             if (animationFrameRef.current) {
                 cancelAnimationFrame(animationFrameRef.current);
+            }
+            if (scrollTimeoutRef.current) {
+                clearTimeout(scrollTimeoutRef.current);
             }
         };
     }, []);
@@ -551,65 +498,78 @@ const NewArrivals = () => {
     };
 
     // ============================================================
-    // SMOOTH & FAST SCROLLING - FIXED
+    // SMOOTH MULTI-ITEM SCROLLING - LITE VERSION
     // ============================================================
+    const getScrollDistance = () => {
+        if (!scrollContainerRef.current) return 300;
+        const container = scrollContainerRef.current;
+        const firstCard = container.querySelector('.product-card');
+        if (!firstCard) return 300;
+        
+        const cardWidth = firstCard.offsetWidth;
+        const gap = 20;
+        const fullCardWidth = cardWidth + gap;
+        
+        // Scroll 2 items at a time
+        return fullCardWidth * 2;
+    };
+
     const scrollToLeft = () => {
-        if (scrollContainerRef.current && !isScrollingRef.current) {
-            isScrollingRef.current = true;
-            const container = scrollContainerRef.current;
-            const cardWidth = container.querySelector('.min-w-\\[260px\\]')?.offsetWidth || 280;
-            const gap = 20; // gap-5 = 20px
-            
-            container.scrollBy({
-                left: -(cardWidth + gap),
-                behavior: 'smooth'
-            });
-            
-            // Resume auto-play after manual scroll
-            setIsAutoPlaying(false);
-            setTimeout(() => {
-                isScrollingRef.current = false;
-                if (newArrivals.length > 3 && isVisible) {
-                    setIsAutoPlaying(true);
-                }
-            }, 400);
+        const container = scrollContainerRef.current;
+        if (!container || isScrollingRef.current) return;
+        
+        isScrollingRef.current = true;
+        setIsAutoPlaying(false);
+        
+        const scrollDistance = getScrollDistance();
+        const targetScroll = Math.max(0, container.scrollLeft - scrollDistance);
+        
+        container.scrollTo({
+            left: targetScroll,
+            behavior: 'smooth'
+        });
+        
+        if (scrollTimeoutRef.current) {
+            clearTimeout(scrollTimeoutRef.current);
         }
+        scrollTimeoutRef.current = setTimeout(() => {
+            isScrollingRef.current = false;
+            if (newArrivals.length > 3 && isVisible) {
+                setIsAutoPlaying(true);
+            }
+        }, 400);
     };
 
     const scrollToRight = () => {
-        if (scrollContainerRef.current && !isScrollingRef.current) {
-            isScrollingRef.current = true;
-            const container = scrollContainerRef.current;
-            const cardWidth = container.querySelector('.min-w-\\[260px\\]')?.offsetWidth || 280;
-            const gap = 20; // gap-5 = 20px
-            
-            container.scrollBy({
-                left: cardWidth + gap,
-                behavior: 'smooth'
-            });
-            
-            // Resume auto-play after manual scroll
-            setIsAutoPlaying(false);
-            setTimeout(() => {
-                isScrollingRef.current = false;
-                if (newArrivals.length > 3 && isVisible) {
-                    setIsAutoPlaying(true);
-                }
-            }, 400);
+        const container = scrollContainerRef.current;
+        if (!container || isScrollingRef.current) return;
+        
+        isScrollingRef.current = true;
+        setIsAutoPlaying(false);
+        
+        const scrollDistance = getScrollDistance();
+        const maxScroll = container.scrollWidth - container.clientWidth;
+        const targetScroll = Math.min(maxScroll, container.scrollLeft + scrollDistance);
+        
+        container.scrollTo({
+            left: targetScroll,
+            behavior: 'smooth'
+        });
+        
+        if (scrollTimeoutRef.current) {
+            clearTimeout(scrollTimeoutRef.current);
         }
+        scrollTimeoutRef.current = setTimeout(() => {
+            isScrollingRef.current = false;
+            if (newArrivals.length > 3 && isVisible) {
+                setIsAutoPlaying(true);
+            }
+        }, 400);
     };
 
-    // Keyboard navigation
-    useEffect(() => {
-        const handleKeyDown = (e) => {
-            if (e.key === 'ArrowLeft') scrollToLeft();
-            if (e.key === 'ArrowRight') scrollToRight();
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, []);
-
-    // Auto-play scroll - only when not dragging and auto-play is enabled
+    // ============================================================
+    // AUTO-PLAY
+    // ============================================================
     useEffect(() => {
         if (newArrivals.length <= 3 || !isVisible || !isAutoPlaying || isDragging) return;
         
@@ -767,7 +727,7 @@ const NewArrivals = () => {
 
                 {/* Products Grid */}
                 <div className="relative">
-                    {/* Left Arrow - hidden on mobile */}
+                    {/* Left Arrow */}
                     <button 
                         onClick={scrollToLeft} 
                         aria-label="Previous new arrivals"
@@ -776,7 +736,7 @@ const NewArrivals = () => {
                         <ChevronLeft size={18} className="text-gray-700" />
                     </button>
                     
-                    {/* Right Arrow - hidden on mobile */}
+                    {/* Right Arrow */}
                     <button 
                         onClick={scrollToRight} 
                         aria-label="Next new arrivals"
@@ -792,16 +752,13 @@ const NewArrivals = () => {
                         initial="hidden"
                         animate={isVisible ? "visible" : "hidden"}
                         key={`newarrivals-${version}`}
-                        // Mouse events for drag
                         onMouseDown={onMouseDown}
                         onMouseMove={onMouseMove}
                         onMouseUp={onMouseUp}
                         onMouseLeave={onMouseLeave}
-                        // Touch events for mobile
                         onTouchStart={onTouchStart}
                         onTouchMove={onTouchMove}
                         onTouchEnd={onTouchEnd}
-                        // Cursor style
                         style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
                     >
                         {newArrivals.map((product) => {
@@ -810,8 +767,6 @@ const NewArrivals = () => {
                             const isFavorite = isFavorited(product.id);
                             const productRating = product.rating || 0;
                             const productReviews = Array.isArray(product.reviews) ? product.reviews.length : Number(product.reviews || 0);
-                            const isHovered = hoveredProduct === product.id;
-                            const colorImageMap = colorImages[product.id] || {};
                             
                             return (
                                 <motion.div 
@@ -834,6 +789,7 @@ const NewArrivals = () => {
                                                 e.currentTarget.src = fallbackProductImage;
                                             }}
                                             draggable={false}
+                                            loading="lazy"
                                         />
                                         
                                         {/* Wishlist Heart Button */}
@@ -850,7 +806,7 @@ const NewArrivals = () => {
                                             />
                                         </button>
 
-                                        {/* Quick Add Button - appears on hover (desktop only) */}
+                                        {/* Quick Add Button */}
                                         <button
                                             type="button"
                                             onClick={(e) => handleAddToCart(product, e)}
